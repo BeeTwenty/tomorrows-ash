@@ -53,6 +53,7 @@ this repository. There is no hidden divergence. See
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
+| [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |
 

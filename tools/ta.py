@@ -47,6 +47,8 @@ DEFAULTS = {
     "db_characters": "acore_characters",
     "docker_container": "ashmorrow-mysql",
     "mysql_image": "mysql:8.4",
+    "website_db_user": "ashweb",
+    "website_db_pass": "",
     "build_type": "Release",
     "tools_build": "all",
 }
@@ -427,16 +429,31 @@ def cmd_db(args):
             run(["docker", "start", cfg["docker_container"]])
         else:
             info(f"creating MySQL container '{cfg['docker_container']}'")
-            run([
+            rc = run([
                 "docker", "run", "-d",
                 "--name", cfg["docker_container"],
                 "-e", f"MYSQL_ROOT_PASSWORD={cfg['mysql_pass']}",
                 "-p", f"{cfg['mysql_port']}:3306",
                 "-v", f"{cfg['docker_container']}-data:/var/lib/mysql",
                 cfg["mysql_image"],
-                "--default-authentication-plugin=mysql_native_password",
                 "--max_allowed_packet=64M",
-            ])
+            ], check=False)
+            if rc != 0:
+                # Docker Hub anonymous pulls are rate limited (HTTP 429), which
+                # has nothing to do with your setup being wrong. Say so, and
+                # point at the path that does not need a registry at all.
+                print()
+                warn("could not start the MySQL container.")
+                warn("If the error above mentions '429 Too Many Requests', Docker Hub is")
+                warn("rate-limiting anonymous pulls. Either `docker login`, or skip Docker:")
+                warn("")
+                warn("  Linux:   sudo apt install mysql-server")
+                warn("  Windows: install MySQL Server 8.x")
+                warn("")
+                warn("then put the credentials in tools/local.json and use `db init`")
+                warn("directly - `db up` is only needed for the Docker route.")
+                warn("See SETUP.md section 1, 'Linux without Docker'.")
+                return 1
         info("waiting for MySQL to accept connections")
         import time
         for attempt in range(60):
@@ -455,7 +472,8 @@ def cmd_db(args):
 
     if action == "status":
         state = docker_container_state(cfg) if shutil.which("docker") else None
-        print(f"     container : {cfg['docker_container']} -> {state or 'not created'}")
+        print(f"     container : {cfg['docker_container']} -> "
+              f"{state or 'not created (fine if you run MySQL natively)'}")
         rc, out = mysql_run(cfg, "SELECT VERSION();", check=False)
         print(f"     mysql     : {'reachable' if rc == 0 else 'NOT reachable'}")
         if rc == 0:
@@ -479,6 +497,48 @@ CREATE DATABASE IF NOT EXISTS `{cfg['db_characters']}` DEFAULT CHARACTER SET utf
         print("     updater fills them from .acore/data/sql on the first worldserver")
         print("     start - that import takes several minutes. Just run:")
         print("         python3 tools/ta.py run world")
+        return 0
+
+    if action == "website-user":
+        # The website is internet-facing and must not hold the game server's
+        # credentials. See sql/website/001_website_db_user.sql for the rationale
+        # behind each grant.
+        user = cfg.get("website_db_user", "ashweb")
+        pw = cfg.get("website_db_pass", "")
+        if not pw:
+            die("set website_db_pass in tools/local.json first (never commit it)\n"
+                "  example: {\"website_db_pass\": \"a-long-random-string\"}")
+        # Table-level grants require the table to exist, and the schemas stay
+        # empty until the first worldserver run imports them.
+        rc, out = mysql_run(cfg, f"SHOW TABLES FROM `{cfg['db_auth']}` LIKE 'account';", check=False)
+        if rc != 0 or "account" not in out:
+            die(f"`{cfg['db_auth']}`.`account` does not exist yet.\n"
+                "  The databases are empty until AzerothCore imports them.\n"
+                "  Run `python3 tools/ta.py run world` once and let it finish, then retry.")
+
+        info(f"creating least-privilege website user '{user}'")
+        sql = f"""
+CREATE USER IF NOT EXISTS '{user}'@'%' IDENTIFIED BY '{pw}';
+ALTER USER '{user}'@'%' IDENTIFIED BY '{pw}';
+GRANT SELECT, INSERT, UPDATE ON `{cfg['db_auth']}`.`account` TO '{user}'@'%';
+GRANT SELECT ON `{cfg['db_auth']}`.`realmlist` TO '{user}'@'%';
+GRANT SELECT ON `{cfg['db_characters']}`.* TO '{user}'@'%';
+GRANT SELECT ON `{cfg['db_world']}`.* TO '{user}'@'%';
+FLUSH PRIVILEGES;
+"""
+        mysql_run(cfg, sql)
+        rc, out = mysql_run(cfg, f"SHOW GRANTS FOR '{user}'@'%';")
+        print(out)
+        ok(f"website user '{user}' created")
+        print()
+        print("     Put these in your website's .env (see web/.env.example):")
+        print(f"       DB_HOST={cfg['mysql_host']}")
+        print(f"       DB_PORT={cfg['mysql_port']}")
+        print(f"       DB_USER={user}")
+        print( "       DB_PASSWORD=<the password you set in tools/local.json>")
+        print()
+        print("     Note: no DELETE anywhere, and no access to account_access")
+        print("     or account_banned - a web compromise cannot grant GM or unban.")
         return 0
 
     if action == "realm":
@@ -560,14 +620,17 @@ def cmd_conf(args):
         target.write_text("\n".join(out) + "\n", encoding="utf-8")
         ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
 
-    # Module config: ship the .dist next to the server configs.
+    # Module configs live in etc/modules/, not etc/ - that is where CMake
+    # installs the .dist files and where worldserver looks for them.
+    modules_etc = etc / "modules"
+    modules_etc.mkdir(parents=True, exist_ok=True)
     for module in load_upstream().get("modules", []):
         for src in (REPO / "modules" / module / "conf").glob("*.conf.dist"):
-            shutil.copy2(src, etc / src.name)
-            target = etc / src.name.replace(".conf.dist", ".conf")
+            shutil.copy2(src, modules_etc / src.name)
+            target = modules_etc / src.name.replace(".conf.dist", ".conf")
             if not target.exists() or args.force:
                 shutil.copy2(src, target)
-            ok(f"module config {src.name} -> {etc.name}/")
+            ok(f"module config {src.name} -> etc/modules/")
 
     print()
     print(f"     Realm name lives in the DATABASE, not these files.")
@@ -621,7 +684,8 @@ def main():
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("db", help="database lifecycle")
-    p.add_argument("action", choices=["up", "down", "status", "init", "realm"])
+    p.add_argument("action",
+                   choices=["up", "down", "status", "init", "realm", "website-user"])
     p.set_defaults(func=cmd_db)
 
     p = sub.add_parser("conf", help="render server configs for the Ashmorrow realm")
