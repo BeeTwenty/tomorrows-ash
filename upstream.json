@@ -1,0 +1,21 @@
+{
+  "$comment": [
+    "Upstream base core for Tomorrow's Ash. We do NOT fork AzerothCore's git history.",
+    "Instead we pin an exact upstream commit and overlay our own module + SQL on top.",
+    "See docs/decisions/0002-repo-layout.md for why.",
+    "To bump upstream: change pinned_commit, run `python3 tools/ta.py bootstrap --force`,",
+    "then rebuild and re-run the DB updater."
+  ],
+  "base": {
+    "name": "azerothcore-wotlk",
+    "url": "https://github.com/azerothcore/azerothcore-wotlk.git",
+    "branch": "master",
+    "pinned_commit": "e2f5e48b4375ca72244b9d2c4388be63b5c97803",
+    "pinned_date": "2026-08-25",
+    "supported_client": "3.3.5a build 12340"
+  },
+  "checkout_dir": ".acore",
+  "modules": [
+    "mod-classless"
+  ]
+}

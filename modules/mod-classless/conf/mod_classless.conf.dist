@@ -1,0 +1,48 @@
+#
+# Tomorrow's Ash - Classless Module Configuration
+#
+# Copy this file to your worldserver config directory as `mod_classless.conf`
+# and edit it there. This .dist file is the tracked default; the server reads
+# the .conf if present, otherwise falls back to this .dist.
+#
+
+[worldserver]
+
+#
+#    Classless.Enable
+#        Description: Master switch for the classless system.
+#                     When 0, the module registers itself but changes no
+#                     gameplay behaviour whatsoever - the server behaves as
+#                     stock AzerothCore. Every other setting in this file is
+#                     ignored while this is 0.
+#        Default:     0 - (Disabled)
+#                     1 - (Enabled)
+
+Classless.Enable = 0
+
+#
+#    Classless.Announce
+#        Description: Send a message to players on login telling them the
+#                     classless module is active on this realm.
+#        Default:     1 - (Enabled)
+
+Classless.Announce = 1
+
+#
+#    Classless.SuppressBlizzardTalents
+#        Description: Set the player's Blizzard talent-point budget to zero,
+#                     which empties the built-in talent frame. Used when the
+#                     classless skill-point system fully replaces talents.
+#
+#                     NOTE: This is applied through the OnPlayerCalculateTalentsPoints
+#                     hook, so it needs no core modification. It does NOT refund
+#                     already-spent talent points - run `.reset talents` or the
+#                     module's migration command for existing characters.
+#
+#                     Phase 2 feature. Leave at 0 until the skill-point system
+#                     that replaces talents actually exists, or characters will
+#                     have no way to spend points at all.
+#        Default:     0 - (Disabled, Blizzard talents work normally)
+#                     1 - (Enabled, talent frame is emptied)
+
+Classless.SuppressBlizzardTalents = 0

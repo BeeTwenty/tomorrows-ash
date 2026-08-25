@@ -1,0 +1,35 @@
+# --- Upstream core checkout (fetched by tools/ta.py bootstrap, never committed) ---
+.acore/
+build/
+dist/
+
+# --- Local environment ---
+.env
+*.local
+local.json
+
+# --- Server runtime artifacts ---
+*.log
+*.pid
+logs/
+var/
+
+# --- Client data extracted from a WoW install (huge, licensed, never commit) ---
+data/client/
+*.mpq
+*.dbc
+*.vmtree
+*.vmtile
+*.mmtile
+*.map
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- Python ---
+__pycache__/
+*.pyc

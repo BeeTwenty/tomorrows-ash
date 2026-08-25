@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  sanity:
+    name: Repo sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: tools/ta.py is syntactically valid
+        run: python -m py_compile tools/ta.py
+
+      - name: ta.py --help works
+        run: python tools/ta.py --help
+
+      - name: upstream.json is valid and complete
+        run: |
+          python - <<'PY'
+          import json, re, sys
+          cfg = json.load(open("upstream.json"))
+          base = cfg["base"]
+          for key in ("name", "url", "branch", "pinned_commit", "pinned_date"):
+              assert base.get(key), f"upstream.json: base.{key} is missing"
+          assert re.fullmatch(r"[0-9a-f]{40}", base["pinned_commit"]), \
+              "pinned_commit must be a full 40-char SHA, not a branch or short SHA"
+          assert cfg.get("modules"), "upstream.json: no modules listed"
+          print(f"pinned: {base['name']} @ {base['pinned_commit'][:12]} ({base['pinned_date']})")
+          PY
+
+      - name: Pinned upstream commit actually exists
+        run: |
+          SHA=$(python -c "import json;print(json.load(open('upstream.json'))['base']['pinned_commit'])")
+          URL=$(python -c "import json;print(json.load(open('upstream.json'))['base']['url'])")
+          git init -q probe && cd probe
+          git remote add origin "$URL"
+          git fetch --depth 1 origin "$SHA" && echo "upstream pin $SHA is fetchable"
+
+      - name: Every declared module exists and has a matching loader
+        run: |
+          python - <<'PY'
+          import json, pathlib, re, sys
+          cfg = json.load(open("upstream.json"))
+          bad = []
+          for name in cfg["modules"]:
+              d = pathlib.Path("modules") / name
+              if not d.is_dir():
+                  bad.append(f"{name}: directory missing"); continue
+              # AzerothCore derives the loader name from the directory name.
+              expected = "Add" + name.replace("-", "_") + "Scripts"
+              srcs = list((d / "src").rglob("*.cpp"))
+              if not any(expected in s.read_text(errors="replace") for s in srcs):
+                  bad.append(f"{name}: no source defines {expected}()")
+              if not list((d / "conf").glob("*.conf.dist")):
+                  bad.append(f"{name}: no .conf.dist")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("modules OK")
+          PY
+
+      - name: No core checkout or client data committed
+        run: |
+          # The overlay model depends on .acore/ never entering git history,
+          # and Blizzard client data must never be redistributed.
+          FOUND=$(git ls-files | grep -E '^\.acore/|\.mpq$|^data/client/|\.(dbc|map|vmtree|vmtile|mmtile)$' || true)
+          if [ -n "$FOUND" ]; then
+            echo "These must never be committed:"; echo "$FOUND"; exit 1
+          fi
+          echo "clean"
+
+      - name: No core modifications have crept in
+        run: |
+          # ADR 0002: the classless system needs zero AzerothCore C++ patches.
+          # If that ever stops being true, this fails loudly and the decision
+          # gets revisited on purpose rather than by drift.
+          if [ -d patches ] && [ -n "$(ls -A patches 2>/dev/null)" ]; then
+            echo "::warning::patches/ is non-empty - we now carry core modifications."
+            echo "Update docs/decisions/0002-repo-layout.md and ARCHITECTURE.md §2."
+          fi
+          echo "checked"
+
+      - name: Module SQL uses directories the DB updater recognises
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          # UpdateFetcher.cpp matches module SQL dirs by substring against
+          # "world" / "auth" / "characters". Anything else is silently ignored,
+          # which is a nasty way to lose a migration.
+          valid = ("db-world", "db-auth", "db-characters")
+          bad = []
+          for name in json.load(open("upstream.json"))["modules"]:
+              sqlroot = pathlib.Path("modules") / name / "data" / "sql"
+              if not sqlroot.is_dir():
+                  continue
+              for child in sqlroot.iterdir():
+                  if child.is_dir() and child.name not in valid:
+                      bad.append(f"{child}: not one of {valid}")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("module SQL layout OK")
+          PY
+
+      - name: Documentation links resolve
+        run: |
+          python - <<'PY'
+          import pathlib, re, sys
+          bad = []
+          for md in pathlib.Path(".").rglob("*.md"):
+              if ".acore" in md.parts:
+                  continue
+              for link in re.findall(r"\]\(([^)#][^)]*)\)", md.read_text(errors="replace")):
+                  if link.startswith(("http://", "https://", "mailto:")):
+                      continue
+                  target = (md.parent / link.split("#")[0]).resolve()
+                  if not target.exists():
+                      bad.append(f"{md}: broken link -> {link}")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("all relative doc links resolve")
+          PY

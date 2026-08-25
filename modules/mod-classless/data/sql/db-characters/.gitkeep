@@ -1,0 +1,7 @@
+Character-database migrations for mod-classless.
+
+AzerothCore's updater applies every .sql file here automatically (see
+UpdateFetcher.cpp:165). The directory name must contain "characters" or the
+migrations are silently ignored.
+
+Naming: use a sortable prefix, e.g. 2026_08_25_00_classless_trees.sql
