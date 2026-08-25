@@ -236,6 +236,11 @@ LIMIT 25;
 > classless ruleset. If your site shows "usable by" information, read it from
 > that column rather than hardcoding class rules, or it will go stale the day
 > that migration lands. See [CLASS-RESTRICTIONS.md §2.4](CLASS-RESTRICTIONS.md).
+>
+> **Watch the sign.** `AllowableClass` is a *signed* int, and **`-1` means "all
+> classes"** (all bits set), not "no classes". Treat it as a bitmask only when
+> it is not `-1`, or every unrestricted item in the game will look unusable.
+> On the current world DB: 35,160 items are `-1` and 10,936 are class-restricted.
 
 **Class/race IDs** — `class` and `race` are small integers, not names
 (1 = Warrior, 2 = Paladin, ... 8 = Mage; 1 = Human, 2 = Orc, ...). Map them in
