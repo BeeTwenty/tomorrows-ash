@@ -33,3 +33,7 @@ Thumbs.db
 # --- Python ---
 __pycache__/
 *.pyc
+
+# --- Website example dependencies ---
+node_modules/
+package-lock.json
