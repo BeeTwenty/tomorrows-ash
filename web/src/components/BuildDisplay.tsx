@@ -138,7 +138,7 @@ export function BuildDisplay({ build }: { build: CharacterBuild }) {
             <ul className="mt-3 space-y-1.5">
               {tree.nodes.map((node) => (
                 <li key={node.id} className="flex items-baseline justify-between gap-3 text-xs">
-                  <span className="truncate text-ash-bright">
+                  <span className="truncate text-ash-bright" title={node.description ?? undefined}>
                     <span className="numeric mr-2 text-ash/50">T{node.tier}</span>
                     {node.name}
                   </span>
@@ -155,8 +155,14 @@ export function BuildDisplay({ build }: { build: CharacterBuild }) {
 
 /** Rank shown as filled coals rather than "3/5", which reads faster in a list. */
 function RankPips({ rank, maxRank, colour }: { rank: number; maxRank: number | null; colour: string }) {
+  // Phase 1 buys a node once, so there is no rank to show and no max to show
+  // it against. Saying "bought" beats printing a meaningless "rank 1".
   if (maxRank === null || maxRank <= 0 || maxRank > 8) {
-    return <span className="numeric flex-none text-ash">rank {rank}</span>;
+    return rank <= 1 ? (
+      <span className="flex-none text-ash/60">bought</span>
+    ) : (
+      <span className="numeric flex-none text-ash">rank {rank}</span>
+    );
   }
 
   return (

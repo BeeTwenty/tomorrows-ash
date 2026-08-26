@@ -9,8 +9,8 @@
 --
 -- What this is for: running the website against a *real database* without
 -- building AzerothCore first. It creates the small subset of AzerothCore's
--- schema that the site actually reads, plus the Phase 2 classless tables the
--- armory is written against, and fills them with a handful of characters.
+-- schema that the site actually reads and fills it with a handful of
+-- characters. The classless tables come from the module's own SQL - see below.
 --
 -- Two things it is deliberately not:
 --   * a substitute for AzerothCore's own schema. Only the columns the website
@@ -213,50 +213,22 @@ CREATE TABLE IF NOT EXISTS `acore_world`.`item_template` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===========================================================================
--- The classless tables (Phase 2)
+-- The classless tables
 --
--- This is the contract the armory is written against - see
--- docs/ARCHITECTURE.md §5 and docs/decisions/0004-website.md. `name` and
--- `max_rank` on classless_node are additions the website asks for: without a
--- name it can only print "Ability #133", because spell names live in the
--- client's DBC files and never reach the server database.
+-- These are NOT defined here. They belong to the module, and duplicating their
+-- definition is how two copies of a schema quietly drift apart. Apply the real
+-- thing instead - it is three files and it is the same SQL the realm runs:
 --
--- Definitions live in the world database, per-character state in characters.
+--   mysql acore_world      < modules/mod-classless/data/sql/db-world/2026_08_25_00_classless_schema.sql
+--   mysql acore_world      < modules/mod-classless/data/sql/db-world/2026_08_25_02_classless_prototype_data.sql
+--   mysql acore_characters < modules/mod-classless/data/sql/db-characters/2026_08_25_00_classless_character.sql
+--
+-- `ta.py web fixture --yes` does all of that for you.
+--
+-- The armory reads whatever those files create and probes for the columns that
+-- are still moving (ranks, a point budget), so it works before and after
+-- Phase 2 without a change here.
 -- ===========================================================================
-
-CREATE TABLE IF NOT EXISTS `acore_world`.`classless_tree` (
-  `id`          INT UNSIGNED NOT NULL,
-  `name`        VARCHAR(64)  NOT NULL,
-  `description` VARCHAR(255) DEFAULT NULL,
-  PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `acore_world`.`classless_node` (
-  `id`               INT UNSIGNED NOT NULL,
-  `tree_id`          INT UNSIGNED NOT NULL,
-  `spell_id`         INT UNSIGNED NOT NULL,
-  `tier`             TINYINT UNSIGNED NOT NULL DEFAULT 1,
-  `cost`             TINYINT UNSIGNED NOT NULL DEFAULT 1,
-  `requires_node_id` INT UNSIGNED DEFAULT NULL,
-  `name`             VARCHAR(96)  DEFAULT NULL,
-  `max_rank`         TINYINT UNSIGNED DEFAULT NULL,
-  PRIMARY KEY (`id`),
-  KEY `idx_tree` (`tree_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `acore_characters`.`classless_character` (
-  `guid`         INT UNSIGNED NOT NULL,
-  `points_total` INT UNSIGNED NOT NULL DEFAULT 0,
-  `points_spent` INT UNSIGNED NOT NULL DEFAULT 0,
-  PRIMARY KEY (`guid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-CREATE TABLE IF NOT EXISTS `acore_characters`.`classless_character_node` (
-  `guid`    INT UNSIGNED NOT NULL,
-  `node_id` INT UNSIGNED NOT NULL,
-  `rank`    TINYINT UNSIGNED NOT NULL DEFAULT 1,
-  PRIMARY KEY (`guid`, `node_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ===========================================================================
 -- Sample data
@@ -314,30 +286,11 @@ INSERT IGNORE INTO `acore_characters`.`item_instance` (`guid`, `itemEntry`, `own
 INSERT IGNORE INTO `acore_characters`.`character_inventory` (`guid`, `bag`, `slot`, `item`) VALUES
   (1, 0, 0, 5001), (1, 0, 2, 5002), (1, 0, 4, 5003), (1, 0, 15, 5004);
 
--- Classless data: Emberlyn is Fire + Sword Mastery, Sorrowmark spreads wide.
-INSERT IGNORE INTO `acore_world`.`classless_tree` (`id`, `name`, `description`) VALUES
-  (1, 'Fire',          'Direct damage that grows the longer a fight runs.'),
-  (2, 'Frost',         'Control, slows and survivability.'),
-  (3, 'Shadow',        'Damage over time and life drain.'),
-  (4, 'Sword Mastery', 'Melee weapon skill and openers.'),
-  (5, 'Warding',       'Armour, blocks and damage reduction.'),
-  (7, 'Stealth',       'Positioning, evasion and burst from hiding.');
-
-INSERT IGNORE INTO `acore_world`.`classless_node` (`id`, `tree_id`, `spell_id`, `tier`, `cost`, `name`, `max_rank`) VALUES
-  (101, 1, 133,   1, 1, 'Kindling',      3),
-  (102, 1, 2136,  2, 1, 'Banked Heat',   3),
-  (103, 1, 11366, 3, 2, 'Long Ember',    2),
-  (401, 4, 12294, 1, 1, 'Opening Cut',   3),
-  (402, 4, 1464,  2, 1, 'Weight Behind', 3),
-  (403, 4, 7384,  3, 2, 'Overreach',     2),
-  (701, 7, 1784,  1, 1, 'Quiet Step',    3),
-  (702, 7, 1776,  2, 1, 'Slip Away',     2),
-  (301, 3, 172,   1, 1, 'Rot',           3),
-  (501, 5, 71,    1, 1, 'Braced',        3);
-
-INSERT IGNORE INTO `acore_characters`.`classless_character` (`guid`, `points_total`, `points_spent`) VALUES
-  (1, 48, 20), (3, 44, 10);
-
-INSERT IGNORE INTO `acore_characters`.`classless_character_node` (`guid`, `node_id`, `rank`) VALUES
-  (1, 101, 3), (1, 102, 3), (1, 103, 2), (1, 401, 3), (1, 402, 3), (1, 403, 2),
-  (3, 701, 3), (3, 702, 2), (3, 301, 3), (3, 501, 2);
+-- Classless purchases, in the module's real shape (guid, node_id, spell_id).
+-- Node ids are from the Phase 1 prototype data: 101/102 Fire, 201/202 Frost,
+-- 301/302 Holy, 401/402 Sword Mastery, 501/502 Stealth.
+INSERT IGNORE INTO `acore_characters`.`classless_character_node` (`guid`, `node_id`, `spell_id`) VALUES
+  -- Emberlyn: Fire and Sword Mastery, both to tier 2 - reads as "Emberblade".
+  (1, 101,   133), (1, 102, 25306), (1, 401, 12294), (1, 402,  1464),
+  -- Sorrowmark: Stealth first, a little Frost - reads as a pair.
+  (3, 501,  1784), (3, 502,  1785), (3, 201,   116);

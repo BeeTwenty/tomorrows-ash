@@ -81,6 +81,10 @@ level 80 character has 71, so scarcity is real. **Zero core modifications**
 throughout. Still gated behind `Classless.Enable = 0`; the in-game play test
 needs client data.
 
+The **public website** is live alongside it, and its armory reads those same
+tables: where a normal armory prints a class, this one derives a title from
+how a character has actually spent its points.
+
 The headline research finding: **`Player::learnSpell()` has no class check**.
 Class identity is enforced at *acquisition paths* (trainers, the talent frame,
 character creation), not at spell ownership. So the classless system can be

@@ -108,6 +108,7 @@ function buildFromSpread(seed: DemoSeed): CharacterBuild {
         return {
           id: treeId * 100 + i,
           name: DEMO_NODE_NAMES[(treeId + i) % DEMO_NODE_NAMES.length]!,
+          description: null,
           spellId: 10_000 + treeId * 50 + i,
           tier: i + 1,
           rank,

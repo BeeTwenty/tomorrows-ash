@@ -7,19 +7,27 @@ import type { BuildNode, BuildTree, CharacterBuild } from "./types";
 /**
  * Reading a character's build on a realm with no classes.
  *
- * The data contract this expects is the Phase 2 schema sketched in
- * docs/ARCHITECTURE.md §5:
+ * The tables this reads are the module's own, created by
+ * modules/mod-classless/data/sql:
  *
- *   world   classless_tree            id, name, description
- *   world   classless_node            id, tree_id, spell_id, tier, cost
- *                                     (optional: name, max_rank, icon)
- *   chars   classless_character       guid, points_total, points_spent
- *   chars   classless_character_node  guid, node_id, rank
+ *   world   classless_tree            id, name, description, sort_order, enabled
+ *   world   classless_node            id, tree_id, spell_id, name, description,
+ *                                     tier, cost, required_level, requires_node,
+ *                                     sort_order, enabled
+ *   chars   classless_character_node  guid, node_id, spell_id, learned_at
  *
- * None of it exists yet. Until it does, `loadBuild` returns an **interim**
- * build: the chassis, the talents and abilities the stock database records,
- * and a plain statement that the classless system is not live here. It never
- * invents a tree that does not exist.
+ * Two of those shapes will move under it, so nothing here assumes them:
+ *
+ *   - **Ranks.** Phase 1 buys a node once; there is no `rank` column. If Phase 2
+ *     adds one, the column probe below picks it up and the display switches
+ *     from "bought" to ranked pips without another change here.
+ *   - **A budget.** `classless_character` (points_total / points_spent) is a
+ *     Phase 2 table. Without it the spend bar simply has no unspent remainder.
+ *
+ * And when none of the tables exist at all - a realm that has not applied the
+ * module SQL - `loadBuild` returns an **interim** build: the chassis, what the
+ * stock database records, and a plain statement that the system is not live
+ * here. It never invents a tree that does not exist.
  */
 
 const CLASSLESS_WORLD_TABLES = ["classless_tree", "classless_node"];
@@ -59,6 +67,7 @@ interface NodeRow extends RowDataPacket {
   cost: number;
   name: string | null;
   max_rank: number | null;
+  description: string | null;
 }
 
 interface CharNodeRow extends RowDataPacket {
@@ -116,27 +125,44 @@ async function interimBuild(guid: number): Promise<CharacterBuild> {
 export async function loadBuild(guid: number): Promise<CharacterBuild> {
   if (!(await classlessTablesPresent())) return interimBuild(guid);
 
-  // `name` and `max_rank` are recommended additions to classless_node, not
-  // part of the sketch. Select them only when the realm actually has them.
-  const nodeColumns = await columnsOf(env.db.world, "classless_node");
+  // Phase 1 has `name` but no `max_rank`; a character node is bought, not
+  // ranked. Ask the database which of those exist rather than assuming, so a
+  // Phase 2 migration lights up the richer display on its own.
+  const [nodeColumns, charNodeColumns] = await Promise.all([
+    columnsOf(env.db.world, "classless_node"),
+    columnsOf(env.db.characters, "classless_character_node"),
+  ]);
+
   const nameExpr = nodeColumns.has("name") ? "n.`name`" : "NULL";
   const maxRankExpr = nodeColumns.has("max_rank") ? "n.`max_rank`" : "NULL";
+  const descriptionExpr = nodeColumns.has("description") ? "n.`description`" : "NULL";
+  const enabledFilter = nodeColumns.has("enabled") ? "WHERE n.`enabled` = 1" : "";
+  const treeOrder = (await columnsOf(env.db.world, "classless_tree")).has("sort_order")
+    ? "sort_order, id"
+    : "id";
+  // `rank` became reserved in MySQL 8; it has to stay quoted where it exists.
+  const rankExpr = charNodeColumns.has("rank") ? "`rank`" : "1 AS `rank`";
 
   const [trees, nodes, taken, budget] = await Promise.all([
     tryQuery<TreeRow>(
       "classless trees",
-      `SELECT id, name, description FROM ${schema.world}.\`classless_tree\` ORDER BY id`,
+      `SELECT id, name, description
+         FROM ${schema.world}.\`classless_tree\`
+        ORDER BY ${treeOrder}`,
     ),
     tryQuery<NodeRow>(
       "classless nodes",
       `SELECT n.id, n.tree_id, n.spell_id, n.tier, n.cost,
-              ${nameExpr} AS name, ${maxRankExpr} AS max_rank
-         FROM ${schema.world}.\`classless_node\` n`,
+              ${nameExpr} AS name, ${maxRankExpr} AS max_rank,
+              ${descriptionExpr} AS description
+         FROM ${schema.world}.\`classless_node\` n
+         ${enabledFilter}`,
     ),
     tryQuery<CharNodeRow>(
       "classless character nodes",
-      // `rank` became reserved in MySQL 8; it has to stay quoted.
-      `SELECT node_id, \`rank\` FROM ${schema.chars}.\`classless_character_node\` WHERE guid = ?`,
+      `SELECT node_id, ${rankExpr}
+         FROM ${schema.chars}.\`classless_character_node\`
+        WHERE guid = ?`,
       [guid],
     ),
     tryQuery<BudgetRow>(
@@ -171,11 +197,14 @@ export async function loadBuild(guid: number): Promise<CharacterBuild> {
     const tree = treesById.get(node.tree_id);
     if (!tree) continue;
 
-    const rank = Math.max(0, row.rank);
+    // Without ranks every purchased node counts once, which is what the
+    // `1 AS rank` fallback above produces.
+    const rank = Math.max(1, row.rank);
     const spent = rank * Math.max(0, node.cost);
     const built: BuildNode = {
       id: node.id,
       name: node.name ?? `Ability #${node.spell_id}`,
+      description: node.description,
       spellId: node.spell_id,
       tier: node.tier,
       rank,

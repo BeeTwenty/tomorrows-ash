@@ -71,6 +71,7 @@ export interface CharacterStats {
 export interface BuildNode {
   id: number;
   name: string;
+  description: string | null;
   spellId: number;
   tier: number;
   rank: number;
