@@ -52,6 +52,19 @@ namespace TomorrowsAsh
         LevelTooLow,
         MissingPrerequisite,
         Disabled,
+        NotEnoughPoints,
+        AlreadyKnowsSpell,   // knows the spell natively - selling it would be a waste
+    };
+
+    // What a character owns of one node. Kept per-character in memory.
+    struct OwnedNode
+    {
+        uint32 NodeId   = 0;
+        uint32 SpellId  = 0;
+        uint32 CostPaid = 0;
+        // False when the character already knew the spell, in which case respec
+        // must NOT remove it - it is not ours to take back.
+        bool   Granted  = true;
     };
 
     class ClasslessMgr
@@ -68,11 +81,23 @@ namespace TomorrowsAsh
         // Does this player already have this node recorded as purchased?
         [[nodiscard]] bool HasNode(Player const* player, uint32 nodeId) const;
 
+        // Points already committed. Sums what was PAID, not what nodes cost
+        // today, so re-pricing never retroactively bankrupts anyone.
+        [[nodiscard]] uint32 GetSpentPoints(Player const* player) const;
+        [[nodiscard]] uint32 GetTotalPoints(Player const* player) const;
+        // Saturating: a character over budget after a re-tune reads 0, not a
+        // huge number from unsigned wraparound.
+        [[nodiscard]] uint32 GetAvailablePoints(Player const* player) const;
+
         [[nodiscard]] LearnCheck CanLearn(Player const* player, ClasslessNode const& node) const;
 
         // Grants the spell and records the purchase. Returns the same check
         // result; only LearnCheck::Ok means anything happened.
         LearnCheck Learn(Player* player, ClasslessNode const& node);
+
+        // Refunds every point and removes the spells we granted. Returns how
+        // many nodes were cleared.
+        uint32 Respec(Player* player);
 
         void LoadCharacter(Player* player);
         void UnloadCharacter(ObjectGuid::LowType guid);
@@ -83,8 +108,8 @@ namespace TomorrowsAsh
         std::unordered_map<uint32, ClasslessTree> _trees;
         std::unordered_map<uint32, ClasslessNode> _nodes;
 
-        // guid -> node ids owned. Cached so gossip rendering stays off the DB.
-        std::unordered_map<ObjectGuid::LowType, std::vector<uint32>> _owned;
+        // guid -> owned nodes. Cached so gossip rendering stays off the DB.
+        std::unordered_map<ObjectGuid::LowType, std::vector<OwnedNode>> _owned;
     };
 }
 

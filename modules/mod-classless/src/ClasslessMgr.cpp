@@ -137,7 +137,36 @@ namespace TomorrowsAsh
         auto itr = _owned.find(player->GetGUID().GetCounter());
         if (itr == _owned.end())
             return false;
-        return std::find(itr->second.begin(), itr->second.end(), nodeId) != itr->second.end();
+        return std::any_of(itr->second.begin(), itr->second.end(),
+                           [nodeId](OwnedNode const& o) { return o.NodeId == nodeId; });
+    }
+
+    uint32 ClasslessMgr::GetSpentPoints(Player const* player) const
+    {
+        auto itr = _owned.find(player->GetGUID().GetCounter());
+        if (itr == _owned.end())
+            return 0;
+
+        uint32 spent = 0;
+        for (OwnedNode const& owned : itr->second)
+            spent += owned.CostPaid;
+        return spent;
+    }
+
+    uint32 ClasslessMgr::GetTotalPoints(Player const* player) const
+    {
+        return sClasslessConfig.BudgetForLevel(player->GetLevel());
+    }
+
+    uint32 ClasslessMgr::GetAvailablePoints(Player const* player) const
+    {
+        uint32 total = GetTotalPoints(player);
+        uint32 spent = GetSpentPoints(player);
+
+        // Saturate rather than wrap. A character can legitimately be over
+        // budget after the curve is re-tuned downward; that must read as "0
+        // available", not as four billion.
+        return spent >= total ? 0 : total - spent;
     }
 
     LearnCheck ClasslessMgr::CanLearn(Player const* player, ClasslessNode const& node) const
@@ -151,6 +180,15 @@ namespace TomorrowsAsh
         if (node.RequiresNode && !HasNode(player, node.RequiresNode))
             return LearnCheck::MissingPrerequisite;
 
+        // Refuse to sell an ability the character already has by other means.
+        // Charging points for a spell they already own is pure waste, and it
+        // muddies the respec bookkeeping (see OwnedNode::Granted).
+        if (player->HasSpell(node.SpellId))
+            return LearnCheck::AlreadyKnowsSpell;
+
+        if (GetAvailablePoints(player) < node.Cost)
+            return LearnCheck::NotEnoughPoints;
+
         return LearnCheck::Ok;
     }
 
@@ -160,37 +198,77 @@ namespace TomorrowsAsh
         if (check != LearnCheck::Ok)
             return check;
 
+        // CanLearn already rejected spells the character knows natively, so
+        // anything reaching here is genuinely ours to grant - and ours to take
+        // back on respec.
+        bool const granted = !player->HasSpell(node.SpellId);
+
         // This is the whole trick. Player::learnSpell() performs no class or
         // race check whatsoever (docs/CLASS-RESTRICTIONS.md), so a Warrior
         // learning Fireball needs no core modification.
         player->learnSpell(node.SpellId);
 
         ObjectGuid::LowType guid = player->GetGUID().GetCounter();
-        _owned[guid].push_back(node.Id);
+        _owned[guid].push_back({ node.Id, node.SpellId, node.Cost, granted });
 
         CharacterDatabase.Execute(
-            "INSERT INTO classless_character_node (guid, node_id, spell_id) VALUES ({}, {}, {}) "
-            "ON DUPLICATE KEY UPDATE spell_id = VALUES(spell_id)",
-            guid, node.Id, node.SpellId);
+            "INSERT INTO classless_character_node (guid, node_id, spell_id, cost_paid, granted) "
+            "VALUES ({}, {}, {}, {}, {}) "
+            "ON DUPLICATE KEY UPDATE spell_id = VALUES(spell_id), "
+            "cost_paid = VALUES(cost_paid), granted = VALUES(granted)",
+            guid, node.Id, node.SpellId, node.Cost, granted ? 1 : 0);
 
-        LOG_INFO("module.classless", "[Classless] {} learned '{}' (node {}, spell {})",
-                 player->GetName(), node.Name, node.Id, node.SpellId);
+        LOG_INFO("module.classless", "[Classless] {} learned '{}' (node {}, spell {}, cost {})",
+                 player->GetName(), node.Name, node.Id, node.SpellId, node.Cost);
 
         return LearnCheck::Ok;
+    }
+
+    uint32 ClasslessMgr::Respec(Player* player)
+    {
+        ObjectGuid::LowType guid = player->GetGUID().GetCounter();
+        auto itr = _owned.find(guid);
+        if (itr == _owned.end() || itr->second.empty())
+            return 0;
+
+        uint32 cleared = 0;
+        for (OwnedNode const& owned : itr->second)
+        {
+            // Only take back what we actually gave. A spell the character knew
+            // before buying the node is theirs, not ours.
+            if (owned.Granted)
+                player->removeSpell(owned.SpellId, SPEC_MASK_ALL, false);
+            ++cleared;
+        }
+
+        itr->second.clear();
+        CharacterDatabase.Execute("DELETE FROM classless_character_node WHERE guid = {}", guid);
+
+        LOG_INFO("module.classless", "[Classless] {} respecced, {} node(s) cleared",
+                 player->GetName(), cleared);
+
+        return cleared;
     }
 
     void ClasslessMgr::LoadCharacter(Player* player)
     {
         ObjectGuid::LowType guid = player->GetGUID().GetCounter();
-        std::vector<uint32>& owned = _owned[guid];
+        std::vector<OwnedNode>& owned = _owned[guid];
         owned.clear();
 
         if (QueryResult result = CharacterDatabase.Query(
-                "SELECT node_id FROM classless_character_node WHERE guid = {}", guid))
+                "SELECT node_id, spell_id, cost_paid, granted FROM classless_character_node "
+                "WHERE guid = {}", guid))
         {
             do
             {
-                owned.push_back(result->Fetch()[0].Get<uint32>());
+                Field* fields = result->Fetch();
+                owned.push_back({
+                    fields[0].Get<uint32>(),
+                    fields[1].Get<uint32>(),
+                    fields[2].Get<uint32>(),
+                    fields[3].Get<uint8>() != 0
+                });
             } while (result->NextRow());
         }
     }
@@ -210,6 +288,8 @@ namespace TomorrowsAsh
             case LearnCheck::LevelTooLow:         return "You are not experienced enough for that yet.";
             case LearnCheck::MissingPrerequisite: return "You must learn its foundation first.";
             case LearnCheck::Disabled:            return "That ability is unavailable.";
+            case LearnCheck::NotEnoughPoints:     return "You lack the skill points.";
+            case LearnCheck::AlreadyKnowsSpell:   return "You already command that ability.";
         }
         return "You cannot learn that.";
     }

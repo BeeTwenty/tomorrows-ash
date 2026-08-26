@@ -31,16 +31,38 @@ namespace
         MENU_TREE_LIST = GOSSIP_SENDER_MAIN + 100,  // action = unused
         MENU_TREE      = GOSSIP_SENDER_MAIN + 101,  // action = tree id
         MENU_LEARN     = GOSSIP_SENDER_MAIN + 102,  // action = node id
+        MENU_RESPEC    = GOSSIP_SENDER_MAIN + 103,  // action = unused
     };
+
+    // Players need to see their budget before choosing, not after.
+    std::string BudgetLine(Player* player)
+    {
+        return "Skill points: |cffffcc00"
+             + std::to_string(sClasslessMgr.GetAvailablePoints(player)) + "|r of "
+             + std::to_string(sClasslessMgr.GetTotalPoints(player)) + " unspent";
+    }
 
     void SendTreeList(Player* player, Creature* creature)
     {
         ClearGossipMenuFor(player);
 
+        AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, BudgetLine(player), MENU_TREE_LIST, 0);
+
         for (ClasslessTree const* tree : sClasslessMgr.GetTrees())
         {
             AddGossipItemFor(player, GOSSIP_ICON_TRAINER,
                              tree->Name, MENU_TREE, tree->Id);
+        }
+
+        if (sClasslessMgr.GetSpentPoints(player) > 0)
+        {
+            std::string label = "Unlearn everything and refund my points";
+            if (sClasslessConfig.RespecCost)
+                label += " (" + std::to_string(sClasslessConfig.RespecCost / 10000) + "g)";
+
+            AddGossipItemFor(player, GOSSIP_ICON_TALK, label, MENU_RESPEC, 0,
+                             "Forget every ability you have bought? "
+                             "Abilities you learned elsewhere are untouched.", 0, false);
         }
 
         SendGossipMenuFor(player, BROKER_NPC_TEXT, creature->GetGUID());
@@ -69,7 +91,16 @@ namespace
             switch (check)
             {
                 case LearnCheck::Ok:
-                    label = node->Name;
+                    label = node->Name + " |cffffcc00(" + std::to_string(node->Cost) + " pts)|r";
+                    break;
+                case LearnCheck::NotEnoughPoints:
+                    label = "|cff808080" + node->Name + " (" +
+                            std::to_string(node->Cost) + " pts - not enough)|r";
+                    icon  = GOSSIP_ICON_CHAT;
+                    break;
+                case LearnCheck::AlreadyKnowsSpell:
+                    label = "|cff808080" + node->Name + " (already yours)|r";
+                    icon  = GOSSIP_ICON_CHAT;
                     break;
                 case LearnCheck::AlreadyKnown:
                     label = "|cff808080" + node->Name + " (known)|r";
@@ -102,6 +133,7 @@ namespace
             }
         }
 
+        AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, BudgetLine(player), MENU_TREE, treeId);
         AddGossipItemFor(player, GOSSIP_ICON_CHAT, "< Back", MENU_TREE_LIST, 0);
         SendGossipMenuFor(player, BROKER_NPC_TEXT, creature->GetGUID());
     }
@@ -166,6 +198,26 @@ public:
                 // Re-render the tree so the new state (and any node it just
                 // unlocked) is visible immediately.
                 SendTree(player, creature, node->TreeId);
+                break;
+            }
+
+            case MENU_RESPEC:
+            {
+                if (sClasslessConfig.RespecCost && !player->HasEnoughMoney(sClasslessConfig.RespecCost))
+                {
+                    ChatHandler(player->GetSession()).SendSysMessage(
+                        "|cffff2020You cannot afford that.|r");
+                    SendTreeList(player, creature);
+                    break;
+                }
+
+                uint32 cleared = sClasslessMgr.Respec(player);
+                if (cleared && sClasslessConfig.RespecCost)
+                    player->ModifyMoney(-int32(sClasslessConfig.RespecCost));
+
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff00ff00Forgotten %u ability/abilities. Your points are yours again.|r", cleared);
+                SendTreeList(player, creature);
                 break;
             }
 

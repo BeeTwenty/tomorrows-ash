@@ -46,17 +46,27 @@ Findings in **[PHASE1-FINDINGS.md](PHASE1-FINDINGS.md)**. Headlines:
 
 ---
 
-## Phase 2 — Skill-point budget
+## Phase 2 — Skill-point budget ⏳ mechanism built
 
-The real system. Body type decided (option 2); **blocked on sign-off of the
-numbers in [BODY-TYPES.md](BODY-TYPES.md)**.
+The budget mechanism is independent of the body-type numbers, so it was built
+while those await sign-off.
 
-- Budget curve by level, config-driven.
-- Retire Blizzard talents via `OnPlayerCalculateTalentsPoints` (already wired,
-  behind `Classless.SuppressBlizzardTalents`).
-- Spend / respec / refund through gossip.
-- Migration for characters with spent talent points.
-- Tree and node data for the real ability pool.
+- [x] Budget curve by level, config-driven and **derived, never stored** — so
+      re-tuning re-prices the realm with no migration
+- [x] Cost enforcement, with saturating arithmetic for over-budget characters
+- [x] Respec that refunds points and removes only spells **we** granted
+- [x] Gossip shows the budget and offers respec; `.classless points` / `respec`
+- [x] Blizzard talent suppression wired (still defaulted off)
+- [ ] **Body-type stat deltas** — blocked on [BODY-TYPES.md](BODY-TYPES.md) sign-off
+- [ ] **Real tree data** — blocked on the pricing question below
+
+Details in **[PHASE2-BUDGET.md](PHASE2-BUDGET.md)**. The finding that matters:
+
+> **The budget currently constrains nothing.** From level 40 a character can
+> afford every ability in the prototype pool and still have points spare. The
+> mechanism is right; the *costs* are placeholders. Real tree data must cost
+> roughly 150–250 points against a level 80 budget of 71, or we have rebuilt
+> "everyone gets everything" with extra steps.
 
 **Two schema requests from the website**, which is already written against the
 [§5 sketch](ARCHITECTURE.md#5-skill-point-budget-phase-2-design-sketch) and
@@ -109,7 +119,13 @@ approval. Two sub-decisions in there matter as much as the numbers:
 - **Is armor proficiency purchasable?** If it is, the three body types collapse
   into one, because proficiency is just a spell.
 
-### 2. Rank progression — needed before real tree data
+### 2. Ability pool pricing — needed before real tree data
+
+How much of the pool should a maxed character afford? I suggest **30–50%**,
+implying a pool costing 150–250 points. That number decides how many nodes get
+authored and at what cost. See [PHASE2-BUDGET.md §4](PHASE2-BUDGET.md).
+
+### 3. Rank progression — needed before real tree data
 
 Rank chains run to 16 entries and a node grants exactly one rank. Either a node
 per useful rank, or one node whose rank scales with level. I lean towards

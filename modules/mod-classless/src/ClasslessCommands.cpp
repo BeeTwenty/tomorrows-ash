@@ -33,6 +33,8 @@ public:
             { "list",   HandleListCommand,   SEC_GAMEMASTER, Console::No },
             { "learn",  HandleLearnCommand,  SEC_GAMEMASTER, Console::No },
             { "status", HandleStatusCommand, SEC_GAMEMASTER, Console::No },
+            { "points", HandlePointsCommand, SEC_GAMEMASTER, Console::No },
+            { "respec", HandleRespecCommand, SEC_GAMEMASTER, Console::No },
             { "reload", HandleReloadCommand, SEC_ADMINISTRATOR, Console::Yes },
         };
 
@@ -149,8 +151,52 @@ public:
         if (!owned)
             handler->SendSysMessage("No classless abilities learned.");
         else
-            handler->PSendSysMessage("%u classless abilities learned.", owned);
+            handler->PSendSysMessage("%u classless abilities learned, %u of %u points unspent.",
+                                     owned, sClasslessMgr.GetAvailablePoints(player),
+                                     sClasslessMgr.GetTotalPoints(player));
 
+        return true;
+    }
+
+    static bool HandlePointsCommand(ChatHandler* handler)
+    {
+        if (!RequireEnabled(handler))
+            return false;
+
+        Player* player = handler->GetSession()->GetPlayer();
+        uint32 total = sClasslessMgr.GetTotalPoints(player);
+        uint32 spent = sClasslessMgr.GetSpentPoints(player);
+
+        handler->PSendSysMessage("Level %u: |cffffcc00%u|r of %u points unspent (%u committed).",
+                                 player->GetLevel(), sClasslessMgr.GetAvailablePoints(player),
+                                 total, spent);
+
+        if (spent > total)
+        {
+            handler->PSendSysMessage(
+                "|cffff2020Over budget by %u.|r The curve was re-tuned below what you "
+                "already spent. Nothing was taken away, but you cannot buy more until "
+                "you respec or gain levels.", spent - total);
+        }
+        return true;
+    }
+
+    static bool HandleRespecCommand(ChatHandler* handler)
+    {
+        if (!RequireEnabled(handler))
+            return false;
+
+        Player* player = handler->GetSession()->GetPlayer();
+        uint32 cleared = sClasslessMgr.Respec(player);
+
+        if (!cleared)
+        {
+            handler->SendSysMessage("Nothing to forget.");
+            return true;
+        }
+
+        handler->PSendSysMessage("Cleared %u node(s). %u points available.",
+                                 cleared, sClasslessMgr.GetAvailablePoints(player));
         return true;
     }
 
