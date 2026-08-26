@@ -73,6 +73,7 @@ interface NodeRow extends RowDataPacket {
 interface CharNodeRow extends RowDataPacket {
   node_id: number;
   rank: number;
+  cost_paid: number | null;
 }
 
 interface BudgetRow extends RowDataPacket {
@@ -122,7 +123,26 @@ async function interimBuild(guid: number): Promise<CharacterBuild> {
   };
 }
 
-export async function loadBuild(guid: number): Promise<CharacterBuild> {
+/**
+ * The point budget a character of this level is entitled to.
+ *
+ * Mirrors `ClasslessConfig::BudgetForLevel` in the module:
+ *
+ *   level < FirstLevel ? Bonus : (level - FirstLevel + 1) * PerLevel + Bonus
+ *
+ * The module derives this from level and never stores it, so there is no table
+ * to read - the site has to compute the same curve. That means the three
+ * settings in `web/.env.local` must match `mod_classless.conf`; if they drift,
+ * the armory's "of N" is wrong while everything else stays right. Hence the
+ * loud comment in .env.example rather than a silent default.
+ */
+export function budgetForLevel(level: number): number {
+  const { pointsFirstLevel, pointsPerLevel, pointsBonus } = env.classless;
+  if (level < pointsFirstLevel) return pointsBonus;
+  return (level - pointsFirstLevel + 1) * pointsPerLevel + pointsBonus;
+}
+
+export async function loadBuild(guid: number, level?: number): Promise<CharacterBuild> {
   if (!(await classlessTablesPresent())) return interimBuild(guid);
 
   // Phase 1 has `name` but no `max_rank`; a character node is bought, not
@@ -142,6 +162,10 @@ export async function loadBuild(guid: number): Promise<CharacterBuild> {
     : "id";
   // `rank` became reserved in MySQL 8; it has to stay quoted where it exists.
   const rankExpr = charNodeColumns.has("rank") ? "`rank`" : "1 AS `rank`";
+  // Phase 2 records what a character was actually charged. Using it rather than
+  // the node's current cost means re-pricing a node does not retroactively
+  // rewrite what everyone who bought it earlier appears to have paid.
+  const costPaidExpr = charNodeColumns.has("cost_paid") ? "`cost_paid`" : "NULL AS `cost_paid`";
 
   const [trees, nodes, taken, budget] = await Promise.all([
     tryQuery<TreeRow>(
@@ -160,7 +184,7 @@ export async function loadBuild(guid: number): Promise<CharacterBuild> {
     ),
     tryQuery<CharNodeRow>(
       "classless character nodes",
-      `SELECT node_id, ${rankExpr}
+      `SELECT node_id, ${rankExpr}, ${costPaidExpr}
          FROM ${schema.chars}.\`classless_character_node\`
         WHERE guid = ?`,
       [guid],
@@ -200,7 +224,8 @@ export async function loadBuild(guid: number): Promise<CharacterBuild> {
     // Without ranks every purchased node counts once, which is what the
     // `1 AS rank` fallback above produces.
     const rank = Math.max(1, row.rank);
-    const spent = rank * Math.max(0, node.cost);
+    const spent =
+      row.cost_paid !== null ? Math.max(0, row.cost_paid) : rank * Math.max(0, node.cost);
     const built: BuildNode = {
       id: node.id,
       name: node.name ?? `Ability #${node.spell_id}`,
@@ -227,11 +252,11 @@ export async function loadBuild(guid: number): Promise<CharacterBuild> {
 
   return {
     mode: "classless",
-    // The itemised sum, not `classless_character.points_spent`. The two should
-    // agree; when they do not, the number shown is the one the tree list below
-    // it actually justifies.
+    // The itemised sum. It is what the tree list below it actually justifies,
+    // and with `cost_paid` present it is also what the realm charged.
     pointsSpent,
-    pointsTotal: budget?.[0]?.points_total ?? null,
+    pointsTotal:
+      budget?.[0]?.points_total ?? (level !== undefined ? budgetForLevel(level) : null),
     trees: populated,
     archetype: composeArchetype(populated.map((t) => ({ name: t.name, points: t.points }))),
     talentsRecorded: null,

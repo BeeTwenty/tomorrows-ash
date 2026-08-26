@@ -180,6 +180,18 @@ export const env = {
     rateLimitDriver: str("RATE_LIMIT_DRIVER", "memory").toLowerCase() === "mysql" ? "mysql" : "memory",
   },
 
+  /**
+   * Mirrors `Classless.Points.*` in mod_classless.conf. The module derives a
+   * character's budget from level and never stores it, so the armory has to
+   * compute the same curve to show "20 of 71 points spent". Keep these in step
+   * with the realm's config; nothing can detect the drift automatically.
+   */
+  classless: {
+    pointsFirstLevel: int("CLASSLESS_POINTS_FIRST_LEVEL", 10),
+    pointsPerLevel: int("CLASSLESS_POINTS_PER_LEVEL", 1),
+    pointsBonus: int("CLASSLESS_POINTS_BONUS", 0),
+  },
+
   armory: {
     /**
      * Characters belonging to accounts with account_access.gmlevel >= this are

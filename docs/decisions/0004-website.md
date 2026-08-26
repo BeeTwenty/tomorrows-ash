@@ -87,15 +87,25 @@ built, which settled two open questions:
 - **`classless_node.name` exists**, and for the same reason the armory needed
   it: spell names live in the client's DBC files and never reach the server
   database. Abilities render as "Fireball (Improved)", not `Ability #25306`.
-- **There are no ranks.** A Phase 1 node is bought once; there is no `rank`
-  column and no `max_rank`. So a purchased node shows as "bought" and counts
-  its `cost` once.
+- **There are no ranks.** A node is bought once; there is no `rank` column and
+  no `max_rank`. So a purchased node shows as "bought" and counts its cost once.
 
-Neither is assumed. `build.ts` probes `information_schema` for `rank`,
-`max_rank`, `sort_order`, `enabled` and `description`, so a Phase 2 migration
-that adds ranks or a point budget lights up the richer display without a change
-here — and a realm that has not applied the module SQL at all still gets the
-honest "not yet" panel.
+Phase 2 then added `cost_paid` and `granted` to `classless_character_node`, and
+the armory picked both up through the same probe: points spent now come from
+what a character was actually *charged*, so re-pricing a node in
+`classless_node` no longer rewrites history for everyone who bought it earlier.
+
+One thing the site has to duplicate rather than read. The budget is derived
+from level by `ClasslessConfig::BudgetForLevel` and never stored, so
+`budgetForLevel()` recomputes the same curve from `CLASSLESS_POINTS_*` in the
+site's environment. Those three settings must match `mod_classless.conf`;
+nothing can detect the drift, which is why `.env.example` says so loudly next
+to them.
+
+None of it is assumed. `build.ts` probes `information_schema` for `rank`,
+`max_rank`, `cost_paid`, `sort_order`, `enabled` and `description`, so a realm
+mid-upgrade renders correctly either way — and one that has not applied the
+module SQL at all still gets the honest "not yet" panel.
 
 ## Consequences
 
