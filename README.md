@@ -62,6 +62,8 @@ this repository. There is no hidden divergence. See
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
+| [docs/PHASE1-FINDINGS.md](docs/PHASE1-FINDINGS.md) | what granting an off-class ability actually does, and what still needs testing |
+| [docs/BODY-TYPES.md](docs/BODY-TYPES.md) | proposed body-type stat deltas, awaiting sign-off |
 | [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
 | [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
@@ -71,10 +73,10 @@ this repository. There is no hidden divergence. See
 
 ## Status
 
-**Phase 0 complete** — core selected, repo scaffolded, server builds, class
-restrictions mapped, public website live. The classless module exists but is
-**inert** (`Classless.Enable = 0`); the realm currently behaves as stock
-AzerothCore.
+**Phase 1 built** — the classless system exists as data. Five ability trees and
+ten deliberately off-class abilities load from the database, served through a
+gossip NPC, with **zero core modifications**. Still gated behind
+`Classless.Enable = 0`, and the in-game play test needs client data.
 
 The headline research finding: **`Player::learnSpell()` has no class check**.
 Class identity is enforced at *acquisition paths* (trainers, the talent frame,
