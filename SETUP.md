@@ -360,10 +360,16 @@ for testing without hunting down the NPC:
 ```
 .classless trees            list the trees
 .classless list <treeId>    list abilities in a tree
-.classless learn <nodeId>   learn one (respects level + prerequisites)
+.classless learn <nodeId>   learn one (respects level, prerequisites and points)
+.classless points           your skill-point budget
+.classless respec           forget everything, refund the points
 .classless status           what you own, and whether it's really in your spellbook
 .classless reload           re-read the trees from the database
 ```
+
+Skill points are earned per level (`Classless.Points.*` in the module config)
+and are **derived from level, never stored** — retuning the curve re-prices
+every character immediately, no migration.
 
 Abilities live in the `classless_tree` / `classless_node` tables — changing them
 needs no recompile, just `.classless reload`.

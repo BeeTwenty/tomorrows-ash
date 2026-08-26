@@ -63,6 +63,7 @@ this repository. There is no hidden divergence. See
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
 | [docs/PHASE1-FINDINGS.md](docs/PHASE1-FINDINGS.md) | what granting an off-class ability actually does, and what still needs testing |
+| [docs/PHASE2-BUDGET.md](docs/PHASE2-BUDGET.md) | the skill-point budget: how it works, and why it doesn't constrain anything yet |
 | [docs/BODY-TYPES.md](docs/BODY-TYPES.md) | proposed body-type stat deltas, awaiting sign-off |
 | [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
@@ -73,10 +74,12 @@ this repository. There is no hidden divergence. See
 
 ## Status
 
-**Phase 1 built** — the classless system exists as data. Five ability trees and
-ten deliberately off-class abilities load from the database, served through a
-gossip NPC, with **zero core modifications**. Still gated behind
-`Classless.Enable = 0`, and the in-game play test needs client data.
+**Phase 2 built** — 10 ability trees and 50 abilities, drawn from every class
+and open to any character, served through a gossip NPC and priced against a
+per-level skill-point budget with working respec. The pool costs 200 points; a
+level 80 character has 71, so scarcity is real. **Zero core modifications**
+throughout. Still gated behind `Classless.Enable = 0`; the in-game play test
+needs client data.
 
 The **public website** is live alongside it, and its armory reads those same
 tables: where a normal armory prints a class, this one derives a title from

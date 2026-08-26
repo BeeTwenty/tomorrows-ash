@@ -46,17 +46,27 @@ Findings in **[PHASE1-FINDINGS.md](PHASE1-FINDINGS.md)**. Headlines:
 
 ---
 
-## Phase 2 — Skill-point budget
+## Phase 2 — Skill-point budget ⏳ mechanism built
 
-The real system. Body type decided (option 2); **blocked on sign-off of the
-numbers in [BODY-TYPES.md](BODY-TYPES.md)**.
+The budget mechanism is independent of the body-type numbers, so it was built
+while those await sign-off.
 
-- Budget curve by level, config-driven.
-- Retire Blizzard talents via `OnPlayerCalculateTalentsPoints` (already wired,
-  behind `Classless.SuppressBlizzardTalents`).
-- Spend / respec / refund through gossip.
-- Migration for characters with spent talent points.
-- Tree and node data for the real ability pool.
+- [x] Budget curve by level, config-driven and **derived, never stored** — so
+      re-tuning re-prices the realm with no migration
+- [x] Cost enforcement, with saturating arithmetic for over-budget characters
+- [x] Respec that refunds points and removes only spells **we** granted
+- [x] Gossip shows the budget and offers respec; `.classless points` / `respec`
+- [x] Blizzard talent suppression wired (still defaulted off)
+- [ ] **Body-type stat deltas** — blocked on [BODY-TYPES.md](BODY-TYPES.md) sign-off
+- [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
+      level 80, inside the approved 30–50% band). Every spell verified against
+      the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
+
+Details in **[PHASE2-BUDGET.md](PHASE2-BUDGET.md)**. The finding that matters:
+
+Pricing is settled: the pool costs **200 points** against 71 at level 80, so a
+maxed character affords **36%** of it. Scarcity is real — points buy depth or
+breadth, never both.
 
 **What the website needs from this phase.** Its armory already reads the
 Phase 1 tables and renders real builds. Two things would light up display it
@@ -110,7 +120,7 @@ approval. Two sub-decisions in there matter as much as the numbers:
 - **Is armor proficiency purchasable?** If it is, the three body types collapse
   into one, because proficiency is just a spell.
 
-### 2. Rank progression — needed before real tree data
+### 2. Rank progression — the next authoring pass
 
 Rank chains run to 16 entries and a node grants exactly one rank. Either a node
 per useful rank, or one node whose rank scales with level. I lean towards
