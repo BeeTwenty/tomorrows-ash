@@ -366,11 +366,37 @@ def cmd_configure(args):
     return 0
 
 
+def module_sources_newer_than_cache(bdir):
+    """True if any module source is newer than the CMake cache.
+
+    AzerothCore's CMake globs module sources at CONFIGURE time, so a newly added
+    .cpp is invisible to the build until cmake re-runs - and the failure mode is
+    a confusing undefined-reference at link, not a missing-file error. Detect it
+    instead of letting people lose an hour to it.
+    """
+    cache = bdir / "CMakeCache.txt"
+    if not cache.exists():
+        return False
+    cache_mtime = cache.stat().st_mtime
+    for module in load_upstream().get("modules", []):
+        src = REPO / "modules" / module
+        for path in src.rglob("*"):
+            if path.suffix in (".cpp", ".h", ".cmake") and path.stat().st_mtime > cache_mtime:
+                return True
+    return False
+
+
 def cmd_build(args):
     need("cmake", "install CMake")
     bdir = build_dir()
     if not (bdir / "CMakeCache.txt").exists():
         die("not configured - run `ta.py configure` first")
+
+    if module_sources_newer_than_cache(bdir):
+        info("module sources changed since configure - re-running cmake")
+        info("  (AzerothCore globs module sources at configure time; skipping this")
+        info("   produces undefined-reference link errors for any new file)")
+        run(["cmake", str(bdir)], cwd=bdir)
     jobs = args.jobs or os.cpu_count() or 4
     info(f"building with {jobs} parallel jobs (this takes a while on first run)")
     run(["cmake", "--build", str(bdir), "--parallel", str(jobs)])
@@ -835,7 +861,21 @@ def web_fixture(args):
             "This writes sample rows into acore_auth / acore_characters / acore_world.\n"
             "       It is for development databases only. Re-run with --yes if you mean it."
         )
+
     _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql")
+
+    # The classless tables are the module's, not the website's. Apply the real
+    # files rather than a second copy that can drift away from them.
+    module_sql = REPO / "modules" / "mod-classless" / "data" / "sql"
+    for db_key, subdir in (("db_world", "db-world"), ("db_characters", "db-characters")):
+        for path in sorted((module_sql / subdir).glob("*.sql")):
+            info(f"applying {path.relative_to(REPO)} to {cfg[db_key]}")
+            mysql_run(cfg, path.read_text(encoding="utf-8"), database=cfg[db_key])
+
+    # Those purchases reference nodes that only exist once the module SQL is in,
+    # so they are applied last.
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql (purchases)")
+    ok("fixture loaded - the armory now has classless builds to render")
     return 0
 
 

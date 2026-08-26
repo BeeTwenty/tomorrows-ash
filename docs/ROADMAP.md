@@ -22,32 +22,34 @@ below is a commitment to a date.
 
 ---
 
-## Phase 1 — Data-only prototype (next)
+## Phase 1 — Data-only prototype ✅ built, play test pending
 
-Prove the concept end to end with the smallest believable slice.
+- [x] `classless_tree` / `classless_node` tables — abilities are rows, not code
+- [x] Ashmorrow Ability Broker gossip NPC (entry 900000)
+- [x] GM commands for testing (`.classless trees/list/learn/status/reload`)
+- [x] Prototype data: 5 trees, 10 deliberately off-class abilities
+- [x] `tools/spell_cascade.py` — what does granting a spell drag in?
+- [x] Verified loading in a live server: `[Classless] Loaded 5 trees, 10 abilities`
+- [ ] **In-game play test — blocked on client data (needs your WoW client)**
 
-- Gossip NPC ("Ashmorrow Ability Broker") that teaches a handful of
-  deliberately off-class abilities — e.g. *Fireball* to a Warrior,
-  *Mortal Strike* to a Mage.
-- Module tables (`classless_tree`, `classless_node`) so abilities are **rows,
-  not code**.
-- Verify what `learnSpell` drags in: rank chains, dependent spells, spec masks
-  (see [research §5](CLASS-RESTRICTIONS.md#5-risks-this-investigation-surfaced)).
-- Confirm off-class abilities actually *work* — cast, scale, and don't crash —
-  rather than merely appearing in the spellbook.
+Findings in **[PHASE1-FINDINGS.md](PHASE1-FINDINGS.md)**. Headlines:
 
-**Exit criteria:** a Warrior casts Fireball, a Mage casts Mortal Strike, both
-survive a relog, and we know exactly which spells cascade.
-
-**Risk to watch:** an ability may be silently useless off-class — a Mage's
-*Mortal Strike* scaling off attack power the Mage doesn't have. That is the
-first real evidence about the balance problem below.
+- **Cascades are a non-issue.** Both recursion branches in `learnSpell` require
+  the spell to be *already known*, so granting an ability to someone who does
+  not have a higher rank drags in nothing. Phase 2 needs no cascade accounting.
+- **Nothing gates ability level — anywhere.** Zero level checks in the whole
+  learn path, and no level gate at cast time either. Our `required_level`
+  column is the only thing stopping a level 1 character casting rank 12
+  Fireball.
+- **Spec masks unresolved** — needs `Talent.dbc`, so it needs your client.
+  Mortal Strike is in the prototype specifically as that test case.
 
 ---
 
 ## Phase 2 — Skill-point budget
 
-The real system. Blocked on **[the chassis question](#open-questions)**.
+The real system. Body type decided (option 2); **blocked on sign-off of the
+numbers in [BODY-TYPES.md](BODY-TYPES.md)**.
 
 - Budget curve by level, config-driven.
 - Retire Blizzard talents via `OnPlayerCalculateTalentsPoints` (already wired,
@@ -56,18 +58,19 @@ The real system. Blocked on **[the chassis question](#open-questions)**.
 - Migration for characters with spent talent points.
 - Tree and node data for the real ability pool.
 
-**Two schema requests from the website**, which is already written against the
-[§5 sketch](ARCHITECTURE.md#5-skill-point-budget-phase-2-design-sketch) and
-degrades gracefully without them:
+**What the website needs from this phase.** Its armory already reads the
+Phase 1 tables and renders real builds. Two things would light up display it
+already contains:
 
-- `classless_node.name` — spell names live in the client's DBC files and never
-  reach the server database, so without this the armory can only print
-  `Ability #133`.
-- `classless_node.max_rank` — otherwise a rank cannot be shown as progress.
+- A **rank** column on `classless_character_node`, if ranks arrive. The armory
+  falls back to "bought" without one and switches to ranked pips the moment it
+  appears.
+- **`classless_character`** (`points_total`, `points_spent`). It gives the
+  spend bar an unspent remainder and turns on the "deepest builds" ranking,
+  which currently explains that it is waiting for exactly this.
 
-`web/sql/dev-fixture.sql` writes the expected schema out in full, and
-`web/src/lib/build.ts` probes `information_schema` rather than assuming either
-column exists.
+Neither is assumed: `web/src/lib/build.ts` probes `information_schema` first,
+so adding them is a behaviour change rather than a coordinated release.
 
 ---
 
@@ -88,41 +91,27 @@ Removing class restrictions breaks gear assumptions.
 
 ---
 
+## Decisions made
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Client version | **3.3.5a WotLK.** True vanilla would mean permanent core forks against VMaNGOS/CMaNGOS, fighting the maintainability goal. |
+| 2 | Hidden class chassis | **Visible "body type"** (option 2). Numbers pending sign-off — [BODY-TYPES.md](BODY-TYPES.md). |
+| 3 | Ability UI | **Gossip menus for now.** Revisit a custom addon once there are real players to justify the install friction. |
+
 ## Open questions
 
-Product decisions I need from you. Engineering can't settle these.
+### 1. Body-type numbers — **blocking Phase 2**
 
-### 1. Client version — **blocking Phase 2**
+Concrete stat deltas are in **[BODY-TYPES.md](BODY-TYPES.md)** and need your
+approval. Two sub-decisions in there matter as much as the numbers:
 
-We're on AzerothCore, so players use the **3.3.5a (WotLK) client**. There is no
-maintained "AzerothCore Classic" — the repo of that name has been dead since
-2017 and has no module system ([ADR 0001](decisions/0001-base-core.md)).
+- **Three body types or all ten classes?** (I recommend three.)
+- **Is armor proficiency purchasable?** If it is, the three body types collapse
+  into one, because proficiency is just a spell.
 
-- Happy with 3.3.5a? Optionally add vanilla-content gating (`classic-mode` SQL
-  or `mod-individual-progression`).
-- Need the **true 1.12 vanilla client**? That means VMaNGOS or CMaNGOS, no
-  module system, and a permanent core fork.
+### 2. Rank progression — needed before real tree data
 
-### 2. The hidden class chassis — **blocking Phase 2**
-
-A classless character still has a class underneath supplying base stats, attack
-power per Strength, mana per Spirit and armor proficiency. **Balance will be
-dominated by the hidden class long before the ability pool matters.**
-
-Options, in [ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-unsolved-problem-hidden-class-chassis):
-
-1. One neutral chassis for everyone — cleanest, largest SQL surface, erases flavour.
-2. Chassis as a visible choice ("body type") — least work, keeps variety, some
-   combos will be strictly better.
-3. Runtime normalisation via a hidden aura — flexible, fights the core's scaling.
-
-### 3. Ability UI ambition
-
-Phases 1–3 use gossip menus: universal, works on an unmodified client, plain.
-A custom addon panel is much nicer but players must install it. Worth it, and
-when?
-
-### 4. Character creation
-
-Class still has to be picked at creation. Do we present it as a **body type**,
-hide it behind a neutral label, or leave it as-is for now?
+Rank chains run to 16 entries and a node grants exactly one rank. Either a node
+per useful rank, or one node whose rank scales with level. I lean towards
+scaling. Detail in [PHASE1-FINDINGS.md §7](PHASE1-FINDINGS.md).

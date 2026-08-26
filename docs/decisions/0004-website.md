@@ -80,19 +80,22 @@ title, two dominant trees compound into one word, a flat spread gives a third �
 and every unrecognised tree name still gets a sensible title, because the real
 tree list does not exist yet.
 
-That system reads the Phase 2 schema sketched in
-[ARCHITECTURE §5](../ARCHITECTURE.md). Building against it surfaced two gaps,
-and these are **requests to Phase 2**, not decisions taken on its behalf:
+That system reads the module's own tables, created by
+`modules/mod-classless/data/sql`. Phase 1 landed them while this was being
+built, which settled two open questions:
 
-- **`classless_node` needs a `name`.** Spell names live in the client's DBC
-  files and never reach the server database, so without a name column the
-  armory can only print `Ability #133`.
-- **`classless_node` needs a `max_rank`.** Otherwise a rank cannot be shown as
-  progress, only as a bare number.
+- **`classless_node.name` exists**, and for the same reason the armory needed
+  it: spell names live in the client's DBC files and never reach the server
+  database. Abilities render as "Fireball (Improved)", not `Ability #25306`.
+- **There are no ranks.** A Phase 1 node is bought once; there is no `rank`
+  column and no `max_rank`. So a purchased node shows as "bought" and counts
+  its `cost` once.
 
-Both are optional today: `build.ts` probes `information_schema` and uses them
-only if they exist. `web/sql/dev-fixture.sql` writes the schema out in full as
-an executable description of what the site expects.
+Neither is assumed. `build.ts` probes `information_schema` for `rank`,
+`max_rank`, `sort_order`, `enabled` and `description`, so a Phase 2 migration
+that adds ranks or a point budget lights up the richer display without a change
+here — and a realm that has not applied the module SQL at all still gets the
+honest "not yet" panel.
 
 ## Consequences
 

@@ -18,6 +18,11 @@
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
+#        Phase 1: enabling this makes the Ashmorrow Ability Broker functional.
+#                 Spawn one with `.npc add 900000` in-game. Abilities come from
+#                 the `classless_tree` / `classless_node` tables - no recompile
+#                 is needed to change them.
+
 Classless.Enable = 0
 
 #
