@@ -1,5 +1,19 @@
 # Connecting a website to the Ashmorrow database
 
+
+> **The website now exists.** It lives in [`web/`](../web/) and is documented
+> in [web/README.md](../web/README.md) and [ADR 0004](decisions/0004-website.md);
+> deployment is [SETUP.md §9](../SETUP.md#9-the-website). Its own SRP6
+> implementation is `web/src/lib/srp6.ts`, checked in CI against the
+> server-derived vector below.
+>
+> This document remains the reference for anything *else* that needs to talk to
+> the realm database — a Discord bot, a migration script, a second site. The
+> implementations it points at moved to
+> [`docs/reference/srp6/`](reference/srp6/) and
+> [`docs/reference/db-examples/`](reference/db-examples/) when `web/` became the
+> application.
+
 Everything a web app needs to talk to the realm: connection details, the schema
 map, and — the part that trips everyone up — **how to create accounts**.
 
@@ -109,7 +123,7 @@ no useful error message anywhere.
 
 ### Verified implementations
 
-[`web/srp6/`](../web/srp6/) has ready-to-use implementations:
+[`docs/reference/srp6/`](reference/srp6/) has ready-to-use implementations:
 
 | File | Runtime | Status |
 |---|---|---|
@@ -130,7 +144,7 @@ installable there), so it is **unverified by execution**. Run the self-test on
 your machine before trusting it:
 
 ```bash
-cd web/srp6 && ./selftest.sh
+cd docs/reference/srp6 && ./selftest.sh
 ```
 
 It checks each implementation against a test vector captured from the server
@@ -255,7 +269,7 @@ character's stat chassis rather than their playstyle — see
 
 | Symptom | Cause |
 |---|---|
-| Registration works, login always fails | verifier computed wrong — run `web/srp6/selftest.sh` |
+| Registration works, login always fails | verifier computed wrong — run `docs/reference/srp6/selftest.sh` |
 | Login fails for mixed-case usernames | `username` must be stored **uppercase** |
 | `Table 'acore_auth.account' doesn't exist` | databases not imported yet — run `ta.py run world` once and let it finish |
 | Can't connect from another host | MySQL `bind-address`, firewall, or the user is `'ashweb'@'localhost'` not `'@%'` |

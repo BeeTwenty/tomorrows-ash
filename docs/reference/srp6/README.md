@@ -1,9 +1,15 @@
+> **Moved.** These were under `web/` before the website existed. `web/` is
+> now the Next.js application, whose own SRP6 lives in
+> `web/src/lib/srp6.ts` and is checked against `testvector.json` by the
+> unit tests. These implementations stay here for everything else that
+> needs to create accounts - bots, scripts, a second site.
+
 # SRP6 credential generation
 
 AzerothCore stores an SRP6 `salt` + `verifier`, **not** a password hash. A
 website that registers accounts or changes passwords must produce these.
 
-See [docs/WEBSITE-DB.md](../../docs/WEBSITE-DB.md) for the full guide.
+See [docs/WEBSITE-DB.md](../../WEBSITE-DB.md) for the full guide.
 
 ## Run the self-test first
 

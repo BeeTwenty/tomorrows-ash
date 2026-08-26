@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# systemd unit for the Tomorrow's Ash website (Linux, without Docker)
+#
+#   sudo cp web/ashmorrow-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ashmorrow-web
+#   journalctl -u ashmorrow-web -f
+#
+# Adjust User and the two paths to match your install. The unit expects the
+# site to have been built already (`npm ci && npm run build` in web/).
+# ---------------------------------------------------------------------------
+
+[Unit]
+Description=Tomorrow's Ash website (realm Ashmorrow)
+Documentation=https://github.com/BeeTwenty/tomorrows-ash
+After=network-online.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ashmorrow
+WorkingDirectory=/opt/tomorrows-ash/web
+
+# Configuration and credentials. Keep this file mode 0600 and owned by root:
+#   sudo install -m 600 -o root -g root web/.env.local /etc/ashmorrow-web.env
+EnvironmentFile=/etc/ashmorrow-web.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+ExecStart=/usr/bin/node scripts/start.mjs
+Restart=on-failure
+RestartSec=5s
+
+# The service reads a database and serves HTTP. It needs nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false
+ReadWritePaths=/opt/tomorrows-ash/web/.next/cache
+
+[Install]
+WantedBy=multi-user.target

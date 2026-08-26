@@ -18,6 +18,7 @@ tomorrows-ash/
 ├── tools/ta.py                fetch, build, db, run  (Windows + Linux)
 ├── modules/mod-classless/     our AzerothCore module (C++ + SQL + conf)
 ├── realm/ashmorrow/           realm-specific data and config
+├── web/                       public website (separate service, own lifecycle)
 ├── docs/                      research, decisions, roadmap
 └── .acore/                    fetched at bootstrap, GITIGNORED, never committed
 ```
@@ -104,7 +105,11 @@ prettier.
 `1`. Dropping this module into a stock realm must change nothing. This is what
 makes it safe to test against upstream.
 
-**Own your tables.** Module state lives in module-prefixed tables
+**Own your tables.** The website follows this rule too: everything it owns
+lives in its own `ashmorrow_web` schema, and it never adds a column to an
+AzerothCore table.
+
+Module state lives in module-prefixed tables
 (`classless_*`) in the `characters` and `world` databases, applied from
 `modules/mod-classless/data/sql/db-{world,characters}/`. AzerothCore's updater
 picks these up automatically. We never add columns to core tables.
@@ -125,6 +130,10 @@ classless_node        id, tree_id, spell_id, tier, cost, requires_node_id
 classless_character    guid, points_total, points_spent -- per character
 classless_character_node guid, node_id, rank            -- what they bought
 ```
+
+The website's armory is already written against this sketch and asks for two
+additions — `classless_node.name` and `classless_node.max_rank`
+([ADR 0004](decisions/0004-website.md)). Both are optional: it probes for them.
 
 - Budget derives from level (a curve, config-driven), **not** from Blizzard
   talent points, which are suppressed via the hook.

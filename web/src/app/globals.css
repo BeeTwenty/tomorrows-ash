@@ -1,0 +1,496 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Tomorrow's Ash — visual identity
+   --------------------------------------------------------------------------
+   Three ideas carry the whole design, and nothing else is decorative:
+
+     ASH      near-black grounds, bone-white type, everything cooled down.
+     EMBER    one warm accent, used sparingly, always meaning "alive".
+     REBIRTH  things arrive by warming up and settling, never by sliding in.
+
+   The site is dark by deliberate choice rather than by theme preference, so
+   there is one palette and no light-mode fork to keep honest.
+   ========================================================================== */
+
+@theme {
+  --color-void: #08080a;
+  --color-soot: #0e0e12;
+  --color-smoke: #16161b;
+  --color-edge: #23232b;
+  --color-edge-warm: #2f2620;
+  --color-ash: #6f6a64;
+  --color-ash-bright: #9a938a;
+  --color-bone: #e8e3d9;
+  --color-ember: #ff6a1f;
+  --color-ember-dim: #b3420f;
+  --color-ember-deep: #7a2a08;
+  --color-alliance: #7fa8d8;
+  --color-horde: #c76b6b;
+
+  --font-display: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  --shadow-ember: 0 0 24px -6px rgba(255, 106, 31, 0.45);
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-bone);
+  font-family: var(--font-sans);
+  font-weight: 300;
+  line-height: 1.65;
+  letter-spacing: 0.01em;
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-ember-deep);
+  color: var(--color-bone);
+}
+
+:focus-visible {
+  outline: 1px solid var(--color-ember);
+  outline-offset: 3px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Tabular figures everywhere numbers are compared down a column. */
+.numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* --------------------------------------------------------------------------
+   Atmosphere: grain, vignette, ashfall
+   Three fixed layers behind everything, all inert to pointer events.
+   -------------------------------------------------------------------------- */
+
+.atmosphere {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Film grain. An inline SVG turbulence keeps it to zero network requests. */
+.atmosphere-grain {
+  opacity: 0.035;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Warm floor light, as if something is burning just out of frame. */
+.atmosphere-vignette {
+  background:
+    radial-gradient(120% 80% at 50% 120%, rgba(255, 106, 31, 0.1), transparent 60%),
+    radial-gradient(100% 100% at 50% 0%, rgba(0, 0, 0, 0.65), transparent 55%);
+}
+
+/*
+ * Ashfall. Three layers of tiny dots drifting at different speeds - parallax
+ * without a single element or line of JavaScript.
+ */
+.atmosphere-ash {
+  opacity: 0.5;
+  background-image:
+    radial-gradient(1.5px 1.5px at 12% 20%, rgba(232, 227, 217, 0.5), transparent),
+    radial-gradient(1px 1px at 47% 60%, rgba(232, 227, 217, 0.35), transparent),
+    radial-gradient(1.5px 1.5px at 78% 35%, rgba(255, 106, 31, 0.35), transparent),
+    radial-gradient(1px 1px at 88% 75%, rgba(232, 227, 217, 0.3), transparent),
+    radial-gradient(1px 1px at 28% 85%, rgba(232, 227, 217, 0.25), transparent),
+    radial-gradient(1.5px 1.5px at 62% 10%, rgba(232, 227, 217, 0.3), transparent);
+  background-size: 700px 700px, 520px 520px, 900px 900px, 640px 640px, 480px 480px, 780px 780px;
+  animation: ashfall 70s linear infinite;
+}
+
+@keyframes ashfall {
+  from {
+    background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: -60px 700px, 40px 520px, -30px 900px, 70px 640px, -20px 480px, 30px 780px;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   The ember line: a cooling coal used as a rule
+   -------------------------------------------------------------------------- */
+
+.ember-line {
+  position: relative;
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-edge) 15%,
+    var(--color-edge) 85%,
+    transparent
+  );
+}
+
+.ember-line::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 22%;
+  background: linear-gradient(90deg, transparent, var(--color-ember), transparent);
+  filter: blur(0.5px);
+  animation: ember-travel 14s ease-in-out infinite;
+}
+
+@keyframes ember-travel {
+  0%,
+  100% {
+    left: 4%;
+    opacity: 0.15;
+  }
+  50% {
+    left: 74%;
+    opacity: 0.7;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Reveal: text arrives warm and cools to bone
+   -------------------------------------------------------------------------- */
+
+.reveal {
+  animation: reveal 1.4s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(0.6rem);
+    color: var(--color-ember-dim);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+.delay-1 { animation-delay: 0.15s; }
+.delay-2 { animation-delay: 0.35s; }
+.delay-3 { animation-delay: 0.6s; }
+.delay-4 { animation-delay: 0.9s; }
+.delay-5 { animation-delay: 1.2s; }
+
+/* --------------------------------------------------------------------------
+   Typography helpers
+   -------------------------------------------------------------------------- */
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 300;
+  line-height: 1.05;
+  letter-spacing: 0.01em;
+}
+
+/* Small caps label above a block. The site's most repeated gesture. */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--color-ash);
+}
+
+.cryptic {
+  font-family: var(--font-display);
+  font-style: italic;
+  font-weight: 300;
+  color: var(--color-ash-bright);
+}
+
+/* --------------------------------------------------------------------------
+   Surfaces and controls
+   -------------------------------------------------------------------------- */
+
+.panel {
+  background: linear-gradient(180deg, rgba(22, 22, 27, 0.9), rgba(14, 14, 18, 0.9));
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+}
+
+.panel-warm {
+  border-color: var(--color-edge-warm);
+  box-shadow: inset 0 1px 0 rgba(255, 106, 31, 0.08);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.75rem;
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-bone);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.4s ease, color 0.4s ease, background-color 0.4s ease, box-shadow 0.4s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-ember);
+  color: var(--color-ember);
+  box-shadow: var(--shadow-ember);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-ember {
+  border-color: var(--color-ember-dim);
+  background: linear-gradient(180deg, rgba(255, 106, 31, 0.16), rgba(255, 106, 31, 0.05));
+  color: var(--color-bone);
+}
+
+.btn-ember:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(255, 106, 31, 0.28), rgba(255, 106, 31, 0.1));
+  color: var(--color-bone);
+}
+
+.field {
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  background: rgba(8, 8, 10, 0.8);
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+  color: var(--color-bone);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.field::placeholder {
+  color: #4a4640;
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--color-ember-dim);
+  box-shadow: 0 0 0 1px rgba(255, 106, 31, 0.2);
+}
+
+/* --------------------------------------------------------------------------
+   Realm pulse: a coal that breathes when the realm is up
+   -------------------------------------------------------------------------- */
+
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.pulse-live {
+  background: var(--color-ember);
+  box-shadow: 0 0 0 0 rgba(255, 106, 31, 0.6);
+  animation: pulse-breathe 3.4s ease-in-out infinite;
+}
+
+.pulse-dead {
+  background: #3a3a42;
+}
+
+@keyframes pulse-breathe {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(255, 106, 31, 0.5);
+    opacity: 0.75;
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 106, 31, 0);
+    opacity: 1;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Long-form content (wiki and patch notes)
+   -------------------------------------------------------------------------- */
+
+.prose-ash {
+  color: #cfc9bf;
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.prose-ash h2 {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  font-weight: 300;
+  color: var(--color-bone);
+  margin: 2.75rem 0 1rem;
+  scroll-margin-top: 6rem;
+}
+
+.prose-ash h3 {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-ash-bright);
+  margin: 2rem 0 0.75rem;
+  scroll-margin-top: 6rem;
+}
+
+.prose-ash p { margin: 1rem 0; }
+
+.prose-ash a {
+  color: var(--color-ember);
+  border-bottom: 1px solid rgba(255, 106, 31, 0.3);
+  transition: border-color 0.3s ease;
+}
+
+.prose-ash a:hover { border-bottom-color: var(--color-ember); }
+
+.prose-ash ul,
+.prose-ash ol {
+  margin: 1rem 0;
+  padding-left: 1.25rem;
+}
+
+.prose-ash ul { list-style: none; }
+
+.prose-ash ul > li {
+  position: relative;
+  padding-left: 1rem;
+  margin: 0.5rem 0;
+}
+
+.prose-ash ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.75em;
+  width: 4px;
+  height: 1px;
+  background: var(--color-ember-dim);
+}
+
+.prose-ash ol { list-style: decimal; }
+.prose-ash ol > li { margin: 0.5rem 0; padding-left: 0.25rem; }
+
+.prose-ash strong { color: var(--color-bone); font-weight: 500; }
+
+.prose-ash code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--color-smoke);
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+  padding: 0.1em 0.4em;
+  color: #e0b062;
+}
+
+.prose-ash pre {
+  background: var(--color-soot);
+  border: 1px solid var(--color-edge);
+  border-radius: 2px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+
+.prose-ash pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #cfc9bf;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+.prose-ash blockquote {
+  border-left: 1px solid var(--color-ember-dim);
+  padding-left: 1.25rem;
+  margin: 1.5rem 0;
+  color: var(--color-ash-bright);
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 1.15rem;
+}
+
+.prose-ash table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  font-size: 0.9rem;
+}
+
+.prose-ash th,
+.prose-ash td {
+  border-bottom: 1px solid var(--color-edge);
+  padding: 0.6rem 0.75rem;
+  text-align: left;
+}
+
+.prose-ash th {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ash);
+  font-weight: 500;
+}
+
+.prose-ash hr {
+  border: none;
+  border-top: 1px solid var(--color-edge);
+  margin: 2.5rem 0;
+}
+
+/* Wide content must scroll inside itself, never push the page sideways. */
+.scroll-x {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+/* --------------------------------------------------------------------------
+   Motion preferences
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  .atmosphere-ash,
+  .ember-line::after,
+  .pulse-live,
+  .reveal {
+    animation: none;
+  }
+
+  .reveal { opacity: 1; transform: none; filter: none; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}

@@ -15,6 +15,8 @@ below is a commitment to a date.
 - [x] Map how class restrictions are enforced ([research](CLASS-RESTRICTIONS.md))
 - [x] `SETUP.md` for Windows and Linux
 - [x] `mod-classless` skeleton — registers, compiles, changes nothing
+- [x] Public website in `web/` ([ADR 0004](decisions/0004-website.md)) — landing,
+      accounts, armory, rankings, realm status, wiki, patch notes
 
 **Key finding:** zero core C++ modifications are needed. See the research doc.
 
@@ -55,6 +57,19 @@ numbers in [BODY-TYPES.md](BODY-TYPES.md)**.
 - Spend / respec / refund through gossip.
 - Migration for characters with spent talent points.
 - Tree and node data for the real ability pool.
+
+**Two schema requests from the website**, which is already written against the
+[§5 sketch](ARCHITECTURE.md#5-skill-point-budget-phase-2-design-sketch) and
+degrades gracefully without them:
+
+- `classless_node.name` — spell names live in the client's DBC files and never
+  reach the server database, so without this the armory can only print
+  `Ability #133`.
+- `classless_node.max_rank` — otherwise a rank cannot be shown as progress.
+
+`web/sql/dev-fixture.sql` writes the expected schema out in full, and
+`web/src/lib/build.ts` probes `information_schema` rather than assuming either
+column exists.
 
 ---
 

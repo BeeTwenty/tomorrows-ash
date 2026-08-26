@@ -23,6 +23,13 @@ python3 tools/ta.py bootstrap   # fetch AzerothCore at the pinned commit
 python3 tools/ta.py configure && python3 tools/ta.py build
 ```
 
+The **website** is a separate service and needs none of the above — it runs on
+its own with sample data, or against a realm you already have:
+
+```bash
+cd web && npm install && npm run dev    # http://localhost:3000
+```
+
 ---
 
 ## How this repository is laid out
@@ -33,10 +40,12 @@ a gitignored `.acore/` and links our module into it.
 
 ```
 upstream.json            pinned AzerothCore commit — the entire upstream contract
-tools/ta.py              build / database / run CLI (Windows + Linux)
+tools/ta.py              build / database / run / web CLI (Windows + Linux)
 modules/mod-classless/   the classless system, as an AzerothCore module
 realm/ashmorrow/         realm-specific data
+web/                     the public website — deploys separately from the realm
 docs/                    research, decisions, roadmap
+docs/reference/          SRP6 implementations and DB examples for other tools
 .acore/                  fetched core — gitignored, never committed
 ```
 
@@ -57,6 +66,7 @@ this repository. There is no hidden divergence. See
 | [docs/BODY-TYPES.md](docs/BODY-TYPES.md) | proposed body-type stat deltas, awaiting sign-off |
 | [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
+| [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |
 
 ---
