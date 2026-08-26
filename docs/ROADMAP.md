@@ -58,15 +58,15 @@ while those await sign-off.
 - [x] Gossip shows the budget and offers respec; `.classless points` / `respec`
 - [x] Blizzard talent suppression wired (still defaulted off)
 - [ ] **Body-type stat deltas** — blocked on [BODY-TYPES.md](BODY-TYPES.md) sign-off
-- [ ] **Real tree data** — blocked on the pricing question below
+- [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
+      level 80, inside the approved 30–50% band). Every spell verified against
+      the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
 
 Details in **[PHASE2-BUDGET.md](PHASE2-BUDGET.md)**. The finding that matters:
 
-> **The budget currently constrains nothing.** From level 40 a character can
-> afford every ability in the prototype pool and still have points spare. The
-> mechanism is right; the *costs* are placeholders. Real tree data must cost
-> roughly 150–250 points against a level 80 budget of 71, or we have rebuilt
-> "everyone gets everything" with extra steps.
+Pricing is settled: the pool costs **200 points** against 71 at level 80, so a
+maxed character affords **36%** of it. Scarcity is real — points buy depth or
+breadth, never both.
 
 **Two schema requests from the website**, which is already written against the
 [§5 sketch](ARCHITECTURE.md#5-skill-point-budget-phase-2-design-sketch) and
@@ -119,13 +119,7 @@ approval. Two sub-decisions in there matter as much as the numbers:
 - **Is armor proficiency purchasable?** If it is, the three body types collapse
   into one, because proficiency is just a spell.
 
-### 2. Ability pool pricing — needed before real tree data
-
-How much of the pool should a maxed character afford? I suggest **30–50%**,
-implying a pool costing 150–250 points. That number decides how many nodes get
-authored and at what cost. See [PHASE2-BUDGET.md §4](PHASE2-BUDGET.md).
-
-### 3. Rank progression — needed before real tree data
+### 2. Rank progression — the next authoring pass
 
 Rank chains run to 16 entries and a node grants exactly one rank. Either a node
 per useful rank, or one node whose rank scales with level. I lean towards

@@ -70,36 +70,57 @@ paid is what they paid.
 
 ---
 
-## 4. The finding: the budget does not currently constrain anything
+## 4. Pool pricing — resolved
 
-Running the real numbers against the Phase 1 prototype data:
+The prototype's ten nodes cost 20 points against 71 at level 80, so the budget
+constrained nothing. Real tree data now replaces it, priced to the approved
+target:
 
-| Level | Points | Cost of the *entire* ability pool |
-|---|---|---|
-| 10 | 1 | 20 |
-| 20 | 11 | 20 |
-| 40 | **31** | **20** |
-| 60 | 51 | 20 |
-| 80 | 71 | 20 |
+| | |
+|---|---|
+| Trees | 10 |
+| Abilities | 50 |
+| **Pool cost** | **200 points** |
+| Budget at level 80 | 71 points |
+| **Affordable share** | **36%** — inside the approved 30–50% band |
 
-**From level 40 onward a character can buy every ability in the game and still
-have points left over.** There is no scarcity, so there is no choice, so the
-budget is decorative.
+Costs escalate by tier (2 / 3 / 4 / 5 / 6), so every tree costs 20 points to
+complete and no tree is cheaper to rush than another. Each node requires the one
+below it, so points buy depth or breadth but never both.
 
-That is fine for a ten-node prototype — the mechanism is what was being built —
-but it sets a hard requirement on the real tree data:
+The direction was set deliberately: start tight and loosen through
+`Classless.Points.PerLevel` if playtesting says so, rather than start loose and
+have to claw power back from live characters.
 
-> **The total cost of the ability pool must substantially exceed the level 80
-> budget.** If a maxed character can afford 30–50% of the pool, the budget is
-> doing its job. If they can afford 100%, we have rebuilt "everyone gets
-> everything" with extra steps.
+### Every spell is verified
 
-With 71 points at 80, that implies a pool costing roughly **150–250 points**
-overall. Whether that is 50 nodes at ~4 points or 150 nodes at ~1.5 is a design
-question, not an engineering one, and it should be settled alongside the tree
-authoring rather than guessed at now.
+`tools/gen_trees.py` generates the migration and **refuses to emit SQL** if any
+spell id cannot be proven to exist in the world database. Two proofs count:
 
----
+- **`trainer_spell`** — the spell is trainable, and supplies an authoritative
+  `ReqLevel` which becomes the node's `required_level`. 47 of 50 nodes.
+- **`spell_ranks`** — the spell is a member of a rank chain, so it exists. Used
+  for the 3 starting abilities no trainer teaches (Fireball, Heroic Strike,
+  Blast Wave), whose levels are ours.
+
+This matters because a node pointing at a non-existent spell takes a player's
+points and silently gives them nothing. Re-run after any edit:
+
+```bash
+python3 tools/gen_trees.py            # verify, print the economics
+python3 tools/gen_trees.py --write    # regenerate the migration
+```
+
+### Known limitation: the pool tops out at level 40
+
+Abilities are drawn from trainer data, and the ones chosen sit between levels 1
+and 40. Past level 40 a character earns points but unlocks no *new* tiers — the
+remaining choice is which trees to broaden into.
+
+That is a coherent design (points are the constraint, not levels), but it means
+levels 40–80 currently offer no fresh ability tiers. Extending the trees upward
+with higher spell ranks is the obvious next authoring pass, and the generator
+makes it a data change.
 
 ## 5. Retiring Blizzard talents
 

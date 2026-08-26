@@ -74,9 +74,10 @@ this repository. There is no hidden divergence. See
 
 ## Status
 
-**Phase 2 mechanism built** — five ability trees of deliberately off-class
-abilities load from the database, served through a gossip NPC, priced against a
-per-level skill-point budget with working respec. **Zero core modifications**
+**Phase 2 built** — 10 ability trees and 50 abilities, drawn from every class
+and open to any character, served through a gossip NPC and priced against a
+per-level skill-point budget with working respec. The pool costs 200 points; a
+level 80 character has 71, so scarcity is real. **Zero core modifications**
 throughout. Still gated behind `Classless.Enable = 0`; the in-game play test
 needs client data.
 
