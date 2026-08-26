@@ -138,10 +138,11 @@ form that accepts more creates accounts nobody can log into.
 to an AzerothCore table — the same rule the game module follows. The realm's
 own SQL updater and ours can never collide.
 
-**The classless tables do not exist yet.** `build.ts` probes for them and falls
-back to an honest "not yet" rather than inventing trees. The schema it expects
-is documented in [ADR 0004](../docs/decisions/0004-website.md) and written out
-in `sql/dev-fixture.sql`.
+**The classless tables belong to the module, not to us.** `build.ts` reads what
+`modules/mod-classless/data/sql` creates and probes `information_schema` for the
+columns that are still moving — ranks, a point budget — so Phase 2 can add them
+without touching this code. On a realm that has not applied that SQL it falls
+back to an honest "not yet" rather than inventing trees.
 
 **Never prerender realm data.** Pages that read the database are
 `force-dynamic`; caching happens inside the data layer. A page prerendered at

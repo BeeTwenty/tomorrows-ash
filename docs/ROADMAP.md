@@ -68,18 +68,19 @@ Pricing is settled: the pool costs **200 points** against 71 at level 80, so a
 maxed character affords **36%** of it. Scarcity is real — points buy depth or
 breadth, never both.
 
-**Two schema requests from the website**, which is already written against the
-[§5 sketch](ARCHITECTURE.md#5-skill-point-budget-phase-2-design-sketch) and
-degrades gracefully without them:
+**What the website needs from this phase.** Its armory already reads the
+Phase 1 tables and renders real builds. Two things would light up display it
+already contains:
 
-- `classless_node.name` — spell names live in the client's DBC files and never
-  reach the server database, so without this the armory can only print
-  `Ability #133`.
-- `classless_node.max_rank` — otherwise a rank cannot be shown as progress.
+- A **rank** column on `classless_character_node`, if ranks arrive. The armory
+  falls back to "bought" without one and switches to ranked pips the moment it
+  appears.
+- **`classless_character`** (`points_total`, `points_spent`). It gives the
+  spend bar an unspent remainder and turns on the "deepest builds" ranking,
+  which currently explains that it is waiting for exactly this.
 
-`web/sql/dev-fixture.sql` writes the expected schema out in full, and
-`web/src/lib/build.ts` probes `information_schema` rather than assuming either
-column exists.
+Neither is assumed: `web/src/lib/build.ts` probes `information_schema` first,
+so adding them is a behaviour change rather than a coordinated release.
 
 ---
 

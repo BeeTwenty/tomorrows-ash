@@ -861,7 +861,21 @@ def web_fixture(args):
             "This writes sample rows into acore_auth / acore_characters / acore_world.\n"
             "       It is for development databases only. Re-run with --yes if you mean it."
         )
+
     _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql")
+
+    # The classless tables are the module's, not the website's. Apply the real
+    # files rather than a second copy that can drift away from them.
+    module_sql = REPO / "modules" / "mod-classless" / "data" / "sql"
+    for db_key, subdir in (("db_world", "db-world"), ("db_characters", "db-characters")):
+        for path in sorted((module_sql / subdir).glob("*.sql")):
+            info(f"applying {path.relative_to(REPO)} to {cfg[db_key]}")
+            mysql_run(cfg, path.read_text(encoding="utf-8"), database=cfg[db_key])
+
+    # Those purchases reference nodes that only exist once the module SQL is in,
+    # so they are applied last.
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql (purchases)")
+    ok("fixture loaded - the armory now has classless builds to render")
     return 0
 
 
