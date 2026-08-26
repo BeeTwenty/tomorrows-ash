@@ -67,6 +67,12 @@ python3 tools/ta.py conf
 
 Then go to **section 5** (client data) — the server will not start without it.
 
+> **If `db up` fails with "429 Too Many Requests"**, that is Docker Hub
+> rate-limiting anonymous image pulls — nothing is wrong with your setup. Either
+> run `docker login`, or use the native MySQL route just below, which needs no
+> registry at all. (This is not hypothetical: it happened while building this
+> guide.)
+
 ### Linux without Docker
 
 If you'd rather run MySQL natively:
@@ -208,6 +214,20 @@ Check state at any time:
 ```bash
 python3 tools/ta.py db status
 ```
+
+### Connecting a website
+
+Building a site against this database (registration, armory, realm status)?
+See **[docs/WEBSITE-DB.md](docs/WEBSITE-DB.md)**. Short version:
+
+```bash
+python3 tools/ta.py db website-user   # least-privilege DB user for the site
+cp web/.env.example /path/to/site/.env
+```
+
+Note that AzerothCore stores an SRP6 salt/verifier, **not** a password hash —
+`docs/reference/srp6/` has verified implementations for Python, Node and PHP.
+The website itself uses `web/src/lib/srp6.ts`, which CI checks against the same vector.
 
 ---
 
@@ -574,6 +594,8 @@ sudo systemctl restart ashmorrow-web
 | Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 7 step 3 |
 | Module edits don't take effect | `ta.py` fell back to copy mode — run `ta.py sync` |
 | Out of disk during build | full build needs ~15 GB. `ta.py configure --tools none` skips the extractors if you already have client data |
+| `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
+| `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
 Website problems have their own table in [section 9.7](#97-website-troubleshooting).
 

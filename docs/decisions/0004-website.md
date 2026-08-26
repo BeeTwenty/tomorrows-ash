@@ -50,10 +50,14 @@ players arrive. SOAP is implemented and available behind
 the same `salt`/`verifier` pair `AccountMgr::CreateAccount` would. That is 40
 lines of well-understood arithmetic; the risk is not the maths but the byte
 order, which is little-endian in three separate places. So: the port is
-commented with the upstream file it came from, a unit test pins a known vector,
-and `ta.py web verify-srp6` checks the whole thing against an account the
-*server itself* created. That last check is the only one that actually settles
-it, and it is one command.
+commented with the upstream file it came from, and it is checked twice over.
+
+The unit test asserts against a vector captured from the compiled
+`Acore::Crypto::SRP6` itself (`docs/reference/srp6/testvector.json`, produced by
+linking against `libcommon.a`), so CI proves agreement with the server rather
+than self-consistency. And `ta.py web verify-srp6` re-checks it against a live
+realm's own `account` row, which catches configuration drift the test cannot
+see.
 
 **Why one schema of our own.** The site needs reset tokens, rate-limit counters
 and an audit log. Putting them in AzerothCore's schemas would collide with its

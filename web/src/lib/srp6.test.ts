@@ -37,10 +37,25 @@ test("username and password are case-insensitive, as they are in the game client
   assert.equal(verifyPassword("AsHeN", "eMbErFaLl", salt, verifier), true);
 });
 
+test("ground truth: reproduces a verifier the compiled server produced", () => {
+  // Captured from AzerothCore's own Acore::Crypto::SRP6 at the pinned commit by
+  // linking against libcommon.a and calling MakeRegistrationData directly -
+  // see docs/reference/srp6/testvector.json.
+  //
+  // This is the assertion that matters. Everything else in this file checks
+  // that the implementation is self-consistent; only this one checks that it
+  // agrees with the server whose accounts it is writing.
+  const salt = Buffer.from("AD965F134FF6A63FE4C87674749793E950468A7B0B94537BF99E1673489BEA71", "hex");
+  const verifier = calculateVerifier("TESTUSER", "TESTPASS", salt);
+  assert.equal(
+    verifier.toString("hex").toUpperCase(),
+    "6D90F5BE54A6B120629DB309E3009B08B06F6BC867E885057E2DF44EBDBBBA78",
+  );
+});
+
 test("known vector: a fixed salt always yields the same verifier", () => {
-  // Regression guard, cross-checked against an independent implementation of
-  // the same formula. If a byte-order detail ever changes, this fails loudly
-  // instead of quietly creating accounts nobody can log into.
+  // A second, independently derived vector, so a change that somehow satisfied
+  // the one above would still have to explain itself here.
   const salt = Buffer.alloc(SALT_LENGTH, 0x11);
   const verifier = calculateVerifier("ASHMORROW", "TOMORROWSASH", salt);
   assert.equal(

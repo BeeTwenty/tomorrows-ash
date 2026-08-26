@@ -45,6 +45,7 @@ modules/mod-classless/   the classless system, as an AzerothCore module
 realm/ashmorrow/         realm-specific data
 web/                     the public website — deploys separately from the realm
 docs/                    research, decisions, roadmap
+docs/reference/          SRP6 implementations and DB examples for other tools
 .acore/                  fetched core — gitignored, never committed
 ```
 
@@ -61,6 +62,7 @@ this repository. There is no hidden divergence. See
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
+| [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
 | [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |

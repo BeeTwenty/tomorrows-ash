@@ -111,6 +111,11 @@ The tests cover the parts where being wrong is silent: SRP6 byte order,
 session signing, rate-limit arithmetic, archetype naming, input validation and
 duration formatting.
 
+The SRP6 test asserts against a vector captured from AzerothCore's own compiled
+`Acore::Crypto::SRP6` ([docs/reference/srp6/testvector.json](../docs/reference/srp6/testvector.json)),
+so CI proves this implementation agrees with the server whose accounts it
+writes — not merely with itself.
+
 One check cannot live in a unit test, because it needs a realm:
 
 ```bash

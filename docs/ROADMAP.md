@@ -76,7 +76,11 @@ column exists.
 Removing class restrictions breaks gear assumptions.
 
 - Rewrite `item_template.AllowableClass` as a **generated, reversible**
-  migration — tens of thousands of rows, never hand-edited.
+  migration — never hand-edited. Measured scope on the current world DB:
+  **10,936 class-restricted items**, of which **8,489 are armor or weapons**
+  (the rest are consumables and quest items). 35,160 items are already
+  unrestricted (`-1`).
+  Note `AllowableClass` is signed and `-1` means "all classes".
 - Armor and weapon proficiency: which are bought with skill points, which are
   free.
 - Audit stat budgets: plate with spell power, cloth with strength, and the
