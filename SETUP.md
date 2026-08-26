@@ -334,9 +334,37 @@ homelab box's firewall for LAN play.
 `modules/mod-classless` is built into the server automatically. Its config is
 installed to `dist/etc/mod_classless.conf`.
 
-As of **Phase 0 it is inert**: `Classless.Enable = 0` and every hook returns
-early, so the realm behaves as stock AzerothCore. Turning it on now changes
-nothing visible yet — the ability system arrives in Phase 1.
+As of **Phase 1** it ships disabled (`Classless.Enable = 0`), so the realm
+behaves as stock AzerothCore until you turn it on. With it enabled you get five
+ability trees served by a gossip NPC.
+
+```ini
+Classless.Enable = 1
+```
+
+Restart worldserver, then spawn a broker where you're standing:
+
+```
+.npc add 900000
+```
+
+Talk to it to learn abilities from any tree regardless of class. GM commands
+for testing without hunting down the NPC:
+
+```
+.classless trees            list the trees
+.classless list <treeId>    list abilities in a tree
+.classless learn <nodeId>   learn one (respects level + prerequisites)
+.classless status           what you own, and whether it's really in your spellbook
+.classless reload           re-read the trees from the database
+```
+
+Abilities live in the `classless_tree` / `classless_node` tables — changing them
+needs no recompile, just `.classless reload`.
+
+**Please run the test checklist in
+[docs/PHASE1-FINDINGS.md §6](docs/PHASE1-FINDINGS.md)** once you have client
+data. Some of what Phase 2 needs can only be measured in-game.
 
 ```ini
 Classless.Enable = 0                      # master switch

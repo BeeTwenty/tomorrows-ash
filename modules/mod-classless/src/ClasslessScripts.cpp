@@ -1,18 +1,18 @@
 /*
  * Tomorrow's Ash - Classless module
  *
- * Phase 0: module skeleton.
+ * Phase 1: data-only prototype.
  *
- * The only behaviour wired up so far is configuration loading, a login notice,
- * and the Blizzard-talent-budget suppression hook that Phase 2 will build on.
- * No spell, talent or item rules are changed yet - see docs/ROADMAP.md.
+ * Abilities are granted from database rows through a gossip NPC. No core
+ * modification is involved - Player::learnSpell() has no class check
+ * (docs/CLASS-RESTRICTIONS.md), which is the entire basis of this design.
  *
- * Design rule for this module (docs/ARCHITECTURE.md): every hook must be a
- * no-op while Classless.Enable is 0, so that dropping the module into a stock
- * realm is always safe.
+ * Design rule (docs/ARCHITECTURE.md): every hook must be a no-op while
+ * Classless.Enable is 0, so dropping this module into a stock realm is safe.
  */
 
 #include "ClasslessConfig.h"
+#include "ClasslessMgr.h"
 #include "Chat.h"
 #include "Player.h"
 #include "ScriptMgr.h"
@@ -22,11 +22,19 @@ using namespace TomorrowsAsh;
 class ClasslessWorldScript : public WorldScript
 {
 public:
-    ClasslessWorldScript() : WorldScript("ClasslessWorldScript", { WORLDHOOK_ON_AFTER_CONFIG_LOAD }) { }
+    ClasslessWorldScript() : WorldScript("ClasslessWorldScript",
+        {
+            WORLDHOOK_ON_AFTER_CONFIG_LOAD
+        }) { }
 
     void OnAfterConfigLoad(bool /*reload*/) override
     {
         sClasslessConfig.Load();
+
+        // Tree data is loaded regardless of the master switch so that
+        // configuration problems surface in the log at startup rather than the
+        // first time somebody enables the module on a live realm.
+        sClasslessMgr.Load();
     }
 };
 
@@ -36,20 +44,32 @@ public:
     ClasslessPlayerScript() : PlayerScript("ClasslessPlayerScript",
         {
             PLAYERHOOK_ON_LOGIN,
+            PLAYERHOOK_ON_LOGOUT,
             PLAYERHOOK_ON_CALCULATE_TALENTS_POINTS
         }) { }
 
     void OnPlayerLogin(Player* player) override
     {
-        if (!sClasslessConfig.Enable || !sClasslessConfig.Announce)
+        if (!sClasslessConfig.Enable)
             return;
 
-        ChatHandler(player->GetSession()).SendSysMessage(
-            "|cff00ff00[Ashmorrow]|r This realm runs the |cffffcc00classless|r ruleset.");
+        sClasslessMgr.LoadCharacter(player);
+
+        if (sClasslessConfig.Announce)
+        {
+            ChatHandler(player->GetSession()).SendSysMessage(
+                "|cff00ff00[Ashmorrow]|r This realm runs the |cffffcc00classless|r ruleset. "
+                "Seek an Ability Broker to learn from any discipline.");
+        }
+    }
+
+    void OnPlayerLogout(Player* player) override
+    {
+        sClasslessMgr.UnloadCharacter(player->GetGUID().GetCounter());
     }
 
     // Replaces the Blizzard talent budget. Because AzerothCore exposes this as
-    // a hook, suppressing the built-in talent tree needs no core modification.
+    // a hook, retiring the built-in talent tree needs no core modification.
     void OnPlayerCalculateTalentsPoints(Player const* /*player*/, uint32& talentPointsForLevel) override
     {
         if (!sClasslessConfig.Enable || !sClasslessConfig.SuppressBlizzardTalents)
@@ -59,8 +79,14 @@ public:
     }
 };
 
+// Defined in their own translation units
+void AddClasslessBrokerScripts();
+void AddClasslessCommandScripts();
+
 void Addmod_classlessScripts()
 {
     new ClasslessWorldScript();
     new ClasslessPlayerScript();
+    AddClasslessBrokerScripts();
+    AddClasslessCommandScripts();
 }
