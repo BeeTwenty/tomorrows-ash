@@ -177,6 +177,11 @@ to your PATH and reopen PowerShell.
 | `db realm` | register the **Ashmorrow** realm row |
 | `conf` | render `dist/etc/*.conf` pointed at your database |
 | `run auth` / `run world` | start a server binary |
+| `web setup` | install, configure and build the website (section 9) |
+| `web sql` | create the website's own schema (and its MySQL user, with `--grants`) |
+| `web start` / `web dev` | run the website |
+| `web doctor` | check the website's prerequisites |
+| `web verify-srp6` | prove the website's password handling matches the realm's |
 
 Per-machine settings go in **`tools/local.json`** (gitignored) or `TA_*`
 environment variables. Never commit credentials.
@@ -330,7 +335,234 @@ exists**, or characters will have no way to spend points at all.
 
 ---
 
-## 9. Troubleshooting
+## 9. The website
+
+The public site — landing page, account registration, armory, rankings, realm
+status, wiki and patch notes — lives in **`web/`** and is a **separate
+service**. It reads the realm's database and probes its ports, but it builds,
+deploys and restarts independently. You can run the realm without it, and you
+can run it against a realm on another machine.
+
+Its own code map is in [web/README.md](web/README.md); why it is built this way
+is in [ADR 0004](docs/decisions/0004-website.md).
+
+### 9.1 What you need
+
+**Node.js 20 or newer**, and nothing else the realm did not already need.
+
+| | Windows | Linux |
+|---|---|---|
+| Node.js | [nodejs.org](https://nodejs.org) LTS installer | `sudo apt install nodejs npm` (or [nodesource](https://github.com/nodesource/distributions) for a current LTS) |
+
+Check with `node --version`. Ubuntu's own `nodejs` package can be older than 20;
+if it is, use nodesource or nvm.
+
+### 9.2 Try it with no realm at all
+
+The site runs standalone. With no database configured it starts in **demo
+mode** — every page renders from built-in sample data and says so on screen.
+Useful for looking at the design before the realm is up:
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+npm run gen-secret          # prints a SESSION_SECRET= line; paste it into .env.local
+npm run dev                 # http://localhost:3000
+```
+
+On Windows, the same commands in PowerShell (`copy .env.example .env.local`).
+
+### 9.3 Point it at a running Ashmorrow
+
+**Step 1 — give the website its own database user.**
+
+It must never connect as root. Edit `web/sql/grants.sql`, replace `CHANGE_ME`
+with a long random password, then apply it along with the site's own schema:
+
+```bash
+# Linux
+python3 tools/ta.py web sql --grants
+
+# Windows
+python tools\ta.py web sql --grants
+```
+
+That creates the `ashmorrow_web` schema (reset tokens, rate limits, audit log)
+and an `ash_web` MySQL user with exactly the privileges the site uses: read on
+the game data, column-scoped writes on `account`, and nothing else. Check it
+with `SHOW GRANTS FOR 'ash_web'@'localhost';`.
+
+> If the site runs on a different machine from MySQL, change `'localhost'` to
+> `'%'` (or the site's address) in `grants.sql` before applying it, and make
+> sure MySQL is listening on more than the loopback address.
+
+**Step 2 — record the password where `ta.py` can see it.**
+
+Add it to `tools/local.json` (gitignored, never committed):
+
+```json
+{ "mysql_host": "127.0.0.1", "mysql_port": 3306,
+  "mysql_user": "root", "mysql_pass": "YOUR_ROOT_PASSWORD",
+  "web_db_user": "ash_web", "web_db_pass": "THE_PASSWORD_YOU_CHOSE",
+  "site_url": "http://192.168.1.50:3000", "web_port": 3000 }
+```
+
+**Step 3 — install, configure and build.**
+
+```bash
+# Linux
+python3 tools/ta.py web setup
+
+# Windows
+python tools\ta.py web setup
+```
+
+That runs `npm ci`, writes `web/.env.local` from your `tools/local.json` with a
+freshly generated session secret, and builds the site. Then:
+
+```bash
+python3 tools/ta.py web doctor    # confirms everything above actually worked
+python3 tools/ta.py web start     # serves on web_port
+```
+
+**Step 4 — prove the password handling matches the realm's.**
+
+This is the check worth running once. Create an account in the **worldserver
+console**, then ask the website to recompute its verifier:
+
+```
+account create verifytest somepassword123
+```
+
+```bash
+python3 tools/ta.py web verify-srp6 --username verifytest --password somepassword123
+```
+
+A pass means accounts created on the website are byte-identical to ones created
+by the server, and the game client will accept them. Run it again after any
+upstream bump. If it ever fails, **stop letting people register** until it
+passes: the site would be creating accounts nobody can log into.
+
+### 9.4 Configuration
+
+Everything is in `web/.env.local`, which `ta.py web env` generates and
+`web/.env.example` documents line by line. The values worth knowing:
+
+| Setting | What it does |
+|---|---|
+| `SITE_URL` | the site's public address; password-reset links and cookie security depend on it |
+| `SESSION_SECRET` | signs session cookies; required in production, 32+ characters |
+| `DB_*` | the MySQL server and the four schema names |
+| `REALM_ADDRESS` | what the site tells players to put in `realmlist.wtf` |
+| `MAIL_TRANSPORT` | `console` (log reset links), `smtp` (send them), `disabled` |
+| `TRUST_PROXY` | set to 1 **only** behind a reverse proxy you control |
+| `ARMORY_HIDE_GM_LEVEL` | hides staff characters site-wide; 0 turns the filter off |
+
+The site refuses to start in production with a missing or weak
+`SESSION_SECRET`, or with no database configured unless you set
+`DATA_SOURCE=demo` to say you meant it. That is deliberate: a misconfigured
+site that serves anyway is worse than one that will not boot.
+
+**Never commit `web/.env.local`.** It is gitignored, and `ta.py web env` writes
+it mode 0600 on Linux.
+
+### 9.5 Running it for real
+
+**Linux, with systemd** — the usual choice for a homelab:
+
+```bash
+sudo useradd --system --home /opt/tomorrows-ash ashmorrow
+sudo cp -r . /opt/tomorrows-ash          # or clone there in the first place
+sudo install -m 600 -o root -g root web/.env.local /etc/ashmorrow-web.env
+sudo cp web/ashmorrow-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now ashmorrow-web
+journalctl -u ashmorrow-web -f
+```
+
+The unit ships with the hardening a service like this should have
+(`ProtectSystem=strict`, `NoNewPrivileges`, no home access). Adjust `User` and
+the paths to match your install.
+
+**Linux or Windows, with Docker:**
+
+```bash
+cd web
+docker compose up -d --build
+```
+
+The compose file reads `web/.env.local` and points the container at the host's
+MySQL and realm ports via `host.docker.internal`. The image contains no
+configuration at all — everything arrives as environment variables — so the
+same image is safe to push anywhere.
+
+**Windows, as a service.** There is no systemd; two workable options:
+
+- **NSSM** ([nssm.cc](https://nssm.cc)): `nssm install AshmorrowWeb "C:\Program Files\nodejs\node.exe" "scripts\start.mjs"`, set *Startup directory* to your `web\` folder.
+- **Task Scheduler**: a task triggered *At startup*, running `node.exe` with argument `scripts\start.mjs` and *Start in* set to `web\`, with "Run whether user is logged on or not".
+
+Either way the site reads `web\.env.local` from its working directory.
+
+**Behind a reverse proxy** (recommended for anything public — Node should not
+terminate TLS here):
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name ashmorrow.example;
+
+    ssl_certificate     /etc/letsencrypt/live/ashmorrow.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ashmorrow.example/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Caddy needs two lines:
+
+```
+ashmorrow.example {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+With a proxy in front, set `TRUST_PROXY=1` and `SITE_URL=https://...` in
+`web/.env.local`, or rate limiting cannot tell your visitors apart and cookies
+will not be marked `Secure`.
+
+### 9.6 Upgrading
+
+```bash
+git pull
+python3 tools/ta.py web install
+python3 tools/ta.py web build
+python3 tools/ta.py web sql        # re-apply the schema; it is idempotent
+sudo systemctl restart ashmorrow-web
+```
+
+### 9.7 Website troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Refuses to start, "configuration is not usable" | Read the list it prints. Usually `SESSION_SECRET` or `DB_HOST` |
+| Every page says "demo mode" | No `DB_HOST` set, or `DATA_SOURCE=demo` |
+| Status page shows the realm down but it is running | The site probes `REALM_ADDRESS`; from another machine `127.0.0.1` is itself. Set `REALM_AUTH_HOST` / `REALM_WORLD_HOST` |
+| Registration fails, "database refused" | The `ash_web` user is missing a grant. `SHOW GRANTS FOR 'ash_web'@'localhost';` and compare with `web/sql/grants.sql` |
+| Password reset never arrives | `MAIL_TRANSPORT=console` prints the link to the server log — that is by design for a homelab. Set SMTP for real mail |
+| Armory finds nothing | Characters appear once they have logged in. Staff characters never appear |
+| Accounts work on the site but not in the client | Run `ta.py web verify-srp6` — that is exactly what it is for |
+| CSS missing after an upgrade | A stale server process. Restart the service; do not run two |
+
+---
+
+## 10. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -343,4 +575,7 @@ exists**, or characters will have no way to spend points at all.
 | Module edits don't take effect | `ta.py` fell back to copy mode — run `ta.py sync` |
 | Out of disk during build | full build needs ~15 GB. `ta.py configure --tools none` skips the extractors if you already have client data |
 
-Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share.
+Website problems have their own table in [section 9.7](#97-website-troubleshooting).
+
+Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
+or `python3 tools/ta.py web doctor` for the website.

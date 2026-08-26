@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Tomorrow's Ash - website, in Docker
+#
+#   cd web
+#   cp .env.example .env.local     # then edit it, and generate a secret
+#   docker compose up -d --build
+#
+# This runs the WEBSITE only. The realm itself is built and run from the
+# repository root with tools/ta.py - see SETUP.md.
+#
+# `host.docker.internal` lets the container reach a MySQL running on the host.
+# On Linux the extra_hosts entry below is what makes that name resolve.
+# ---------------------------------------------------------------------------
+
+services:
+  web:
+    build:
+      context: .
+      args:
+        SITE_URL: ${SITE_URL:-http://localhost:3000}
+    image: tomorrows-ash-web
+    container_name: ashmorrow-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    env_file:
+      - .env.local
+    environment:
+      # Inside a container, 127.0.0.1 is the container itself. Point at the
+      # host's MySQL and at the host's realm ports instead.
+      DB_HOST: ${DB_HOST:-host.docker.internal}
+      REALM_AUTH_HOST: ${REALM_AUTH_HOST:-host.docker.internal}
+      REALM_WORLD_HOST: ${REALM_WORLD_HOST:-host.docker.internal}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

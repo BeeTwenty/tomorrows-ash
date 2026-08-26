@@ -14,6 +14,7 @@ both Windows and Linux. Standard library only, Python 3.8+.
     python3 tools/ta.py conf         # render server configs for realm Ashmorrow
     python3 tools/ta.py db realm     # register the Ashmorrow realm row
     python3 tools/ta.py run world    # start worldserver
+    python3 tools/ta.py web setup    # configure and build the website
 
 See SETUP.md for the full walkthrough.
 """
@@ -49,6 +50,11 @@ DEFAULTS = {
     "mysql_image": "mysql:8.4",
     "build_type": "Release",
     "tools_build": "all",
+    "db_web": "ashmorrow_web",
+    "web_port": 3000,
+    "web_db_user": "ash_web",
+    "web_db_pass": "",
+    "site_url": "http://localhost:3000",
 }
 
 
@@ -387,13 +393,17 @@ def mysql_cmd(cfg, database=None):
     the Docker container, which means a working setup needs no MySQL install
     on the host at all.
     """
+    # An empty `-p` makes the client prompt for a password and hang forever in
+    # a script, so the flag is only passed when there is a password to pass.
+    password = [f"-p{cfg['mysql_pass']}"] if cfg["mysql_pass"] else []
+
     if mysql_available_native():
         cmd = ["mysql", f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
-               f"-u{cfg['mysql_user']}", f"-p{cfg['mysql_pass']}"]
+               f"-u{cfg['mysql_user']}"] + password
     else:
         need("docker", "install Docker, or install a native MySQL client")
         cmd = ["docker", "exec", "-i", cfg["docker_container"],
-               "mysql", f"-u{cfg['mysql_user']}", f"-p{cfg['mysql_pass']}"]
+               "mysql", f"-u{cfg['mysql_user']}"] + password
     if database:
         cmd.append(database)
     return cmd
@@ -589,6 +599,314 @@ def cmd_run(args):
     return 0
 
 
+
+# --------------------------------------------------------------------------
+# web  -  the public website in /web
+#
+# The website is a separate service with its own lifecycle: it can be deployed,
+# restarted and upgraded without touching the realm. These subcommands exist so
+# that `ta.py` stays the single entry point on both platforms, not because the
+# two are coupled.
+# --------------------------------------------------------------------------
+
+WEB_DIR = REPO / "web"
+
+
+def npm_cmd():
+    """npm is a .cmd shim on Windows, which subprocess will not find unaided."""
+    for candidate in (["npm.cmd"], ["npm"]) if IS_WINDOWS else (["npm"],):
+        if shutil.which(candidate[0]):
+            return candidate
+    die("npm not found on PATH - install Node.js 20 or newer (https://nodejs.org)")
+
+
+def web_env_path():
+    return WEB_DIR / ".env.local"
+
+
+def cmd_web(args):
+    if not WEB_DIR.is_dir():
+        die(f"{WEB_DIR} not found")
+    return {
+        "env": web_env,
+        "install": web_install,
+        "build": web_build,
+        "dev": web_dev,
+        "start": web_start,
+        "sql": web_sql,
+        "fixture": web_fixture,
+        "doctor": web_doctor,
+        "verify-srp6": web_verify_srp6,
+        "setup": web_setup,
+    }[args.action](args)
+
+
+def web_env(args):
+    """Write web/.env.local from tools/local.json plus a fresh session secret."""
+    import secrets
+
+    target = web_env_path()
+    if target.exists() and not args.force:
+        warn(f"{target.relative_to(REPO)} already exists (use --force to regenerate)")
+        return 0
+
+    cfg = load_local()
+    example = WEB_DIR / ".env.example"
+    if not example.exists():
+        die(f"{example} is missing")
+
+    # Start from the documented example so every comment survives, then set the
+    # handful of values we actually know about this machine.
+    values = {
+        "SITE_URL": cfg["site_url"],
+        "SESSION_SECRET": secrets.token_urlsafe(48),
+        "DATA_SOURCE": "live",
+        "REALM_NAME": cfg["realm_name"],
+        "REALM_ADDRESS": cfg["realm_address"],
+        "REALM_WORLD_PORT": str(cfg["realm_port"]),
+        "DB_HOST": cfg["mysql_host"],
+        "DB_PORT": str(cfg["mysql_port"]),
+        "DB_USER": cfg["web_db_user"],
+        "DB_PASSWORD": cfg["web_db_pass"],
+        "DB_AUTH": cfg["db_auth"],
+        "DB_CHARACTERS": cfg["db_characters"],
+        "DB_WORLD": cfg["db_world"],
+        "DB_WEB": cfg["db_web"],
+    }
+
+    out, seen = [], set()
+    for line in example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in values:
+                out.append(f"{key}={values[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+
+    missing = [f"{k}={v}" for k, v in values.items() if k not in seen]
+    if missing:
+        out.extend(["", "# Added by `ta.py web env`"] + missing)
+
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass  # Windows without POSIX permissions - the file is still gitignored.
+
+    ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+    if not cfg["web_db_pass"]:
+        warn("DB_PASSWORD is empty. Create the website's database user first:")
+        warn("  1. edit web/sql/grants.sql, replacing CHANGE_ME with a password")
+        warn("  2. python3 tools/ta.py web sql")
+        warn('  3. put the same password in tools/local.json as "web_db_pass"')
+        warn("  4. re-run `ta.py web env --force`")
+    return 0
+
+
+def web_install(args):
+    info("installing website dependencies")
+    lock = WEB_DIR / "package-lock.json"
+    run(npm_cmd() + (["ci"] if lock.exists() else ["install"]), cwd=WEB_DIR)
+    ok("dependencies installed")
+    return 0
+
+
+def web_build(args):
+    info("building the website")
+    run(npm_cmd() + ["run", "build"], cwd=WEB_DIR)
+    ok("built - start it with `ta.py web start`")
+    return 0
+
+
+def web_dev(args):
+    if not (WEB_DIR / "node_modules").is_dir():
+        die("dependencies are not installed - run `ta.py web install` first")
+    cfg = load_local()
+    info(f"starting the development server on port {cfg['web_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["run", "dev", "--", "--port", str(cfg["web_port"])], cwd=WEB_DIR, check=False)
+    return 0
+
+
+def web_start(args):
+    if not (WEB_DIR / ".next" / "standalone").is_dir():
+        die("the website is not built - run `ta.py web build` first")
+    cfg = load_local()
+    info(f"starting the website on port {cfg['web_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["start"], cwd=WEB_DIR, check=False, env={"PORT": str(cfg["web_port"])})
+    return 0
+
+
+def _apply_sql(cfg, path, label):
+    if not path.exists():
+        die(f"{path} is missing")
+    sql = path.read_text(encoding="utf-8")
+    info(f"applying {label}")
+    mysql_run(cfg, sql)
+    ok(f"{label} applied")
+
+
+def web_sql(args):
+    """Create the website's own schema, and optionally its database user."""
+    cfg = load_local()
+    _apply_sql(cfg, WEB_DIR / "sql" / "web-schema.sql", "web/sql/web-schema.sql")
+
+    grants = WEB_DIR / "sql" / "grants.sql"
+    if args.grants:
+        if "CHANGE_ME" in grants.read_text(encoding="utf-8"):
+            die(f"edit {grants.relative_to(REPO)} and replace CHANGE_ME with a real password first")
+        _apply_sql(cfg, grants, "web/sql/grants.sql")
+    else:
+        print()
+        print(f"     The website also needs its own MySQL user. Edit {grants.relative_to(REPO)},")
+        print("     replace CHANGE_ME, then run `ta.py web sql --grants`.")
+    return 0
+
+
+def web_fixture(args):
+    """Load sample AzerothCore-shaped data so the site can run with no realm."""
+    cfg = load_local()
+    if not args.yes:
+        die(
+            "This writes sample rows into acore_auth / acore_characters / acore_world.\n"
+            "       It is for development databases only. Re-run with --yes if you mean it."
+        )
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql")
+    return 0
+
+
+def web_doctor(args):
+    cfg = load_local()
+    problems = 0
+
+    node = shutil.which("node")
+    if node:
+        _, version, _ = capture([node, "--version"])
+        major = int(version.lstrip("v").split(".")[0] or 0)
+        (ok if major >= 20 else warn)(f"node {version}" + ("" if major >= 20 else " - 20 or newer is required"))
+        problems += 0 if major >= 20 else 1
+    else:
+        warn("node not found - install Node.js 20 or newer")
+        problems += 1
+
+    if shutil.which(npm_cmd()[0] if shutil.which("npm") or IS_WINDOWS else "npm"):
+        ok("npm found")
+    else:
+        warn("npm not found")
+        problems += 1
+
+    if (WEB_DIR / "node_modules").is_dir():
+        ok("dependencies installed")
+    else:
+        warn("dependencies not installed - run `ta.py web install`")
+        problems += 1
+
+    env_file = web_env_path()
+    if env_file.exists():
+        text = env_file.read_text(encoding="utf-8", errors="replace")
+        secret = ""
+        for line in text.splitlines():
+            if line.startswith("SESSION_SECRET="):
+                secret = line.split("=", 1)[1].strip()
+        if len(secret) >= 32:
+            ok("SESSION_SECRET is set")
+        else:
+            warn("SESSION_SECRET is missing or too short - run `ta.py web env --force`")
+            problems += 1
+    else:
+        warn(f"{env_file.relative_to(REPO)} not found - run `ta.py web env`")
+        problems += 1
+
+    if (WEB_DIR / ".next" / "standalone").is_dir():
+        ok("website is built")
+    else:
+        warn("website is not built - run `ta.py web build`")
+
+    code, out, _ = capture(mysql_cmd(cfg) + ["-N", "-B", "-e",
+                                             f"SELECT COUNT(*) FROM information_schema.tables "
+                                             f"WHERE table_schema = '{cfg['db_web']}'"])
+    if code == 0 and out.strip().isdigit() and int(out.strip()) >= 3:
+        ok(f"{cfg['db_web']} schema present ({out.strip()} tables)")
+    else:
+        warn(f"{cfg['db_web']} schema missing or empty - run `ta.py web sql`")
+        problems += 1
+
+    print()
+    if problems:
+        warn(f"{problems} thing(s) to fix - see SETUP.md section 9")
+        return 1
+    ok("the website looks ready")
+    return 0
+
+
+def web_verify_srp6(args):
+    """
+    Prove the website computes SRP6 exactly as the server does.
+
+    Given an account the *realm itself* created (`account create` in the
+    worldserver console), recompute the verifier from the stored salt and the
+    known password. If they match, the website can create accounts the game
+    client will accept - which no unit test can establish on its own.
+
+    The pinned vector below is the same one web/src/lib/srp6.test.ts asserts,
+    so a pass here means the Python and TypeScript implementations agree with
+    each other *and* with the realm's own data.
+    """
+    import hashlib
+
+    modulus = int("894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7", 16)
+
+    def verifier_for(username, password, salt):
+        identity = hashlib.sha1(f"{username.upper()}:{password.upper()}".encode()).digest()
+        exponent = int.from_bytes(hashlib.sha1(salt + identity).digest(), "little")
+        return pow(7, exponent, modulus).to_bytes(32, "little")
+
+    pinned = verifier_for("ASHMORROW", "TOMORROWSASH", bytes([0x11] * 32)).hex()
+    expected = "13624bc6778a4fbbe1637e831336494fdea028c701ef14b8fcb706ea95a12952"
+    if pinned != expected:
+        die("the SRP6 implementation no longer matches its pinned test vector")
+    ok("SRP6 matches the vector pinned in web/src/lib/srp6.test.ts")
+
+    cfg = load_local()
+    username = args.username.upper()
+    code, out, err = capture(mysql_cmd(cfg) + [
+        "-N", "-B", "-e",
+        f"SELECT HEX(salt), HEX(verifier) FROM `{cfg['db_auth']}`.`account` WHERE username = '{username}'",
+    ])
+    if code != 0:
+        die(f"could not read the account table: {err or out}")
+    if not out.strip():
+        die(f"no account named {username} in {cfg['db_auth']} - create one in the worldserver "
+            f"console with `account create {args.username} <password>` first")
+
+    salt_hex, verifier_hex = out.split()
+    computed = verifier_for(username, args.password, bytes.fromhex(salt_hex)).hex()
+
+    if computed == verifier_hex.lower():
+        ok(f"the verifier stored for {username} matches a fresh computation")
+        print()
+        print("     The website will create accounts this realm's client accepts.")
+        return 0
+
+    warn(f"MISMATCH for {username}")
+    warn("  The website would create accounts the game client cannot log into.")
+    warn("  Either the password given here is wrong, or upstream changed SRP6.")
+    return 1
+
+
+def web_setup(args):
+    """Everything a first-time website install needs, in order."""
+    web_install(args)
+    args.force = getattr(args, "force", False)
+    web_env(args)
+    web_build(args)
+    print()
+    print(f"     Next: `python3 tools/ta.py web sql` to create the site's schema,")
+    print(f"     then `python3 tools/ta.py web start`.")
+    return 0
+
+
 # --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
@@ -631,6 +949,16 @@ def main():
     p = sub.add_parser("run", help="start a server binary")
     p.add_argument("target", choices=["auth", "world"])
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("web", help="the public website in web/ (deploys separately)")
+    p.add_argument("action", choices=["setup", "env", "install", "build", "dev", "start",
+                                      "sql", "fixture", "doctor", "verify-srp6"])
+    p.add_argument("--force", action="store_true", help="env: overwrite an existing .env.local")
+    p.add_argument("--grants", action="store_true", help="sql: also create the website's MySQL user")
+    p.add_argument("--yes", action="store_true", help="fixture: confirm writing sample data")
+    p.add_argument("--username", help="verify-srp6: an account the realm itself created")
+    p.add_argument("--password", help="verify-srp6: that account's password")
+    p.set_defaults(func=cmd_web)
 
     args = parser.parse_args()
     try:
