@@ -90,6 +90,15 @@ npm run build
 npm start                      # reads .env.local, serves the standalone build
 ```
 
+Demo mode is not a database, though, and some things only break against a real
+one. For a real MySQL with schema and sample data, without building the game
+server:
+
+```bash
+python3 ../tools/ta.py web dev-db --yes   # database, schema, sample data, .env.local
+python3 ../tools/ta.py web build && python3 ../tools/ta.py web start
+```
+
 Or through the repository's CLI, which works the same on Windows:
 
 ```bash

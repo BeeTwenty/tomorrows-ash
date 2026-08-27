@@ -427,7 +427,38 @@ npm run dev                 # http://localhost:3000
 
 On Windows, the same commands in PowerShell (`copy .env.example .env.local`).
 
-### 9.3 Point it at a running Ashmorrow
+### 9.3 A database with no realm behind it
+
+Demo mode needs no database at all, but it also cannot exercise the real
+queries. If you want the site running against a **real MySQL** without building
+the game server first, one command does the whole thing:
+
+```bash
+# Linux
+python3 tools/ta.py web dev-db --yes
+
+# Windows
+python tools\ta.py web dev-db --yes
+```
+
+That starts MySQL in Docker if nothing is reachable, creates the three
+AzerothCore schemas plus the site's own, applies the classless module's SQL so
+the armory has trees to point at, loads a handful of sample characters, creates
+the website's database user, and writes a matching `web/.env.local`. Then:
+
+```bash
+python3 tools/ta.py web build
+python3 tools/ta.py web start
+```
+
+`/status` should report the database reachable, and `/armory` should find
+**Emberlyn**.
+
+It refuses to run without `--yes`, and prints the server and schemas it is about
+to write to first — it inserts invented characters, so it must never be pointed
+at a real realm. For that, see the next section.
+
+### 9.4 Point it at a running Ashmorrow
 
 **Step 1 — give the website its own database user.**
 
@@ -498,7 +529,7 @@ by the server, and the game client will accept them. Run it again after any
 upstream bump. If it ever fails, **stop letting people register** until it
 passes: the site would be creating accounts nobody can log into.
 
-### 9.4 Configuration
+### 9.5 Configuration
 
 Everything is in `web/.env.local`, which `ta.py web env` generates and
 `web/.env.example` documents line by line. The values worth knowing:
@@ -521,7 +552,7 @@ site that serves anyway is worse than one that will not boot.
 **Never commit `web/.env.local`.** It is gitignored, and `ta.py web env` writes
 it mode 0600 on Linux.
 
-### 9.5 Running it for real
+### 9.6 Running it for real
 
 **Linux, with systemd** — the usual choice for a homelab:
 
@@ -591,7 +622,7 @@ With a proxy in front, set `TRUST_PROXY=1` and `SITE_URL=https://...` in
 `web/.env.local`, or rate limiting cannot tell your visitors apart and cookies
 will not be marked `Secure`.
 
-### 9.6 Upgrading
+### 9.7 Upgrading
 
 ```bash
 git pull
@@ -601,7 +632,7 @@ python3 tools/ta.py web sql        # re-apply the schema; it is idempotent
 sudo systemctl restart ashmorrow-web
 ```
 
-### 9.7 Website troubleshooting
+### 9.8 Website troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -613,6 +644,8 @@ sudo systemctl restart ashmorrow-web
 | Armory finds nothing | Characters appear once they have logged in. Staff characters never appear |
 | Accounts work on the site but not in the client | Run `ta.py web verify-srp6` — that is exactly what it is for |
 | CSS missing after an upgrade | A stale server process. Restart the service; do not run two |
+| `Access denied for user 'ash_web'@'localhost'` | A fresh MySQL keeps an anonymous `''@'localhost'` account that outranks a `'%'` user for local connections. Create the user for `'localhost'` too, or run `mysql_secure_installation` |
+| `Table 'acore_auth.uptime' doesn't exist` when granting | The realm's databases have not been imported yet. MySQL cannot grant on a table that is not there — start the worldserver once, or use `web dev-db` |
 
 ---
 
@@ -631,7 +664,7 @@ sudo systemctl restart ashmorrow-web
 | `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
-Website problems have their own table in [section 9.7](#97-website-troubleshooting).
+Website problems have their own table in [section 9.8](#98-website-troubleshooting).
 
 Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
 or `python3 tools/ta.py web doctor` for the website.

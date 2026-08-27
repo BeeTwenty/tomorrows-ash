@@ -15,6 +15,7 @@ both Windows and Linux. Standard library only, Python 3.8+.
     python3 tools/ta.py db realm     # register the Ashmorrow realm row
     python3 tools/ta.py run world    # start worldserver
     python3 tools/ta.py web setup    # configure and build the website
+    python3 tools/ta.py web dev-db   # give it a local database with sample data
 
 See SETUP.md for the full walkthrough.
 """
@@ -724,6 +725,7 @@ def cmd_web(args):
         "start": web_start,
         "sql": web_sql,
         "fixture": web_fixture,
+        "dev-db": web_dev_db,
         "doctor": web_doctor,
         "verify-srp6": web_verify_srp6,
         "setup": web_setup,
@@ -845,6 +847,18 @@ def web_sql(args):
     if args.grants:
         if "CHANGE_ME" in grants.read_text(encoding="utf-8"):
             die(f"edit {grants.relative_to(REPO)} and replace CHANGE_ME with a real password first")
+
+        # Table-level grants need their tables. On a realm whose databases have
+        # not been imported yet this fails with a bare "Table doesn't exist",
+        # which does not tell you what to do about it.
+        rc, _ = mysql_run(cfg, f"SELECT 1 FROM `{cfg['db_auth']}`.`account` LIMIT 0;", check=False)
+        if rc != 0:
+            die(
+                f"`{cfg['db_auth']}`.`account` does not exist yet, and MySQL cannot grant on a\n"
+                "       table that is not there. Start the worldserver once so AzerothCore\n"
+                "       imports its schema (`ta.py run world`), then run this again.\n"
+                "       For a database with no realm behind it, use `ta.py web dev-db --yes`."
+            )
         _apply_sql(cfg, grants, "web/sql/grants.sql")
     else:
         print()
@@ -862,6 +876,8 @@ def web_fixture(args):
             "       It is for development databases only. Re-run with --yes if you mean it."
         )
 
+    # Order matters and is not negotiable: characters, then the module's own
+    # tables, then who bought what. Each file is applied exactly once.
     _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql")
 
     # The classless tables are the module's, not the website's. Apply the real
@@ -870,12 +886,117 @@ def web_fixture(args):
     for db_key, subdir in (("db_world", "db-world"), ("db_characters", "db-characters")):
         for path in sorted((module_sql / subdir).glob("*.sql")):
             info(f"applying {path.relative_to(REPO)} to {cfg[db_key]}")
-            mysql_run(cfg, path.read_text(encoding="utf-8"), database=cfg[db_key])
+            # The broker NPC needs creature_template, which only a real world
+            # import provides. Its absence is expected here and harmless: the
+            # website never reads it.
+            rc, _ = mysql_run(cfg, path.read_text(encoding="utf-8"),
+                              database=cfg[db_key], check=False)
+            if rc != 0:
+                warn(f"  {path.name} did not apply cleanly - fine if it needs a full world import")
 
-    # Those purchases reference nodes that only exist once the module SQL is in,
-    # so they are applied last.
-    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql (purchases)")
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture-classless.sql",
+               "web/sql/dev-fixture-classless.sql")
     ok("fixture loaded - the armory now has classless builds to render")
+    return 0
+
+
+def web_dev_db(args):
+    """
+    One command: a working local database the website can actually connect to.
+
+    Starting the site is easy; the fiddly part is a database with the right
+    schemas, a user that is allowed to read them, sample characters to render,
+    and an .env.local that agrees with all of it. This does the lot:
+
+        1. start MySQL (Docker) if nothing is reachable already
+        2. create acore_auth / acore_world / acore_characters
+        3. create the website's own schema and its least-privilege user
+        4. apply the classless module's SQL, so builds have trees to point at
+        5. load sample characters
+        6. write web/.env.local pointing at all of the above
+
+    Development only. It inserts invented characters, so it refuses to run
+    without --yes and prints what it is about to write to first.
+    """
+    import argparse as _argparse
+    import json as _json
+    import secrets
+
+    cfg = load_local()
+
+    if not args.yes:
+        print()
+        warn("`web dev-db` builds a DEVELOPMENT database and inserts sample characters.")
+        warn(f"  server  : {cfg['mysql_host']}:{cfg['mysql_port']}")
+        warn(f"  schemas : {cfg['db_auth']}, {cfg['db_world']}, {cfg['db_characters']}, {cfg['db_web']}")
+        warn("")
+        warn("If that is a real realm's database, DO NOT run this - point")
+        warn("web/.env.local at it instead and run `ta.py web env --force`.")
+        warn("")
+        die("re-run with --yes if this is a development database")
+
+    # 1. Is anything listening? Start Docker MySQL only if not.
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        if not shutil.which("docker"):
+            die(
+                f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} and no docker to start one.\n"
+                "       Install MySQL 8 (or Docker), then put the credentials in tools/local.json."
+            )
+        info("no MySQL reachable - starting one in Docker")
+        cmd_db(_argparse.Namespace(action="up"))
+    else:
+        ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
+
+    # 2. The three AzerothCore schemas.
+    cmd_db(_argparse.Namespace(action="init"))
+
+    # 3. Tables first. `grants.sql` grants on individual tables of acore_auth,
+    #    and MySQL refuses a table-level GRANT for a table that does not exist
+    #    yet - so the schema has to be in place before the user is created.
+    web_fixture(_argparse.Namespace(yes=True))
+    _apply_sql(cfg, WEB_DIR / "sql" / "web-schema.sql", "web/sql/web-schema.sql")
+
+    # 4. Now the user - created for BOTH hosts, deliberately.
+    #
+    #    A '%' account alone is not enough on a fresh MySQL or MariaDB: the
+    #    default install leaves an anonymous ''@'localhost' account, and host
+    #    matching prefers the more specific 'localhost' over '%'. A local
+    #    connection then matches the anonymous account, fails the password, and
+    #    reports "Access denied for user 'ash_web'@'localhost'" - naming an
+    #    account that does not exist. Creating both ends that entirely.
+    password = cfg["web_db_pass"] or secrets.token_urlsafe(18)
+    template = (WEB_DIR / "sql" / "grants.sql").read_text(encoding="utf-8")
+    info("creating the website's database user")
+    for host in ("localhost", "%"):
+        mysql_run(cfg, template.replace("CHANGE_ME", password).replace("'localhost'", f"'{host}'"))
+    ok(f"user '{cfg['web_db_user']}' can connect from localhost and from other hosts")
+
+    # 6. Remember the password, then write an .env.local that matches.
+    local_file = REPO / "tools" / "local.json"
+    local = {}
+    if local_file.exists():
+        try:
+            local = _json.loads(local_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn("tools/local.json is not valid JSON - not updating it")
+            local = None
+    if local is not None and local.get("web_db_pass") != password:
+        local["web_db_pass"] = password
+        local.setdefault("web_db_user", cfg["web_db_user"])
+        local_file.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+        ok(f"recorded the website's database password in {local_file.relative_to(REPO)}")
+
+    web_env(_argparse.Namespace(force=True))
+
+    print()
+    ok("the website has a database to talk to")
+    print()
+    print("     Start it:")
+    print("       python3 tools/ta.py web build && python3 tools/ta.py web start")
+    print()
+    print("     Then check /status - it should say the database is reachable,")
+    print("     and /armory should find Emberlyn.")
     return 0
 
 
@@ -1056,10 +1177,11 @@ def main():
 
     p = sub.add_parser("web", help="the public website in web/ (deploys separately)")
     p.add_argument("action", choices=["setup", "env", "install", "build", "dev", "start",
-                                      "sql", "fixture", "doctor", "verify-srp6"])
+                                      "sql", "fixture", "dev-db", "doctor", "verify-srp6"])
     p.add_argument("--force", action="store_true", help="env: overwrite an existing .env.local")
     p.add_argument("--grants", action="store_true", help="sql: also create the website's MySQL user")
-    p.add_argument("--yes", action="store_true", help="fixture: confirm writing sample data")
+    p.add_argument("--yes", action="store_true",
+                   help="fixture / dev-db: confirm writing sample data")
     p.add_argument("--username", help="verify-srp6: an account the realm itself created")
     p.add_argument("--password", help="verify-srp6: that account's password")
     p.set_defaults(func=cmd_web)
