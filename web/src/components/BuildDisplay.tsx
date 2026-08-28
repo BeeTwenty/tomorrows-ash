@@ -142,7 +142,12 @@ export function BuildDisplay({ build }: { build: CharacterBuild }) {
                     <span className="numeric mr-2 text-ash/50">T{node.tier}</span>
                     {node.name}
                   </span>
-                  <RankPips rank={node.rank} maxRank={node.maxRank} colour={tree.colour} />
+                  <RankPips
+                    rank={node.rank}
+                    maxRank={node.maxRank}
+                    colour={tree.colour}
+                    granted={node.granted}
+                  />
                 </li>
               ))}
             </ul>
@@ -154,10 +159,28 @@ export function BuildDisplay({ build }: { build: CharacterBuild }) {
 }
 
 /** Rank shown as filled coals rather than "3/5", which reads faster in a list. */
-function RankPips({ rank, maxRank, colour }: { rank: number; maxRank: number | null; colour: string }) {
-  // Phase 1 buys a node once, so there is no rank to show and no max to show
-  // it against. Saying "bought" beats printing a meaningless "rank 1".
+function RankPips({
+  rank,
+  maxRank,
+  colour,
+  granted,
+}: {
+  rank: number;
+  maxRank: number | null;
+  colour: string;
+  granted: boolean;
+}) {
+  // A node bought once has no rank to show and no max to show it against, so
+  // "bought" beats a meaningless "rank 1" - and an ability the character
+  // already had says so, because they did not pay for it.
   if (maxRank === null || maxRank <= 0 || maxRank > 8) {
+    if (!granted) {
+      return (
+        <span className="flex-none text-ash/50" title="Already known - not sold to this character">
+          already theirs
+        </span>
+      );
+    }
     return rank <= 1 ? (
       <span className="flex-none text-ash/60">bought</span>
     ) : (

@@ -1,5 +1,5 @@
 import type { RowDataPacket } from "mysql2";
-import { schema, tablesExist, tryQuery } from "./db";
+import { columnsOf, schema, tablesExist, tryQuery } from "./db";
 import { env, isDemo } from "./env";
 import { demoLeaderboards } from "./demo";
 import { formatDuration, formatNumber, pluralise } from "./format";
@@ -73,7 +73,9 @@ async function characterBoard(
 }
 
 async function buildDepthBoard(): Promise<Leaderboard> {
-  const present = await tablesExist(env.db.characters, ["classless_character"]);
+  // Ranked on the module's own purchase rows rather than a summary table, so
+  // the board works from the moment characters start buying nodes.
+  const present = await tablesExist(env.db.characters, ["classless_character_node"]);
   if (!present) {
     return {
       key: "builds",
@@ -81,22 +83,27 @@ async function buildDepthBoard(): Promise<Leaderboard> {
       blurb: "Most skill points committed - the classless realm's version of a ladder.",
       entries: [],
       unavailable:
-        "This board arrives with the skill-point system. Until then there are no points to rank.",
+        "This board fills in once the classless system is live and characters start buying abilities.",
     };
   }
+
+  // `cost_paid` is Phase 2; before it, every purchased node counted as one.
+  const columns = await columnsOf(env.db.characters, "classless_character_node");
+  const spentExpr = columns.has("cost_paid") ? "SUM(ccn.`cost_paid`)" : "COUNT(*)";
 
   const visible = visibleCharacter("c");
   const rows = await tryQuery<LeaderRow>(
     "leaderboard builds",
     `SELECT c.guid, c.name, c.level, c.class, c.race,
-            cc.points_spent AS value,
+            ${spentExpr} AS value,
             g.name AS sub
-       FROM ${schema.chars}.\`classless_character\` cc
-       JOIN ${schema.chars}.\`characters\` c ON c.guid = cc.guid
+       FROM ${schema.chars}.\`classless_character_node\` ccn
+       JOIN ${schema.chars}.\`characters\` c ON c.guid = ccn.guid
        LEFT JOIN ${schema.chars}.\`guild_member\` gm ON gm.guid = c.guid
        LEFT JOIN ${schema.chars}.\`guild\` g ON g.guildid = gm.guildid
       WHERE ${visible.sql}
-      ORDER BY cc.points_spent DESC, c.level DESC
+      GROUP BY c.guid, c.name, c.level, c.class, c.race, g.name
+      ORDER BY value DESC, c.level DESC
       LIMIT ${BOARD_SIZE}`,
     visible.params,
   );

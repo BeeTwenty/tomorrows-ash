@@ -69,19 +69,16 @@ Pricing is settled: the pool costs **200 points** against 71 at level 80, so a
 maxed character affords **36%** of it. Scarcity is real — points buy depth or
 breadth, never both.
 
-**What the website needs from this phase.** Its armory already reads the
-Phase 1 tables and renders real builds. Two things would light up display it
-already contains:
+**The website already reads this.** The armory renders real builds from
+`classless_character_node`, takes points spent from `cost_paid`, and derives
+the total budget with the same curve as `ClasslessConfig::BudgetForLevel`. The
+"deepest builds" board ranks on those same rows.
 
-- A **rank** column on `classless_character_node`, if ranks arrive. The armory
-  falls back to "bought" without one and switches to ranked pips the moment it
-  appears.
-- **`classless_character`** (`points_total`, `points_spent`). It gives the
-  spend bar an unspent remainder and turns on the "deepest builds" ranking,
-  which currently explains that it is waiting for exactly this.
-
-Neither is assumed: `web/src/lib/build.ts` probes `information_schema` first,
-so adding them is a behaviour change rather than a coordinated release.
+One coupling to remember: the budget curve is derived, not stored, so
+`CLASSLESS_POINTS_FIRST_LEVEL`, `_PER_LEVEL` and `_BONUS` in `web/.env.local`
+must be changed alongside `Classless.Points.*` in `mod_classless.conf`. If
+ranks are ever added, `web/src/lib/build.ts` already probes for a `rank` column
+and will switch from "bought" to ranked pips on its own.
 
 ---
 

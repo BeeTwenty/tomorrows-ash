@@ -194,7 +194,7 @@ export async function getCharacterProfile(name: string): Promise<CharacterProfil
       `SELECT COUNT(*) AS n FROM ${schema.chars}.\`character_achievement\` WHERE guid = ?`,
       [row.guid],
     ),
-    loadBuild(row.guid),
+    loadBuild(row.guid, row.level),
   ]);
 
   const statsRow = statsRows?.[0] ?? null;

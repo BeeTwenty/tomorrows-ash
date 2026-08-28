@@ -13,8 +13,19 @@
 -- Notably absent: DELETE anywhere in AzerothCore's schemas, any access to
 -- `account_banned`, `ip_banned` or `logs`, and DDL of any kind.
 --
+-- Run this AFTER the realm's databases exist. Several grants below name
+-- individual tables, and MySQL refuses to grant on a table it cannot find, so
+-- on an empty acore_auth this fails with a bare "Table doesn't exist". Start
+-- the worldserver once first (`ta.py run world`), or use
+-- `ta.py web dev-db --yes` for a database with no realm behind it.
+--
 -- 1. Replace CHANGE_ME with a long random password.
--- 2. Replace 'localhost' with '%' if the site runs on another machine.
+-- 2. Replace 'localhost' with '%' if the site runs on another machine. If you
+--    do that AND the site also connects from the database host itself, create
+--    the user for both: a fresh MySQL keeps an anonymous ''@'localhost'
+--    account which is a more specific host match than '%', so local
+--    connections hit that instead and fail with a confusing
+--    "Access denied for user 'ash_web'@'localhost'".
 -- 3. Run as root, then put the same password in DB_PASSWORD in web/.env.local.
 --
 --   mysql -u root -p < web/sql/grants.sql

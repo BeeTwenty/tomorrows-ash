@@ -87,15 +87,31 @@ built, which settled two open questions:
 - **`classless_node.name` exists**, and for the same reason the armory needed
   it: spell names live in the client's DBC files and never reach the server
   database. Abilities render as "Fireball (Improved)", not `Ability #25306`.
-- **There are no ranks.** A Phase 1 node is bought once; there is no `rank`
-  column and no `max_rank`. So a purchased node shows as "bought" and counts
-  its `cost` once.
+- **There are no ranks.** A node is bought once; there is no `rank` column and
+  no `max_rank`. So a purchased node shows as "bought" and counts its cost once.
 
-Neither is assumed. `build.ts` probes `information_schema` for `rank`,
-`max_rank`, `sort_order`, `enabled` and `description`, so a Phase 2 migration
-that adds ranks or a point budget lights up the richer display without a change
-here — and a realm that has not applied the module SQL at all still gets the
-honest "not yet" panel.
+Phase 2 then added `cost_paid` and `granted` to `classless_character_node`, and
+the armory picked both up through the same probe: points spent now come from
+what a character was actually *charged*, so re-pricing a node in
+`classless_node` no longer rewrites history for everyone who bought it earlier.
+
+The budget total is the one number the site cannot get right on its own.
+[PHASE2-BUDGET.md §5](../PHASE2-BUDGET.md) settles why: spend is an exact join
+on `cost_paid`, but the total comes from a level curve whose parameters live in
+`mod_classless.conf` and are written nowhere a website can read. It also
+rejects mirroring that curve in website env vars as "the drift the no-table
+decision was avoiding, just relocated", and it is right.
+
+So the armory takes the three options in order: a curve the module publishes to
+a table if one ever exists (probed for, so building it needs no change here),
+then `CLASSLESS_POINTS_*` if an operator opts in knowingly, and otherwise no
+denominator at all - "29 points spent", which is always true. The default is
+the honest one.
+
+None of it is assumed. `build.ts` probes `information_schema` for `rank`,
+`max_rank`, `cost_paid`, `sort_order`, `enabled` and `description`, so a realm
+mid-upgrade renders correctly either way — and one that has not applied the
+module SQL at all still gets the honest "not yet" panel.
 
 ## Consequences
 

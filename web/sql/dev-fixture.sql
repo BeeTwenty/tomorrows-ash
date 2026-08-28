@@ -285,12 +285,3 @@ INSERT IGNORE INTO `acore_characters`.`item_instance` (`guid`, `itemEntry`, `own
 
 INSERT IGNORE INTO `acore_characters`.`character_inventory` (`guid`, `bag`, `slot`, `item`) VALUES
   (1, 0, 0, 5001), (1, 0, 2, 5002), (1, 0, 4, 5003), (1, 0, 15, 5004);
-
--- Classless purchases, in the module's real shape (guid, node_id, spell_id).
--- Node ids are from the Phase 1 prototype data: 101/102 Fire, 201/202 Frost,
--- 301/302 Holy, 401/402 Sword Mastery, 501/502 Stealth.
-INSERT IGNORE INTO `acore_characters`.`classless_character_node` (`guid`, `node_id`, `spell_id`) VALUES
-  -- Emberlyn: Fire and Sword Mastery, both to tier 2 - reads as "Emberblade".
-  (1, 101,   133), (1, 102, 25306), (1, 401, 12294), (1, 402,  1464),
-  -- Sorrowmark: Stealth first, a little Frost - reads as a pair.
-  (3, 501,  1784), (3, 502,  1785), (3, 201,   116);
