@@ -104,8 +104,19 @@ and gives them nothing. `tools/spell_cascade.py` reports what a grant drags in.
 
 ## 6. More than one Claude works in this repo
 
-There is a separate session on the website (`web/`, a Next.js app). Coordinate,
-do not collide:
+Three workstreams run in parallel on their own branches, each owning a slice:
+
+| Branch | Owns | Don't touch it from elsewhere |
+|---|---|---|
+| `claude/tomorrows-ash-classless-setup-*` | the server: `modules/`, `tools/`, `realm/`, core docs | — |
+| `claude/tomorrows-ash-website-ksj53j` | `web/` — the Next.js site | server module code |
+| `claude/ashmorrow-custom-launcher-*` | the launcher — `docs/LAUNCHER-DESIGN.md`, ADRs 0005–0006 | server and website code |
+
+`main` lags well behind all three; the branches are the live lines. Merge in
+both directions rather than cherry-picking, and re-read this file after a merge
+because the other sessions edit shared docs.
+
+Coordinate, do not collide:
 
 - **Do not "fix" `web/package.json` by resolving toward the Vite prototype.** A
   merge did exactly that once and broke the deploy for days: the manifest
@@ -120,6 +131,9 @@ do not collide:
   contract** — check `web/src/lib/build.ts` before altering columns.
 - Website spend is computed by joining `classless_character_node.cost_paid` —
   the price *paid*, not `classless_node.cost`, which can change.
+- **`docs/decisions/` is shared.** Numbering is sequential across all sessions
+  (0001–0003 server, 0004 website, 0005–0006 launcher). Check the directory
+  before claiming a number, and never renumber someone else's ADR.
 
 ---
 
