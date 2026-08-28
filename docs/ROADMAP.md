@@ -99,6 +99,37 @@ Removing class restrictions breaks gear assumptions.
 
 ---
 
+## Phase 4 — The launcher ⏸ blocked on two decisions
+
+A desktop launcher that verifies a player's own 3.3.5a client, writes the
+realmlist, installs our patches, and launches the game — natively on Windows,
+through Wine or Proton on Linux. It replaces "edit realmlist.wtf and run
+Wow.exe" as the *recommended* route. The manual route stays documented forever.
+
+- [x] Legal exposure assessed — [ADR 0005](decisions/0005-client-distribution.md)
+- [x] Stack and component design proposed — [ADR 0006](decisions/0006-launcher-architecture.md)
+- [x] Visual identity proposed — [LAUNCHER-DESIGN.md](LAUNCHER-DESIGN.md)
+- [ ] **Distribution approach — needs your call.** Recommendation: verify-only
+      for the base client, our own patch channel for everything we author.
+      Nothing gets built until this is settled.
+- [ ] **Stack — needs your call.** Recommendation: Tauri 2.
+- [ ] Client hash manifest — needs measuring against *your* client; cannot be
+      produced in the sandbox
+- [ ] Verify / configure / launch / update / account login
+
+Two findings worth carrying forward:
+
+- **The gossip UI needs nothing injected.** ADR 0003 chose gossip menus so that
+  an unmodified client would work, and it does. There is no client-side config
+  for the ability broker — the "patch injection" half of the brief is smaller
+  than it sounds.
+- **Auto-login stops at the account name.** The client runs its own SRP6
+  handshake; a password can only be filled by writing into the running client's
+  memory, which ADR 0005 forbids. Pre-filling the account name via `Config.wtf`
+  is supported and harmless.
+
+---
+
 ## Decisions made
 
 | # | Question | Decision |
@@ -106,6 +137,7 @@ Removing class restrictions breaks gear assumptions.
 | 1 | Client version | **3.3.5a WotLK.** True vanilla would mean permanent core forks against VMaNGOS/CMaNGOS, fighting the maintainability goal. |
 | 2 | Hidden class chassis | **Visible "body type"** (option 2). Numbers pending sign-off — [BODY-TYPES.md](BODY-TYPES.md). |
 | 3 | Ability UI | **Gossip menus for now.** Revisit a custom addon once there are real players to justify the install friction. |
+| 4 | Client distribution | **Open** — [ADR 0005](decisions/0005-client-distribution.md) recommends verify-only. Blocking Phase 4. |
 
 ## Open questions
 
@@ -123,3 +155,24 @@ approval. Two sub-decisions in there matter as much as the numbers:
 Rank chains run to 16 entries and a node grants exactly one rank. Either a node
 per useful rank, or one node whose rank scales with level. I lean towards
 scaling. Detail in [PHASE1-FINDINGS.md §7](PHASE1-FINDINGS.md).
+
+### 3. Launcher: distribution approach — **blocking Phase 4**
+
+Whether the launcher may fetch Blizzard client files, and by what mechanism.
+[ADR 0005](decisions/0005-client-distribution.md) lays out seven options with
+their exposure. My recommendation is **verify-only plus our own patch channel**:
+it keeps a promise the site already makes in public, and it leaves the project's
+risk profile where ADR 0001 already put it rather than moving us into the
+category rightsholders treat as piracy.
+
+### 4. Launcher: stack — **blocking Phase 4**
+
+Tauri, Electron, or a CLI subcommand first.
+[ADR 0006](decisions/0006-launcher-architecture.md) compares six options and
+recommends **Tauri 2**, with a `ta.py play` reference implementation alongside.
+
+### 5. The repository has no `LICENSE` file
+
+Noticed while working through ADR 0005. AzerothCore is AGPL-3.0 and the module
+inherits it; the website and launcher are not derived from it and could be
+anything. One licence across the repo is simpler to explain than three.

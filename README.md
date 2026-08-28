@@ -66,6 +66,7 @@ this repository. There is no hidden divergence. See
 | [docs/PHASE2-BUDGET.md](docs/PHASE2-BUDGET.md) | the skill-point budget: how it works, and why it doesn't constrain anything yet |
 | [docs/BODY-TYPES.md](docs/BODY-TYPES.md) | proposed body-type stat deltas, awaiting sign-off |
 | [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
+| [docs/LAUNCHER-DESIGN.md](docs/LAUNCHER-DESIGN.md) | the launcher's visual identity — proposed, awaiting sign-off |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
 | [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |
