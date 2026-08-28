@@ -1,127 +1,185 @@
-# Body types — proposed stat deltas for approval
+# Body types — final
 
-**Status:** awaiting product-owner sign-off. Nothing here is implemented.
-**Decision this implements:** chassis as a visible "body type" (option 2).
+**Status:** approved. Three body types; armor proficiency locked to body type.
+**Implements:** chassis as a visible "body type" (option 2).
 
-You asked for actual numbers rather than a strategy name. These are derived from
-the live `player_class_stats` table at level 60, not invented.
-
----
-
-## 1. The constraint that decides the design
-
-Base stats at level 60, straight from the database:
-
-| Class | BaseHP | BaseMana | Str | Agi | Sta | Int | Spi | Stat total |
-|---|---|---|---|---|---|---|---|---|
-| Warrior | 1689 | **0** | 120 | 80 | 110 | 30 | 45 | 385 |
-| Rogue | 1523 | **0** | 80 | 130 | 75 | 35 | 50 | 370 |
-| Death Knight | 1689 | **0** | 120 | 80 | 110 | 30 | 45 | 385 |
-| Paladin | 1381 | 1512 | 105 | 65 | 100 | 70 | 75 | 415 |
-| Shaman | 1423 | 1520 | 85 | 55 | 95 | 90 | 100 | 425 |
-| Hunter | 1467 | 1720 | 55 | 125 | 90 | 65 | 70 | 405 |
-| Druid | 1483 | 1244 | 65 | 60 | 70 | 100 | 110 | 405 |
-| Warlock | 1414 | 1373 | 45 | 50 | 65 | 110 | 115 | 385 |
-| Priest | 1397 | 1376 | 35 | 40 | 50 | 120 | 125 | 370 |
-| Mage | 1370 | 1213 | 30 | 35 | 45 | 125 | 120 | 355 |
-
-> **Warrior, Rogue and Death Knight have zero mana.** They run on rage and
-> energy. A Warrior-chassis character who buys Fireball has no resource to cast
-> it with — and the resource system comes from `ChrClasses.dbc`, which the
-> *client* also reads, so it is not something we can quietly change server-side.
-
-**This kills the obvious choice.** "Warrior body type" is the most intuitive
-option on the menu and it is the one that cannot use half the ability pool.
-
-**Recommendation: build all body types on mana-using classes.** Every discipline
-stays castable from every chassis, and we never have to explain why Fire is
-greyed out for one of the three options.
+Numbers are derived from the live `player_class_stats` table and from
+AzerothCore's own stat formulas in `Entities/Unit/StatSystem.cpp`. Nothing here
+is invented.
 
 ---
 
-## 2. Proposed body types
+## 1. Two constraints decided the design
 
-Three chassis, mapped onto existing classes so that character creation, armor
-proficiency and the client UI all keep working with no core changes.
+### Warrior, Rogue and Death Knight cannot cast
+
+Base mana at level 80, from the database:
+
+| Class | BaseHP | BaseMana |
+|---|---|---|
+| Warrior | 8121 | **0** |
+| Rogue | 8127 | **0** |
+| Death Knight | 8121 | **0** |
+| Paladin | 6934 | 4394 |
+| Shaman | 6939 | 4396 |
+| Mage | 6963 | 3268 |
+
+They run on rage and energy, and the resource system comes from
+`ChrClasses.dbc`, which the *client* reads too — not something we can quietly
+change server-side.
+
+"Warrior body type" is the most intuitive option on the menu and the one that
+cannot use half the ability pool. **All three body types are therefore built on
+mana-using classes.**
+
+### Casting is chassis-neutral. Melee is not.
+
+This one inverts the assumption the project started with, so it is worth being
+precise. Reading the core:
+
+**Spell power** comes from `SpellBaseDamageBonusDone()`, which sums
+`SPELL_AURA_MOD_DAMAGE_DONE` auras — that is, **gear and buffs**. There is no
+baseline Intellect-to-spell-power conversion in 3.3.5.
+
+> **An ungeared Vanguard and an ungeared Adept cast Fireball for identical
+> damage.** Both have zero spell power. The Warrior-casting-Fireball problem
+> the project expected does not exist at baseline; *gear* is what separates
+> casters, which is precisely why armor proficiency has to stay locked.
+
+**Melee attack power** is a different story
+(`Player::UpdateAttackPowerAndDamage`):
+
+```cpp
+Paladin / DK / Warrior : AP = level*3 + Strength*2 - 20
+Hunter / Shaman / Rogue: AP = level*2 + Strength + Agility - 20
+everyone else          : AP = Strength - 10        // no level term at all
+```
+
+At level 80 with no gear:
+
+| Body type | Underlying | Strength | **Attack power** |
+|---|---|---|---|
+| Vanguard | Paladin | 151 | **522** |
+| Skirmisher | Shaman | 120 | **334** |
+| Adept | Mage | 36 | **26** |
+
+**A twentyfold gap.** The caster branch has no level term, so an Adept's melee
+power barely moves from level 1 to 80.
+
+So the asymmetry runs one way only:
+
+| | Vanguard doing it | Adept doing it |
+|---|---|---|
+| Casting Fireball | same as anyone | same as anyone |
+| Swinging a weapon | 522 AP | 26 AP |
+
+**Melee is chassis-locked; casting is open to everyone.** Balance effort belongs
+on the melee side of the pool, and the Adept should never be expected to melee.
+
+---
+
+## 2. The three body types
 
 | | **Vanguard** | **Skirmisher** | **Adept** |
 |---|---|---|---|
 | Underlying class | Paladin (2) | Shaman (7) | Mage (8) |
 | Armor | Plate | Mail | Cloth |
-| Feel | Stands in front | Trades blows and casts | Glass, but hits hardest |
+| Melee AP @80 | 522 | 334 | 26 |
+| Feel | Stands in front | Trades blows and casts | Glass, but unrestricted |
 
-### The numbers (level 60)
+### Level 80 anchor
 
 | Stat | Vanguard | Skirmisher | Adept |
 |---|---|---|---|
-| BaseHP | 1381 *(unchanged)* | 1423 *(unchanged)* | **1400** *(+30)* |
-| BaseMana | 1512 *(unchanged)* | 1520 *(unchanged)* | **1500** *(+287)* |
-| Strength | 105 *(unchanged)* | 85 *(unchanged)* | **45** *(+15)* |
-| Agility | 65 *(unchanged)* | 55 *(unchanged)* | **45** *(+10)* |
-| Stamina | 100 *(unchanged)* | **90** *(−5)* | **70** *(+25)* |
-| Intellect | 70 *(unchanged)* | 90 *(unchanged)* | **130** *(+5)* |
-| Spirit | 75 *(unchanged)* | 100 *(unchanged)* | **130** *(+10)* |
+| BaseHP | 6934 | 6939 | **7100** *(+137)* |
+| BaseMana | 4394 | 4396 | **4400** *(+1132)* |
+| Strength | 151 | 120 | **55** *(+19)* |
+| Agility | 90 | 74 | **55** *(+12)* |
+| Stamina | 143 | **130** *(−6)* | **110** *(+51)* |
+| Intellect | 98 | 128 | **190** *(+9)* |
+| Spirit | 105 | 143 | **180** *(+6)* |
+| **Stat total** | **587** | **595** | **590** |
+
+### Level 60 anchor
+
+| Stat | Vanguard | Skirmisher | Adept |
+|---|---|---|---|
+| BaseHP | 1381 | 1423 | **1400** *(+30)* |
+| BaseMana | 1512 | 1520 | **1500** *(+287)* |
+| Strength | 105 | 85 | **45** *(+15)* |
+| Agility | 65 | 55 | **45** *(+10)* |
+| Stamina | 100 | **90** *(−5)* | **70** *(+25)* |
+| Intellect | 70 | 90 | **130** *(+5)* |
+| Spirit | 75 | 100 | **130** *(+10)* |
 | **Stat total** | **415** | **420** | **420** |
 
-Bold = changed from the stock value. Vanguard is deliberately left untouched as
-the reference point.
+Bold = changed from stock. Vanguard is untouched as the reference point. The
+migration generates the full 1–80 curve; these two levels are the anchors it is
+checked against.
 
-### Why these specific deltas
+### Why these deltas
 
-**Adept +25 Stamina** is the important one. Stock Mage has 45 Stamina against
-Paladin's 100. On a classless realm where a Vanguard can learn every Fire
-ability anyway, a chassis that dies instantly is not a choice — it is a trap
-nobody picks twice. +25 keeps it clearly the squishiest without making it
-unplayable.
+**Adept Stamina is the important one** (+51 at 80, +25 at 60). Stock Mage has
+59 Stamina against Paladin's 143. Given the Adept already cannot melee at all
+(26 AP), a chassis that also dies instantly is not a choice — it is a trap
+nobody picks twice.
 
-**Adept +287 BaseMana** brings it to parity (~1500). Stock Mage has the *least*
-mana of any caster, which only made sense when Mages had mana-efficiency talents
-we are not carrying over.
+**Adept mana to parity** (+1132 at 80). Stock Mage has the *least* mana of any
+caster, which only made sense alongside Mage mana-efficiency talents we are not
+carrying over.
 
-**Skirmisher −5 Stamina** is a trim, not a nerf: it equalises the stat total at
-420 and pays for the fact that mail plus the best mana pool is already the
-safest all-round pick.
+**Skirmisher Stamina trimmed** (−6): equalises the stat totals and pays for
+mail plus the best mana pool already being the safest all-round pick.
 
-**Stat totals land at 415/420/420** — near-identical budgets. The differentiator
-becomes **armor class and stat distribution**, which is a real choice, rather
-than one chassis being numerically better.
-
----
-
-## 3. What I need you to decide
-
-**a) Three body types, or all ten classes?**
-
-Three means character creation offers three options and the other seven classes
-are removed from `playercreateinfo` — a clean, comprehensible menu, and only
-three stat lines to balance forever. Ten means more variety but seven more
-balance problems, three of which (Warrior/Rogue/DK) cannot cast.
-
-I recommend three. Adding a fourth later is a data change, not a rework.
-
-**b) Is armor proficiency purchasable?**
-
-Armor proficiency is granted by a *spell*, so an Adept could buy Plate from a
-tree — and if they can, the three body types collapse into one. Options:
-
-1. **Proficiency is fixed by body type** (recommended) — armor stays the real
-   differentiator and the numbers above hold.
-2. **Proficiency is purchasable but expensive** — flexible, but expect everyone
-   to converge on plate.
-3. **Proficiency is purchasable and cheap** — body type becomes cosmetic.
-
-**c) Do you want the names?** Vanguard / Skirmisher / Adept are placeholders.
+Totals land at **587 / 595 / 590** — near-identical budgets. The differentiator
+is armor and distribution, which is a real choice, not one chassis being
+numerically better.
 
 ---
 
-## 4. Risks
+## 3. Armor proficiency is locked to body type
 
-- **These are level 60 numbers.** The table is per-level, 1–80. Implementing
-  means generating a full curve, which is a scripted migration and reversible.
-- **Untested by play.** Nobody has played this. Expect the first real test to
-  move Adept's Stamina again.
-- **Changing `player_class_stats` affects existing characters** of those
-  classes. On a fresh realm that is free; after launch it is a balance patch.
-- **Racial stat modifiers still apply** on top (`player_race_stats`), so a Tauren
-  Vanguard differs from a Human one. That is existing behaviour and probably
-  desirable, but it means the totals above are a baseline, not the final spread.
+**Not purchasable. Not in any tree. No exceptions.**
+
+Armor proficiency is granted by a spell, so it *could* be sold from a tree. It
+must not be. Section 1 shows why: casting is chassis-neutral, so if an Adept
+could buy Plate, every character would take the best offensive tree and wear
+plate, and the three body types would collapse into one.
+
+Armor is the mechanism that makes the choice cost something. It stays fixed at
+character creation.
+
+The same logic applies to anything else that would erase the distinction —
+weapon skills that grant AP, or spells conferring proficiency. New nodes should
+be checked against this rule before authoring.
+
+---
+
+## 4. Character creation
+
+Three options. The other seven classes are removed from `playercreateinfo`.
+
+Three keeps the menu comprehensible and the balance surface small enough for one
+person to actually tune. A fourth later is a data change, not a rework.
+
+Names — Vanguard / Skirmisher / Adept — are placeholders; say the word if you
+want different ones.
+
+---
+
+## 5. Risks
+
+- **Untested by play.** Nobody has played this. Expect the first real session to
+  move the Adept's Stamina again.
+- **`player_class_stats` changes affect existing characters** of those classes.
+  Free on a fresh realm; a balance patch after launch.
+- **Racial modifiers still stack on top** (`player_race_stats`), so a Draenei
+  Adept differs from a Gnome one. Existing behaviour and probably desirable, but
+  the totals above are a baseline rather than the final spread.
+- **The melee gap is intentional but untested at the extremes.** A 20x AP spread
+  means Sword Mastery and Stealth are effectively Vanguard/Skirmisher-only
+  trees. If that feels bad in play, the fix is stat deltas, not tree changes.
+- **Spell crit from Intellect is unquantified.** `GetSpellCritFromIntellect()`
+  reads `gtChanceToSpellCrit.dbc`, which needs extracted client data. The Adept
+  will crit more than the Vanguard when casting; by how much is a measurement
+  for the first play session.

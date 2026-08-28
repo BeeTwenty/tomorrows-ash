@@ -150,27 +150,37 @@ as talents.
 
 ## 6. The unsolved problem: hidden class chassis
 
-A "classless" character still has a class underneath. Base stats, attack power
-per Strength, spell power scaling, mana per Spirit, and armor proficiency all
-come from that hidden class via `playercreateinfo_levelstats`,
-`player_classlevelstats`, and hardcoded coefficients in
-`Player::UpdateAttackPowerAndDamage()`.
+**Resolved:** chassis is a visible **body type** — three of them, with armor
+proficiency locked. Final numbers and rationale in
+[BODY-TYPES.md](BODY-TYPES.md).
 
-A Mage who learns *Mortal Strike* still has a Mage's health, armor and weapon
-scaling. **Balance will be dominated by the hidden class long before the
-ability pool matters.**
+A classless character still has a class underneath supplying base stats, attack
+power, mana and armor proficiency. Measuring what that actually costs corrected
+an assumption this document previously stated as fact, so the correction is
+recorded here rather than quietly edited away.
 
-Three ways out, none free:
+**The earlier claim — that a Warrior learning Fireball would have "a Warrior's
+spell power (roughly none)" — is wrong.** Spell power in 3.3.5 comes from
+`SpellBaseDamageBonusDone()`, which sums gear and buff auras. There is no
+baseline Intellect-to-spell-power conversion. *Nobody* has spell power without
+gear, so an ungeared Vanguard and an ungeared Adept cast Fireball for identical
+damage.
 
-1. **One chassis for everyone** — normalise every class's stat tables to a
-   single neutral profile. Cleanest result, largest SQL surface, erases racial
-   and class flavour entirely.
-2. **Chassis as a visible choice** — keep classes as "body types" (Warrior =
-   tough, Mage = fragile) and let abilities be free. Least work, preserves
-   variety, but some chassis+ability combos will be strictly better.
-3. **Normalise via auras** — a module-applied hidden aura corrects stats at
-   runtime. Flexible and reversible, but adds a permanent aura to every player
-   and fights the core's own scaling.
+Melee is the opposite (`Player::UpdateAttackPowerAndDamage`): the caster branch
+is `Strength - 10` with no level term, against `level*3 + Strength*2 - 20` for
+plate classes. At level 80 that is 26 attack power versus 522 — a twentyfold
+gap that barely narrows as you level.
 
-**This is a product decision, not an engineering one**, and it should be made
-before Phase 2 because it determines what the skill-point budget is balancing.
+So the hidden chassis dominates **melee** and is nearly irrelevant to
+**casting**. That is what makes the design work:
+
+- casting trees are open to every body type by construction;
+- melee trees are effectively chassis-gated, which is a real choice rather than
+  a trap, because the body type is picked visibly at creation;
+- **armor proficiency must stay locked to body type**, because gear is the only
+  thing that differentiates casters, and a buyable Plate proficiency would
+  collapse the three body types into one.
+
+The lesson generalises: measure the core's formulas before designing around
+them. The assumption cost nothing here only because it was checked before the
+itemisation pass, not after.

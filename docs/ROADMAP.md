@@ -57,7 +57,8 @@ while those await sign-off.
 - [x] Respec that refunds points and removes only spells **we** granted
 - [x] Gossip shows the budget and offers respec; `.classless points` / `respec`
 - [x] Blizzard talent suppression wired (still defaulted off)
-- [ ] **Body-type stat deltas** — blocked on [BODY-TYPES.md](BODY-TYPES.md) sign-off
+- [x] **Body-type stat deltas approved** — three body types, armor proficiency
+      locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
 - [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
       level 80, inside the approved 30–50% band). Every spell verified against
       the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.

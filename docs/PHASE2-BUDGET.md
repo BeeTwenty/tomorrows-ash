@@ -122,6 +122,65 @@ levels 40–80 currently offer no fresh ability tiers. Extending the trees upwar
 with higher spell ranks is the obvious next authoring pass, and the generator
 makes it a data change.
 
+## 5. Reading the budget from outside the server
+
+**Decision: no `classless_character` table.** External readers compute spend by
+joining `classless_character_node.cost_paid`. A materialised per-character row
+would be a second source of truth to keep in sync, for no gain over a cheap
+join.
+
+The website's `web/src/lib/build.ts` anticipated such a table. It should use this
+instead — verified against a live database:
+
+```sql
+-- points spent by one character
+SELECT SUM(cost_paid) AS points_spent, COUNT(*) AS nodes_owned
+FROM   acore_characters.classless_character_node
+WHERE  guid = ?;
+
+-- what the armory renders: the build itself
+SELECT t.name AS tree, n.name AS ability, ccn.cost_paid, n.tier, ccn.granted
+FROM   acore_characters.classless_character_node ccn
+JOIN   acore_world.classless_node n ON n.id = ccn.node_id
+JOIN   acore_world.classless_tree t ON t.id = n.tree_id
+WHERE  ccn.guid = ?
+ORDER  BY t.sort_order, n.tier;
+```
+
+Note `cost_paid`, not `classless_node.cost` — a node's price can change, and
+what a character paid is what they paid (§3). Joining the current price would
+misreport historical builds.
+
+`granted = 0` means the character already knew that spell and it was not sold to
+them; the armory may want to mark those differently.
+
+### The gap: `points_total` is not in the database
+
+Spend is exact from the join. **The total is not derivable from SQL at all.** It
+comes from the level curve, whose parameters live in `mod_classless.conf` on the
+server — `Points.FirstLevel`, `Points.PerLevel`, `Points.Bonus`. Nothing writes
+them anywhere a website can read.
+
+So a spend bar has a numerator and no denominator. Three ways out:
+
+1. **Show spend only** — "10 points committed across 4 abilities", no
+   remainder. Costs nothing and is always correct. Good default.
+2. **Mirror the formula in website env vars** — `CLASSLESS_POINTS_PER_LEVEL`
+   and friends, applied as `(level - first + 1) * per + bonus`. Works, but it is
+   a second copy of the curve that silently goes stale the day the server
+   config is retuned. This is the drift the no-table decision was avoiding, just
+   relocated.
+3. **Publish the curve, not the state** — the module writes its three config
+   values to a single-row table on every world start. This does *not* reintroduce
+   a second source of truth: the config file stays authoritative, there is no
+   per-character state, and nothing can drift because the row is rewritten from
+   the config each boot.
+
+Option 3 is the one I would pick, and it is a different thing from the
+`classless_character` table that was rejected — that would have duplicated
+*player state*, whereas this publishes *configuration*. Not built; flagged for a
+decision after playtesting.
+
 ## 5. Retiring Blizzard talents
 
 `Classless.SuppressBlizzardTalents = 1` zeroes the talent budget through
