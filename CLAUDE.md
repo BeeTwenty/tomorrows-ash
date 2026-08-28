@@ -1,52 +1,194 @@
-# CLAUDE.md
+# CLAUDE.md — working notes for AI sessions
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Read this before touching anything. It is the list of things that have already
+gone wrong, or would, and the invariants that hold the design together.
 
-## What this is
+**Project:** Tomorrow's Ash — a classless WoW private server. Realm: **Ashmorrow**.
+**Base:** AzerothCore (WotLK 3.3.5a), pinned in `upstream.json`.
 
-A **classless** World of Warcraft private server (realm: **Ashmorrow**) built on AzerothCore
-(WotLK 3.3.5a), plus a public website. Any character can learn any ability; a per-level
-skill-point budget is the only constraint.
+---
 
-Two independent deliverables live here, with separate lifecycles:
+## 1. This repo does not contain the game server
 
-- **The realm** — `modules/mod-classless`, a C++ AzerothCore module plus SQL. Needs a
-  ~15 GB build and extracted client data to run.
-- **The website** — `web/`, a Next.js app. Builds and deploys on its own, needs none of the above.
-
-Work on one without touching the other. The website reads the realm's database but is never
-built from it.
-
-## Commands
-
-Everything for the realm goes through `tools/ta.py` (stdlib-only Python, Windows + Linux).
-Per-machine settings live in `tools/local.json` (gitignored); never hardcode credentials.
+`git clone` gives you our work only. The core is **fetched**, not vendored:
 
 ```bash
-python3 tools/ta.py doctor              # what's missing on this machine
-python3 tools/ta.py bootstrap           # clone AzerothCore at the pinned commit into .acore/
+python3 tools/ta.py doctor      # what's missing on this machine
+python3 tools/ta.py bootstrap   # clones AzerothCore at the pin into .acore/
 python3 tools/ta.py configure && python3 tools/ta.py build
-python3 tools/ta.py db up               # MySQL in Docker
-python3 tools/ta.py db init             # create the three acore_* schemas
-python3 tools/ta.py conf                # render dist/etc configs
-python3 tools/ta.py run auth            # and `run world` in a second terminal
-python3 tools/ta.py sync                # re-copy modules after edits, if bootstrap fell back to copy mode
 ```
 
-Website:
+`.acore/` is gitignored and must never be committed. `tools/ta.py` is the single
+entry point for build, database and run — read its `--help` before reaching for
+raw cmake or mysql.
+
+Upstream is bumped by editing one SHA in `upstream.json`, not by merging.
+
+---
+
+## 2. Invariants — do not break these without an explicit decision
+
+**Zero core modifications.** The classless system needs no C++ changes to
+AzerothCore, and that is what keeps upstream bumps cheap. If you think you need
+one, re-read `docs/CLASS-RESTRICTIONS.md` first — the acquisition path is almost
+certainly already open. CI warns if `patches/` becomes non-empty.
+
+**The budget is derived, never stored.** Points are computed from level on every
+read: `(level - FirstLevel + 1) * PerLevel + Bonus`. Do **not** add a
+`classless_character` table to cache it — that was proposed and rejected. See
+`docs/PHASE2-BUDGET.md §5`.
+
+**Fail-safe by default.** Every module hook returns early unless
+`Classless.Enable` is 1. Dropping the module into a stock realm must change
+nothing.
+
+**Data over code.** Trees, costs and prerequisites are rows. Rebalancing a live
+realm must never need a recompile.
+
+**Armor proficiency is locked to body type.** It is granted by a spell, so it
+*could* be sold from a tree. It must not be — see `docs/BODY-TYPES.md §3`.
+
+---
+
+## 3. Facts that are counter-intuitive and cost time
+
+Every one of these was established by reading the core or querying the database.
+Do not re-derive them from memory; if you doubt one, verify it the same way.
+
+| Claim | Reality |
+|---|---|
+| `learnSpell` blocks off-class spells | **It has no class or race check at all.** This is what makes the whole project possible. |
+| Spell power scales off Intellect | **No.** 3.3.5 spell power is gear/buff auras only (`SpellBaseDamageBonusDone`). An ungeared Warrior casts Fireball for exactly what an ungeared Mage does. This document previously claimed otherwise and was wrong. |
+| Melee is roughly comparable | **No.** Casters get `Strength - 10` with no level term vs `level*3 + Str*2 - 20` for plate: 26 AP vs 522 at level 80. |
+| Granting a spell cascades into its rank chain | **Not for a fresh grant.** Both recursion branches in `learnSpell` require the spell to be *already known*. |
+| Learning or casting is level-gated | **Neither is.** Zero level checks in the entire learn path. `classless_node.required_level` is the only gate that exists. |
+| `AllowableClass` is a plain bitmask | It is a **signed** int where **`-1` means all classes**. Treat as a bitmask only when not `-1`. |
+| Script hooks can grant permissions | **They can only veto.** `CALL_ENABLED_BOOLEAN_HOOKS` returns false if any script says false. Loosening must come from data. |
+
+---
+
+## 4. Build and tooling traps
+
+**Module sources are globbed at CMake *configure* time.** Adding a new `.cpp`
+without re-running cmake fails as an *undefined reference at link*, not a
+missing-file error. `ta.py build` now auto-reconfigures when module sources
+change; if you invoke cmake directly, do it yourself.
+
+**Module configs install to `dist/etc/modules/`**, not `dist/etc/`. Putting them
+in the latter means worldserver silently uses defaults.
+
+**The server cannot start without client data.** It exits at
+`Failed to find map files for starting areas`. This is expected in any
+environment without an extracted WoW 3.3.5a client — it is not a bug, and it
+means gameplay cannot be verified here. Verify what you can (migrations apply,
+module loads, symbols link) and say plainly what you could not.
+
+**Never invent spell IDs.** `tools/gen_trees.py` generates the tree SQL and
+*refuses to emit* if a spell cannot be proven to exist via `trainer_spell` or
+`spell_ranks`. A node pointing at a non-existent spell takes a player's points
+and gives them nothing. `tools/spell_cascade.py` reports what a grant drags in.
+
+---
+
+## 5. Sandbox environment notes
+
+- No systemd. Start MySQL with `mysqld_safe --user=mysql &` after
+  `mkdir -p /var/run/mysqld && chown mysql:mysql /var/run/mysqld`.
+- Docker Hub anonymous pulls are rate limited here (HTTP 429). `ta.py db up`
+  fails with a pointer to the native-MySQL path; that is the expected fallback.
+- `azerothcore.org` is blocked by the egress proxy. Read the source tree
+  instead of the wiki.
+- A full build is ~15 GB and roughly 20 minutes on 4 cores with ccache.
+
+---
+
+## 6. More than one Claude works in this repo
+
+Three workstreams run in parallel on their own branches, each owning a slice:
+
+| Branch | Owns | Don't touch it from elsewhere |
+|---|---|---|
+| `claude/tomorrows-ash-classless-setup-*` | the server: `modules/`, `tools/`, `realm/`, core docs | — |
+| `claude/tomorrows-ash-website-ksj53j` | `web/` — the Next.js site | server module code |
+| `claude/ashmorrow-custom-launcher-*` | the launcher — `docs/LAUNCHER-DESIGN.md`, ADRs 0005–0006 | server and website code |
+
+`main` lags well behind all three; the branches are the live lines. Merge in
+both directions rather than cherry-picking, and re-read this file after a merge
+because the other sessions edit shared docs.
+
+Coordinate, do not collide:
+
+- **Do not "fix" `web/package.json` by resolving toward the Vite prototype.** A
+  merge did exactly that once and broke the deploy for days: the manifest
+  reverted to `tomorrows-ash-prototype` with a `vite build` script while every
+  other file in `web/` belonged to the Next.js app, so `npm ci` refused to run.
+  The correct manifest is `tomorrows-ash-web`, whose build script is
+  `next build && node scripts/prepare-standalone.mjs`. The Vite prototype is gone
+  from the working tree; it survives in full on the `prototype/tomorrows-ash-ui`
+  branch (tip `aeb330c`) if it is ever wanted again.
+- The website reads `classless_tree`, `classless_node` and
+  `classless_character_node`. **Schema changes there are a cross-session
+  contract** — check `web/src/lib/build.ts` before altering columns.
+- Website spend is computed by joining `classless_character_node.cost_paid` —
+  the price *paid*, not `classless_node.cost`, which can change.
+- **`docs/decisions/` is shared.** Numbering is sequential across all sessions
+  (0001–0003 server, 0004 website, 0005–0006 launcher). Check the directory
+  before claiming a number, and never renumber someone else's ADR.
+
+---
+
+## 7. Where things are
+
+| Path | |
+|---|---|
+| `modules/mod-classless/` | the module: C++, SQL migrations, config |
+| `tools/ta.py` | build / db / run CLI |
+| `tools/gen_trees.py` | generates tree SQL, verifies every spell |
+| `tools/spell_cascade.py` | what does granting this spell drag in? |
+| `docs/CLASS-RESTRICTIONS.md` | how AzerothCore enforces class rules, with file:line |
+| `docs/ARCHITECTURE.md` | repo model, module rules |
+| `docs/BODY-TYPES.md` | the three body types, final |
+| `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
+| `docs/ROADMAP.md` | phase status and open questions |
+| `docs/decisions/` | ADRs — read before re-opening a settled question |
+
+Module SQL goes in `modules/mod-classless/data/sql/db-{world,characters,auth}/`
+and is applied automatically by AzerothCore's updater. The directory name must
+contain `world`, `characters` or `auth` or the migration is silently ignored.
+
+---
+
+## 8. Working style that has served this project
+
+- **Verify, don't recall.** Spell IDs, formulas and schemas are all checkable
+  against the source tree or the database. Several confident memories here were
+  wrong.
+- **Say what you did not test.** Most of this is verified by loading, not by
+  playing. Be explicit about which.
+- **Correct the record.** When a measurement contradicts something a document
+  asserts, fix the document and say so — §3 exists because of that.
+- **Phases end in a written report**: what was built, what was decided and why,
+  what is risky or unfinished, and what the product owner needs to decide.
+
+---
+
+## 9. The website (`web/`)
+
+Owned by `claude/tomorrows-ash-website-ksj53j` per §6. A separate Next.js
+service: it reads the realm's database but builds, deploys and fails on its own,
+and needs none of the server toolchain above.
 
 ```bash
 cd web
 npm install
-npm run dev            # http://localhost:3000 — runs on sample data with no database
-npm run check          # typecheck + lint + unit tests. Run before pushing.
-npm test               # unit tests alone
-npm run build          # then `npm start` serves the standalone build
+npm run dev        # http://localhost:3000 — runs on sample data with no database
+npm run check      # typecheck + lint + unit tests. Run before pushing.
+npm run build      # then `npm start` serves the standalone build
 
-npx tsx --test src/lib/srp6.test.ts    # a single test file
+npx tsx --test src/lib/srp6.test.ts     # one test file
 ```
 
-Website ops, from the repo root:
+From the repo root, `ta.py` drives its ops too:
 
 ```bash
 python3 tools/ta.py web dev-db --yes    # MySQL + schemas + module SQL + sample characters + .env.local
@@ -54,92 +196,42 @@ python3 tools/ta.py web setup           # install, configure, build
 python3 tools/ta.py web sql --grants    # site's own schema + least-privilege MySQL user
 python3 tools/ta.py web doctor
 python3 tools/ta.py web verify-srp6 --username SOME --password ITSPASSWORD
-python3 tools/gen_trees.py              # verify every tree spell; --write regenerates the migration
 ```
 
-## The rules that shape everything
+With no `DB_HOST` the site runs in **demo mode** on fixtures and says so on every
+affected page — which is why the design was reviewable before a realm existed.
 
-**Zero core C++ modifications.** The classless system is a module plus SQL. This is what makes
-staying current with upstream realistic, and CI warns if a `patches/` directory appears. The
-design rests on `Player::learnSpell()` having no class check — see `docs/CLASS-RESTRICTIONS.md`.
+### Traps specific to this half
 
-**Script hooks can only veto, never grant** (`ScriptMgrMacros.h:76`). Any *loosening* of a rule
-must come from data or from an acquisition path we own. This is the single most important
-constraint when designing a feature here; a boolean `OnPlayerCanX` hook will not do it.
+**Never prerender realm data.** Pages that read the database are
+`force-dynamic`; caching lives in the data layer. A prerendered page bakes in
+whatever the build machine could see, which in a container is nothing.
 
-**Overlay, not fork.** `upstream.json` pins an exact AzerothCore commit; `ta.py bootstrap`
-fetches it into a gitignored `.acore/`. Everything this project changed relative to stock is
-visible in this repo. Never commit `.acore/`, client data (`*.mpq`, `*.dbc`, maps), or `.env*`
-files — CI fails on all three.
+**SRP6 must match the core byte for byte.** `src/lib/srp6.ts` is ported from the
+pinned upstream, and its test asserts against a vector captured from the compiled
+`Acore::Crypto::SRP6` (`docs/reference/srp6/testvector.json`). Get the
+little-endian conversions wrong and registration silently creates accounts the
+game client can never log into. `ta.py web verify-srp6` checks it against a real
+account the server itself made.
 
-**Own your tables.** Module state lives in `classless_*` tables in the world and characters
-databases; the website owns a separate `ashmorrow_web` schema. Nothing ever adds a column to an
-AzerothCore table, so the core's own SQL updater can never collide with ours.
+**The game client's limits are the real limits.** Account names and passwords cap
+at 16 characters because the 3.3.5a client cannot send more. A form that accepts
+more creates accounts nobody can use.
 
-**Data over code.** Trees, abilities, costs and prerequisites are rows, not `switch` statements.
-Rebalancing a live realm must never need a recompile.
+**Probe the schema, never assume it.** `src/lib/build.ts` asks
+`information_schema` which columns exist, so the armory renders correctly before
+and after a module migration and degrades to an honest "not yet" instead of
+inventing data. Two details of the shared contract in §6 are load-bearing here:
+there are **no ranks** (a node is bought once — no `rank` or `max_rank` column),
+and **`granted = 0`** means the character already knew that spell and was never
+charged, so respec must leave it alone.
 
-**Fail-safe by default.** Every module hook returns early unless `Classless.Enable = 1`. Dropping
-the module into a stock realm must change nothing.
+That probing is not theoretical. The armory was written against the §5 sketch in
+`ARCHITECTURE.md`, which had a `rank` column the shipped schema does not have.
+The query failed, the error was swallowed, and every character with purchases
+rendered "the classless system is not live on this realm yet" — the honest
+fallback giving a dishonest answer.
 
-## The classless data contract
-
-Read by both the module and the website's armory, so changes here ripple:
-
-```
-world       classless_tree            id, name, description, sort_order, enabled
-world       classless_node            id, tree_id, spell_id, name, description, tier, cost,
-                                      required_level, requires_node, sort_order, enabled
-characters  classless_character_node  guid, node_id, spell_id, cost_paid, granted, learned_at
-```
-
-Three things about it are load-bearing:
-
-- **There are no ranks.** A node is bought once. Nothing has a `rank` or `max_rank` column.
-- **`cost_paid`, not `classless_node.cost`.** Spend is summed from what a character was actually
-  charged, so re-pricing a node does not retroactively bankrupt earlier buyers.
-- **`granted = 0`** means the character already knew that spell and was never charged. Respec
-  must not remove those — that is how you steal a Mage's own Fireball.
-
-The **point budget is derived from level and never stored** —
-`(level - FirstLevel + 1) * PerLevel + Bonus` from `mod_classless.conf`. There is deliberately no
-`classless_character` table; `docs/PHASE2-BUDGET.md` §5 explains why, and why mirroring the curve
-elsewhere is a trap. Spend is exact from SQL; the total is not derivable from SQL at all.
-
-Module SQL must live in `modules/mod-classless/data/sql/db-{world,characters,auth}/` — AzerothCore's
-updater matches those directory names by substring, and CI checks it. Anything else is silently
-ignored, which is a nasty way to lose a migration.
-
-`tools/gen_trees.py` refuses to emit SQL for any spell it cannot prove exists (via `trainer_spell`
-or `spell_ranks`). A node pointing at a non-existent spell takes a player's points and gives
-nothing.
-
-## The website
-
-Next.js 15 App Router + TypeScript, six runtime dependencies (`next`, `react`, `react-dom`,
-`mysql2`, `marked`, `nodemailer`) — that small a set is deliberate for a credential-handling
-surface. Adding one is a decision, not a convenience. `web/README.md` maps
-the code; `docs/decisions/0004-website.md` explains the choices.
-
-Four things bite if you don't know them:
-
-- **Never prerender realm data.** Pages reading the database are `force-dynamic`; caching happens
-  inside the data layer. A prerendered page bakes in whatever the build machine could see, which
-  in a container is nothing.
-- **SRP6 must match the core byte for byte.** `src/lib/srp6.ts` is ported from the pinned upstream,
-  and its test asserts against a vector captured from the compiled `Acore::Crypto::SRP6`
-  (`docs/reference/srp6/testvector.json`). Get the little-endian conversions wrong and registration
-  silently creates accounts nobody can log into.
-- **The game client's limits are the real limits.** Account names and passwords cap at 16
-  characters because the 3.3.5a client cannot send more.
-- **Everything is probed, never assumed.** `build.ts` asks `information_schema` which columns
-  exist, so the armory renders correctly before and after a module migration, and degrades to an
-  honest "not yet" rather than inventing data.
-
-With no `DB_HOST` the site runs in **demo mode** on fixtures and says so on every affected page.
-
-## Conventions
-
-Migrations are dated: `YYYY_MM_DD_NN_description.sql`. Notable decisions get an ADR in
-`docs/decisions/`. Docs are treated as code — CI checks that every relative link resolves, and
-`SETUP.md` being wrong is a bug, not a stale file.
+**Own your tables applies here too.** Everything the site owns lives in its own
+`ashmorrow_web` schema (sessions, reset tokens, rate limits, audit log). It never
+adds a column to an AzerothCore table.
