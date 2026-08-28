@@ -59,6 +59,7 @@ this repository. There is no hidden divergence. See
 
 | Document | What it covers |
 |---|---|
+| [CLAUDE.md](CLAUDE.md) | orientation for AI sessions: invariants, traps, verified facts |
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
