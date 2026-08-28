@@ -22,6 +22,8 @@ pub mod error;
 pub mod install;
 pub mod launch;
 pub mod manifest;
+#[cfg(feature = "net")]
+pub mod net;
 pub mod settings;
 pub mod source;
 pub mod verify;

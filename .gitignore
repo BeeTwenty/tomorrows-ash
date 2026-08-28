@@ -52,3 +52,6 @@ __pycache__/
 # --- Website example dependencies ---
 node_modules/
 package-lock.json
+# ...except the launcher's, which ships as a binary to players: the exact
+# dependency set has to be reproducible from the tag that built it.
+!launcher/ui/package-lock.json

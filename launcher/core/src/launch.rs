@@ -11,12 +11,13 @@ use crate::error::{Error, Result};
 use crate::wine::{Runtime, RuntimeKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum Renderer {
     /// The client's own Direct3D 9 path. Through DXVK on Linux if it is present.
     #[default]
+    #[serde(rename = "direct3d")]
     Direct3D,
     /// The client's OpenGL path. Worth trying when D3D9 misbehaves under Wine.
+    #[serde(rename = "opengl")]
     OpenGl,
 }
 
@@ -194,6 +195,20 @@ mod tests {
             program: PathBuf::from("/steam/steamapps/common/Proton 9.0/proton"),
             steam_root: Some(PathBuf::from("/steam")),
         }
+    }
+
+    /// The UI switches on these strings, so they are part of the contract
+    /// rather than an implementation detail of the enum's spelling.
+    #[test]
+    fn the_renderer_names_on_the_wire_are_the_ones_the_ui_expects() {
+        assert_eq!(
+            serde_json::to_string(&Renderer::Direct3D).unwrap(),
+            "\"direct3d\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Renderer::OpenGl).unwrap(),
+            "\"opengl\""
+        );
     }
 
     #[test]

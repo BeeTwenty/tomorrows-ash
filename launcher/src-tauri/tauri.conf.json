@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Ashmorrow",
+  "version": "0.1.0",
+  "identifier": "com.ashmorrow.launcher",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../ui run dev",
+    "beforeBuildCommand": "npm --prefix ../ui run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Ashmorrow",
+        "width": 900,
+        "height": 600,
+        "minWidth": 760,
+        "minHeight": 520,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "appimage", "nsis", "msi"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico"
+    ],
+    "category": "Game",
+    "shortDescription": "Launcher for the Ashmorrow realm.",
+    "longDescription": "Verifies a World of Warcraft 3.3.5a client you already own, points it at the Ashmorrow realm, installs Ashmorrow's own patches, and launches the game. It downloads no Blizzard files."
+  }
+}
