@@ -14,6 +14,8 @@ both Windows and Linux. Standard library only, Python 3.8+.
     python3 tools/ta.py conf         # render server configs for realm Ashmorrow
     python3 tools/ta.py db realm     # register the Ashmorrow realm row
     python3 tools/ta.py run world    # start worldserver
+    python3 tools/ta.py web setup    # configure and build the website
+    python3 tools/ta.py web dev-db   # give it a local database with sample data
 
 See SETUP.md for the full walkthrough.
 """
@@ -51,6 +53,11 @@ DEFAULTS = {
     "website_db_pass": "",
     "build_type": "Release",
     "tools_build": "all",
+    "db_web": "ashmorrow_web",
+    "web_port": 3000,
+    "web_db_user": "ash_web",
+    "web_db_pass": "",
+    "site_url": "http://localhost:3000",
 }
 
 
@@ -360,11 +367,37 @@ def cmd_configure(args):
     return 0
 
 
+def module_sources_newer_than_cache(bdir):
+    """True if any module source is newer than the CMake cache.
+
+    AzerothCore's CMake globs module sources at CONFIGURE time, so a newly added
+    .cpp is invisible to the build until cmake re-runs - and the failure mode is
+    a confusing undefined-reference at link, not a missing-file error. Detect it
+    instead of letting people lose an hour to it.
+    """
+    cache = bdir / "CMakeCache.txt"
+    if not cache.exists():
+        return False
+    cache_mtime = cache.stat().st_mtime
+    for module in load_upstream().get("modules", []):
+        src = REPO / "modules" / module
+        for path in src.rglob("*"):
+            if path.suffix in (".cpp", ".h", ".cmake") and path.stat().st_mtime > cache_mtime:
+                return True
+    return False
+
+
 def cmd_build(args):
     need("cmake", "install CMake")
     bdir = build_dir()
     if not (bdir / "CMakeCache.txt").exists():
         die("not configured - run `ta.py configure` first")
+
+    if module_sources_newer_than_cache(bdir):
+        info("module sources changed since configure - re-running cmake")
+        info("  (AzerothCore globs module sources at configure time; skipping this")
+        info("   produces undefined-reference link errors for any new file)")
+        run(["cmake", str(bdir)], cwd=bdir)
     jobs = args.jobs or os.cpu_count() or 4
     info(f"building with {jobs} parallel jobs (this takes a while on first run)")
     run(["cmake", "--build", str(bdir), "--parallel", str(jobs)])
@@ -389,13 +422,17 @@ def mysql_cmd(cfg, database=None):
     the Docker container, which means a working setup needs no MySQL install
     on the host at all.
     """
+    # An empty `-p` makes the client prompt for a password and hang forever in
+    # a script, so the flag is only passed when there is a password to pass.
+    password = [f"-p{cfg['mysql_pass']}"] if cfg["mysql_pass"] else []
+
     if mysql_available_native():
         cmd = ["mysql", f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
-               f"-u{cfg['mysql_user']}", f"-p{cfg['mysql_pass']}"]
+               f"-u{cfg['mysql_user']}"] + password
     else:
         need("docker", "install Docker, or install a native MySQL client")
         cmd = ["docker", "exec", "-i", cfg["docker_container"],
-               "mysql", f"-u{cfg['mysql_user']}", f"-p{cfg['mysql_pass']}"]
+               "mysql", f"-u{cfg['mysql_user']}"] + password
     if database:
         cmd.append(database)
     return cmd
@@ -652,6 +689,459 @@ def cmd_run(args):
     return 0
 
 
+
+# --------------------------------------------------------------------------
+# web  -  the public website in /web
+#
+# The website is a separate service with its own lifecycle: it can be deployed,
+# restarted and upgraded without touching the realm. These subcommands exist so
+# that `ta.py` stays the single entry point on both platforms, not because the
+# two are coupled.
+# --------------------------------------------------------------------------
+
+WEB_DIR = REPO / "web"
+
+
+def npm_cmd():
+    """npm is a .cmd shim on Windows, which subprocess will not find unaided."""
+    for candidate in (["npm.cmd"], ["npm"]) if IS_WINDOWS else (["npm"],):
+        if shutil.which(candidate[0]):
+            return candidate
+    die("npm not found on PATH - install Node.js 20 or newer (https://nodejs.org)")
+
+
+def web_env_path():
+    return WEB_DIR / ".env.local"
+
+
+def cmd_web(args):
+    if not WEB_DIR.is_dir():
+        die(f"{WEB_DIR} not found")
+    return {
+        "env": web_env,
+        "install": web_install,
+        "build": web_build,
+        "dev": web_dev,
+        "start": web_start,
+        "sql": web_sql,
+        "fixture": web_fixture,
+        "dev-db": web_dev_db,
+        "doctor": web_doctor,
+        "verify-srp6": web_verify_srp6,
+        "setup": web_setup,
+    }[args.action](args)
+
+
+def web_env(args):
+    """Write web/.env.local from tools/local.json plus a fresh session secret."""
+    import secrets
+
+    target = web_env_path()
+    if target.exists() and not args.force:
+        warn(f"{target.relative_to(REPO)} already exists (use --force to regenerate)")
+        return 0
+
+    cfg = load_local()
+    example = WEB_DIR / ".env.example"
+    if not example.exists():
+        die(f"{example} is missing")
+
+    # Start from the documented example so every comment survives, then set the
+    # handful of values we actually know about this machine.
+    values = {
+        "SITE_URL": cfg["site_url"],
+        "SESSION_SECRET": secrets.token_urlsafe(48),
+        "DATA_SOURCE": "live",
+        "REALM_NAME": cfg["realm_name"],
+        "REALM_ADDRESS": cfg["realm_address"],
+        "REALM_WORLD_PORT": str(cfg["realm_port"]),
+        "DB_HOST": cfg["mysql_host"],
+        "DB_PORT": str(cfg["mysql_port"]),
+        "DB_USER": cfg["web_db_user"],
+        "DB_PASSWORD": cfg["web_db_pass"],
+        "DB_AUTH": cfg["db_auth"],
+        "DB_CHARACTERS": cfg["db_characters"],
+        "DB_WORLD": cfg["db_world"],
+        "DB_WEB": cfg["db_web"],
+    }
+
+    out, seen = [], set()
+    for line in example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in values:
+                out.append(f"{key}={values[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+
+    missing = [f"{k}={v}" for k, v in values.items() if k not in seen]
+    if missing:
+        out.extend(["", "# Added by `ta.py web env`"] + missing)
+
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass  # Windows without POSIX permissions - the file is still gitignored.
+
+    ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+    if not cfg["web_db_pass"]:
+        warn("DB_PASSWORD is empty. Create the website's database user first:")
+        warn("  1. edit web/sql/grants.sql, replacing CHANGE_ME with a password")
+        warn("  2. python3 tools/ta.py web sql")
+        warn('  3. put the same password in tools/local.json as "web_db_pass"')
+        warn("  4. re-run `ta.py web env --force`")
+    return 0
+
+
+def web_install(args):
+    info("installing website dependencies")
+    lock = WEB_DIR / "package-lock.json"
+    run(npm_cmd() + (["ci"] if lock.exists() else ["install"]), cwd=WEB_DIR)
+    ok("dependencies installed")
+    return 0
+
+
+def web_build(args):
+    info("building the website")
+    run(npm_cmd() + ["run", "build"], cwd=WEB_DIR)
+    ok("built - start it with `ta.py web start`")
+    return 0
+
+
+def web_dev(args):
+    if not (WEB_DIR / "node_modules").is_dir():
+        die("dependencies are not installed - run `ta.py web install` first")
+    cfg = load_local()
+    info(f"starting the development server on port {cfg['web_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["run", "dev", "--", "--port", str(cfg["web_port"])], cwd=WEB_DIR, check=False)
+    return 0
+
+
+def web_start(args):
+    if not (WEB_DIR / ".next" / "standalone").is_dir():
+        die("the website is not built - run `ta.py web build` first")
+    cfg = load_local()
+    info(f"starting the website on port {cfg['web_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["start"], cwd=WEB_DIR, check=False, env={"PORT": str(cfg["web_port"])})
+    return 0
+
+
+def _apply_sql(cfg, path, label):
+    if not path.exists():
+        die(f"{path} is missing")
+    sql = path.read_text(encoding="utf-8")
+    info(f"applying {label}")
+    mysql_run(cfg, sql)
+    ok(f"{label} applied")
+
+
+def web_sql(args):
+    """Create the website's own schema, and optionally its database user."""
+    cfg = load_local()
+    _apply_sql(cfg, WEB_DIR / "sql" / "web-schema.sql", "web/sql/web-schema.sql")
+
+    grants = WEB_DIR / "sql" / "grants.sql"
+    if args.grants:
+        if "CHANGE_ME" in grants.read_text(encoding="utf-8"):
+            die(f"edit {grants.relative_to(REPO)} and replace CHANGE_ME with a real password first")
+
+        # Table-level grants need their tables. On a realm whose databases have
+        # not been imported yet this fails with a bare "Table doesn't exist",
+        # which does not tell you what to do about it.
+        rc, _ = mysql_run(cfg, f"SELECT 1 FROM `{cfg['db_auth']}`.`account` LIMIT 0;", check=False)
+        if rc != 0:
+            die(
+                f"`{cfg['db_auth']}`.`account` does not exist yet, and MySQL cannot grant on a\n"
+                "       table that is not there. Start the worldserver once so AzerothCore\n"
+                "       imports its schema (`ta.py run world`), then run this again.\n"
+                "       For a database with no realm behind it, use `ta.py web dev-db --yes`."
+            )
+        _apply_sql(cfg, grants, "web/sql/grants.sql")
+    else:
+        print()
+        print(f"     The website also needs its own MySQL user. Edit {grants.relative_to(REPO)},")
+        print("     replace CHANGE_ME, then run `ta.py web sql --grants`.")
+    return 0
+
+
+def web_fixture(args):
+    """Load sample AzerothCore-shaped data so the site can run with no realm."""
+    cfg = load_local()
+    if not args.yes:
+        die(
+            "This writes sample rows into acore_auth / acore_characters / acore_world.\n"
+            "       It is for development databases only. Re-run with --yes if you mean it."
+        )
+
+    # Order matters and is not negotiable: characters, then the module's own
+    # tables, then who bought what. Each file is applied exactly once.
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture.sql", "web/sql/dev-fixture.sql")
+
+    # The classless tables are the module's, not the website's. Apply the real
+    # files rather than a second copy that can drift away from them.
+    module_sql = REPO / "modules" / "mod-classless" / "data" / "sql"
+    for db_key, subdir in (("db_world", "db-world"), ("db_characters", "db-characters")):
+        for path in sorted((module_sql / subdir).glob("*.sql")):
+            info(f"applying {path.relative_to(REPO)} to {cfg[db_key]}")
+            # The broker NPC needs creature_template, which only a real world
+            # import provides. Its absence is expected here and harmless: the
+            # website never reads it.
+            rc, _ = mysql_run(cfg, path.read_text(encoding="utf-8"),
+                              database=cfg[db_key], check=False)
+            if rc != 0:
+                warn(f"  {path.name} did not apply cleanly - fine if it needs a full world import")
+
+    _apply_sql(cfg, WEB_DIR / "sql" / "dev-fixture-classless.sql",
+               "web/sql/dev-fixture-classless.sql")
+    ok("fixture loaded - the armory now has classless builds to render")
+    return 0
+
+
+def web_dev_db(args):
+    """
+    One command: a working local database the website can actually connect to.
+
+    Starting the site is easy; the fiddly part is a database with the right
+    schemas, a user that is allowed to read them, sample characters to render,
+    and an .env.local that agrees with all of it. This does the lot:
+
+        1. start MySQL (Docker) if nothing is reachable already
+        2. create acore_auth / acore_world / acore_characters
+        3. create the website's own schema and its least-privilege user
+        4. apply the classless module's SQL, so builds have trees to point at
+        5. load sample characters
+        6. write web/.env.local pointing at all of the above
+
+    Development only. It inserts invented characters, so it refuses to run
+    without --yes and prints what it is about to write to first.
+    """
+    import argparse as _argparse
+    import json as _json
+    import secrets
+
+    cfg = load_local()
+
+    if not args.yes:
+        print()
+        warn("`web dev-db` builds a DEVELOPMENT database and inserts sample characters.")
+        warn(f"  server  : {cfg['mysql_host']}:{cfg['mysql_port']}")
+        warn(f"  schemas : {cfg['db_auth']}, {cfg['db_world']}, {cfg['db_characters']}, {cfg['db_web']}")
+        warn("")
+        warn("If that is a real realm's database, DO NOT run this - point")
+        warn("web/.env.local at it instead and run `ta.py web env --force`.")
+        warn("")
+        die("re-run with --yes if this is a development database")
+
+    # 1. Is anything listening? Start Docker MySQL only if not.
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        if not shutil.which("docker"):
+            die(
+                f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} and no docker to start one.\n"
+                "       Install MySQL 8 (or Docker), then put the credentials in tools/local.json."
+            )
+        info("no MySQL reachable - starting one in Docker")
+        cmd_db(_argparse.Namespace(action="up"))
+    else:
+        ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
+
+    # 2. The three AzerothCore schemas.
+    cmd_db(_argparse.Namespace(action="init"))
+
+    # 3. Tables first. `grants.sql` grants on individual tables of acore_auth,
+    #    and MySQL refuses a table-level GRANT for a table that does not exist
+    #    yet - so the schema has to be in place before the user is created.
+    web_fixture(_argparse.Namespace(yes=True))
+    _apply_sql(cfg, WEB_DIR / "sql" / "web-schema.sql", "web/sql/web-schema.sql")
+
+    # 4. Now the user - created for BOTH hosts, deliberately.
+    #
+    #    A '%' account alone is not enough on a fresh MySQL or MariaDB: the
+    #    default install leaves an anonymous ''@'localhost' account, and host
+    #    matching prefers the more specific 'localhost' over '%'. A local
+    #    connection then matches the anonymous account, fails the password, and
+    #    reports "Access denied for user 'ash_web'@'localhost'" - naming an
+    #    account that does not exist. Creating both ends that entirely.
+    password = cfg["web_db_pass"] or secrets.token_urlsafe(18)
+    template = (WEB_DIR / "sql" / "grants.sql").read_text(encoding="utf-8")
+    info("creating the website's database user")
+    user = cfg["web_db_user"]
+    for host in ("localhost", "%"):
+        mysql_run(cfg, template.replace("CHANGE_ME", password).replace("'localhost'", f"'{host}'"))
+        # CREATE USER IF NOT EXISTS keeps an existing user's OLD password, so a
+        # second run would hand the site a password the server does not accept
+        # and the page would report the database down. Set it explicitly.
+        mysql_run(cfg, f"ALTER USER IF EXISTS '{user}'@'{host}' IDENTIFIED BY '{password}';")
+
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    probe = dict(cfg, mysql_user=user, mysql_pass=password)
+    rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_characters']}`.`characters` LIMIT 0;", check=False)
+    if rc != 0:
+        die(f"user '{user}' was created but cannot connect - check the MySQL error log")
+    ok(f"user '{user}' connects, from localhost and from other hosts")
+
+    # 6. Remember the password, then write an .env.local that matches.
+    local_file = REPO / "tools" / "local.json"
+    local = {}
+    if local_file.exists():
+        try:
+            local = _json.loads(local_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn("tools/local.json is not valid JSON - not updating it")
+            local = None
+    if local is not None and local.get("web_db_pass") != password:
+        local["web_db_pass"] = password
+        local.setdefault("web_db_user", cfg["web_db_user"])
+        local_file.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+        ok(f"recorded the website's database password in {local_file.relative_to(REPO)}")
+
+    web_env(_argparse.Namespace(force=True))
+
+    print()
+    ok("the website has a database to talk to")
+    print()
+    print("     Start it:")
+    print("       python3 tools/ta.py web build && python3 tools/ta.py web start")
+    print()
+    print("     Then check /status - it should say the database is reachable,")
+    print("     and /armory should find Emberlyn.")
+    return 0
+
+
+def web_doctor(args):
+    cfg = load_local()
+    problems = 0
+
+    node = shutil.which("node")
+    if node:
+        _, version, _ = capture([node, "--version"])
+        major = int(version.lstrip("v").split(".")[0] or 0)
+        (ok if major >= 20 else warn)(f"node {version}" + ("" if major >= 20 else " - 20 or newer is required"))
+        problems += 0 if major >= 20 else 1
+    else:
+        warn("node not found - install Node.js 20 or newer")
+        problems += 1
+
+    if shutil.which(npm_cmd()[0] if shutil.which("npm") or IS_WINDOWS else "npm"):
+        ok("npm found")
+    else:
+        warn("npm not found")
+        problems += 1
+
+    if (WEB_DIR / "node_modules").is_dir():
+        ok("dependencies installed")
+    else:
+        warn("dependencies not installed - run `ta.py web install`")
+        problems += 1
+
+    env_file = web_env_path()
+    if env_file.exists():
+        text = env_file.read_text(encoding="utf-8", errors="replace")
+        secret = ""
+        for line in text.splitlines():
+            if line.startswith("SESSION_SECRET="):
+                secret = line.split("=", 1)[1].strip()
+        if len(secret) >= 32:
+            ok("SESSION_SECRET is set")
+        else:
+            warn("SESSION_SECRET is missing or too short - run `ta.py web env --force`")
+            problems += 1
+    else:
+        warn(f"{env_file.relative_to(REPO)} not found - run `ta.py web env`")
+        problems += 1
+
+    if (WEB_DIR / ".next" / "standalone").is_dir():
+        ok("website is built")
+    else:
+        warn("website is not built - run `ta.py web build`")
+
+    code, out, _ = capture(mysql_cmd(cfg) + ["-N", "-B", "-e",
+                                             f"SELECT COUNT(*) FROM information_schema.tables "
+                                             f"WHERE table_schema = '{cfg['db_web']}'"])
+    if code == 0 and out.strip().isdigit() and int(out.strip()) >= 3:
+        ok(f"{cfg['db_web']} schema present ({out.strip()} tables)")
+    else:
+        warn(f"{cfg['db_web']} schema missing or empty - run `ta.py web sql`")
+        problems += 1
+
+    print()
+    if problems:
+        warn(f"{problems} thing(s) to fix - see SETUP.md section 9")
+        return 1
+    ok("the website looks ready")
+    return 0
+
+
+def web_verify_srp6(args):
+    """
+    Prove the website computes SRP6 exactly as the server does.
+
+    Given an account the *realm itself* created (`account create` in the
+    worldserver console), recompute the verifier from the stored salt and the
+    known password. If they match, the website can create accounts the game
+    client will accept - which no unit test can establish on its own.
+
+    The pinned vector below is the same one web/src/lib/srp6.test.ts asserts,
+    so a pass here means the Python and TypeScript implementations agree with
+    each other *and* with the realm's own data.
+    """
+    import hashlib
+
+    modulus = int("894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7", 16)
+
+    def verifier_for(username, password, salt):
+        identity = hashlib.sha1(f"{username.upper()}:{password.upper()}".encode()).digest()
+        exponent = int.from_bytes(hashlib.sha1(salt + identity).digest(), "little")
+        return pow(7, exponent, modulus).to_bytes(32, "little")
+
+    pinned = verifier_for("ASHMORROW", "TOMORROWSASH", bytes([0x11] * 32)).hex()
+    expected = "13624bc6778a4fbbe1637e831336494fdea028c701ef14b8fcb706ea95a12952"
+    if pinned != expected:
+        die("the SRP6 implementation no longer matches its pinned test vector")
+    ok("SRP6 matches the vector pinned in web/src/lib/srp6.test.ts")
+
+    cfg = load_local()
+    username = args.username.upper()
+    code, out, err = capture(mysql_cmd(cfg) + [
+        "-N", "-B", "-e",
+        f"SELECT HEX(salt), HEX(verifier) FROM `{cfg['db_auth']}`.`account` WHERE username = '{username}'",
+    ])
+    if code != 0:
+        die(f"could not read the account table: {err or out}")
+    if not out.strip():
+        die(f"no account named {username} in {cfg['db_auth']} - create one in the worldserver "
+            f"console with `account create {args.username} <password>` first")
+
+    salt_hex, verifier_hex = out.split()
+    computed = verifier_for(username, args.password, bytes.fromhex(salt_hex)).hex()
+
+    if computed == verifier_hex.lower():
+        ok(f"the verifier stored for {username} matches a fresh computation")
+        print()
+        print("     The website will create accounts this realm's client accepts.")
+        return 0
+
+    warn(f"MISMATCH for {username}")
+    warn("  The website would create accounts the game client cannot log into.")
+    warn("  Either the password given here is wrong, or upstream changed SRP6.")
+    return 1
+
+
+def web_setup(args):
+    """Everything a first-time website install needs, in order."""
+    web_install(args)
+    args.force = getattr(args, "force", False)
+    web_env(args)
+    web_build(args)
+    print()
+    print(f"     Next: `python3 tools/ta.py web sql` to create the site's schema,")
+    print(f"     then `python3 tools/ta.py web start`.")
+    return 0
+
+
 # --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
@@ -695,6 +1185,17 @@ def main():
     p = sub.add_parser("run", help="start a server binary")
     p.add_argument("target", choices=["auth", "world"])
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("web", help="the public website in web/ (deploys separately)")
+    p.add_argument("action", choices=["setup", "env", "install", "build", "dev", "start",
+                                      "sql", "fixture", "dev-db", "doctor", "verify-srp6"])
+    p.add_argument("--force", action="store_true", help="env: overwrite an existing .env.local")
+    p.add_argument("--grants", action="store_true", help="sql: also create the website's MySQL user")
+    p.add_argument("--yes", action="store_true",
+                   help="fixture / dev-db: confirm writing sample data")
+    p.add_argument("--username", help="verify-srp6: an account the realm itself created")
+    p.add_argument("--password", help="verify-srp6: that account's password")
+    p.set_defaults(func=cmd_web)
 
     args = parser.parse_args()
     try:

@@ -112,12 +112,15 @@ jobs:
         run: |
           python - <<'PY'
           import pathlib, re, sys
+          # Skipped: the fetched core, installed dependencies, build output, and
+          # web/content/, whose links are website routes rather than file paths.
+          SKIP = {".acore", "node_modules", ".next", "content"}
           bad = []
           for md in pathlib.Path(".").rglob("*.md"):
-              if ".acore" in md.parts:
+              if SKIP & set(md.parts):
                   continue
               for link in re.findall(r"\]\(([^)#][^)]*)\)", md.read_text(errors="replace")):
-                  if link.startswith(("http://", "https://", "mailto:")):
+                  if link.startswith(("http://", "https://", "mailto:", "/")):
                       continue
                   target = (md.parent / link.split("#")[0]).resolve()
                   if not target.exists():
@@ -126,3 +129,69 @@ jobs:
               print("\n".join(bad)); sys.exit(1)
           print("all relative doc links resolve")
           PY
+
+  web:
+    name: Website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install exactly what the lockfile says
+        run: npm ci
+
+      # Build first: it regenerates next-env.d.ts and .next/types, which the
+      # typecheck below needs and which are deliberately not committed.
+      - name: Build
+        run: npm run build
+        env:
+          # No database, and none needed - every page that reads the realm is
+          # rendered per request. A build that could reach one would still not
+          # be allowed to bake its answers in.
+          SITE_URL: https://ashmorrow.example
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: The website starts and answers
+        run: |
+          # Demo mode: no database, so this proves the process boots, serves
+          # HTML, and reports its own health.
+          DATA_SOURCE=demo \
+          SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
+          SITE_URL=http://127.0.0.1:3000 \
+          PORT=3000 npm start &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3000/api/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:3000/api/health | tee /dev/stderr | grep -q '"ok":true'
+          for path in / /status /armory /leaderboards /play /docs /docs/classless /patch-notes /register /login; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3000$path")
+            echo "$path -> $code"
+            [ "$code" = "200" ] || exit 1
+          done
+
+      - name: Secrets are not committed
+        run: |
+          # .env.local holds database credentials and the session secret.
+          if git ls-files | grep -E '^web/\.env(\.|$)' | grep -v '\.env\.example'; then
+            echo "An environment file with credentials is tracked in git."
+            exit 1
+          fi
+          echo "clean"

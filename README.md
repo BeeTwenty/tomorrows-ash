@@ -23,6 +23,13 @@ python3 tools/ta.py bootstrap   # fetch AzerothCore at the pinned commit
 python3 tools/ta.py configure && python3 tools/ta.py build
 ```
 
+The **website** is a separate service and needs none of the above — it runs on
+its own with sample data, or against a realm you already have:
+
+```bash
+cd web && npm install && npm run dev    # http://localhost:3000
+```
+
 ---
 
 ## How this repository is laid out
@@ -33,10 +40,12 @@ a gitignored `.acore/` and links our module into it.
 
 ```
 upstream.json            pinned AzerothCore commit — the entire upstream contract
-tools/ta.py              build / database / run CLI (Windows + Linux)
+tools/ta.py              build / database / run / web CLI (Windows + Linux)
 modules/mod-classless/   the classless system, as an AzerothCore module
 realm/ashmorrow/         realm-specific data
+web/                     the public website — deploys separately from the realm
 docs/                    research, decisions, roadmap
+docs/reference/          SRP6 implementations and DB examples for other tools
 .acore/                  fetched core — gitignored, never committed
 ```
 
@@ -53,17 +62,28 @@ this repository. There is no hidden divergence. See
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |
+| [docs/PHASE1-FINDINGS.md](docs/PHASE1-FINDINGS.md) | what granting an off-class ability actually does, and what still needs testing |
+| [docs/PHASE2-BUDGET.md](docs/PHASE2-BUDGET.md) | the skill-point budget: how it works, and why it doesn't constrain anything yet |
+| [docs/BODY-TYPES.md](docs/BODY-TYPES.md) | proposed body-type stat deltas, awaiting sign-off |
 | [docs/WEBSITE-DB.md](docs/WEBSITE-DB.md) | connecting a website: DB access, schema, SRP6 account creation |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
+| [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |
 
 ---
 
 ## Status
 
-**Phase 0 complete** — core selected, repo scaffolded, server builds, class
-restrictions mapped. The classless module exists but is **inert**
-(`Classless.Enable = 0`); the realm currently behaves as stock AzerothCore.
+**Phase 2 built** — 10 ability trees and 50 abilities, drawn from every class
+and open to any character, served through a gossip NPC and priced against a
+per-level skill-point budget with working respec. The pool costs 200 points; a
+level 80 character has 71, so scarcity is real. **Zero core modifications**
+throughout. Still gated behind `Classless.Enable = 0`; the in-game play test
+needs client data.
+
+The **public website** is live alongside it, and its armory reads those same
+tables: where a normal armory prints a class, this one derives a title from
+how a character has actually spent its points.
 
 The headline research finding: **`Player::learnSpell()` has no class check**.
 Class identity is enforced at *acquisition paths* (trainers, the talent frame,

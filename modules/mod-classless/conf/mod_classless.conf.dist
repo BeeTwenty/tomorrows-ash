@@ -18,6 +18,11 @@
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
+#        Phase 1: enabling this makes the Ashmorrow Ability Broker functional.
+#                 Spawn one with `.npc add 900000` in-game. Abilities come from
+#                 the `classless_tree` / `classless_node` tables - no recompile
+#                 is needed to change them.
+
 Classless.Enable = 0
 
 #
@@ -46,3 +51,45 @@ Classless.Announce = 1
 #                     1 - (Enabled, talent frame is emptied)
 
 Classless.SuppressBlizzardTalents = 0
+
+#
+#    Classless.Points.FirstLevel
+#        Description: The level at which a character starts earning skill
+#                     points. Below this they earn none.
+#
+#                     Blizzard's talent system starts at level 10; matching it
+#                     keeps the early levels uncluttered.
+#        Default:     10
+
+Classless.Points.FirstLevel = 10
+
+#
+#    Classless.Points.PerLevel
+#        Description: Skill points earned per level, from FirstLevel onward.
+#
+#                     The budget is DERIVED from level, never stored, so
+#                     changing this re-prices every character immediately with
+#                     no migration. Characters already over budget are not
+#                     force-respecced - they simply cannot buy more until they
+#                     respec or out-level the deficit.
+#        Default:     1
+
+Classless.Points.PerLevel = 1
+
+#
+#    Classless.Points.Bonus
+#        Description: Flat extra points granted to every character, on top of
+#                     the level curve. A blunt instrument for opening up the
+#                     early game during testing.
+#        Default:     0
+
+Classless.Points.Bonus = 0
+
+#
+#    Classless.Respec.Cost
+#        Description: Cost in COPPER to reset all classless abilities and
+#                     refund every point. 0 = free.
+#                     (1 gold = 10000 copper.)
+#        Default:     0
+
+Classless.Respec.Cost = 0

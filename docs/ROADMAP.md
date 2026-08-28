@@ -15,44 +15,70 @@ below is a commitment to a date.
 - [x] Map how class restrictions are enforced ([research](CLASS-RESTRICTIONS.md))
 - [x] `SETUP.md` for Windows and Linux
 - [x] `mod-classless` skeleton — registers, compiles, changes nothing
+- [x] Public website in `web/` ([ADR 0004](decisions/0004-website.md)) — landing,
+      accounts, armory, rankings, realm status, wiki, patch notes
 
 **Key finding:** zero core C++ modifications are needed. See the research doc.
 
 ---
 
-## Phase 1 — Data-only prototype (next)
+## Phase 1 — Data-only prototype ✅ built, play test pending
 
-Prove the concept end to end with the smallest believable slice.
+- [x] `classless_tree` / `classless_node` tables — abilities are rows, not code
+- [x] Ashmorrow Ability Broker gossip NPC (entry 900000)
+- [x] GM commands for testing (`.classless trees/list/learn/status/reload`)
+- [x] Prototype data: 5 trees, 10 deliberately off-class abilities
+- [x] `tools/spell_cascade.py` — what does granting a spell drag in?
+- [x] Verified loading in a live server: `[Classless] Loaded 5 trees, 10 abilities`
+- [ ] **In-game play test — blocked on client data (needs your WoW client)**
 
-- Gossip NPC ("Ashmorrow Ability Broker") that teaches a handful of
-  deliberately off-class abilities — e.g. *Fireball* to a Warrior,
-  *Mortal Strike* to a Mage.
-- Module tables (`classless_tree`, `classless_node`) so abilities are **rows,
-  not code**.
-- Verify what `learnSpell` drags in: rank chains, dependent spells, spec masks
-  (see [research §5](CLASS-RESTRICTIONS.md#5-risks-this-investigation-surfaced)).
-- Confirm off-class abilities actually *work* — cast, scale, and don't crash —
-  rather than merely appearing in the spellbook.
+Findings in **[PHASE1-FINDINGS.md](PHASE1-FINDINGS.md)**. Headlines:
 
-**Exit criteria:** a Warrior casts Fireball, a Mage casts Mortal Strike, both
-survive a relog, and we know exactly which spells cascade.
-
-**Risk to watch:** an ability may be silently useless off-class — a Mage's
-*Mortal Strike* scaling off attack power the Mage doesn't have. That is the
-first real evidence about the balance problem below.
+- **Cascades are a non-issue.** Both recursion branches in `learnSpell` require
+  the spell to be *already known*, so granting an ability to someone who does
+  not have a higher rank drags in nothing. Phase 2 needs no cascade accounting.
+- **Nothing gates ability level — anywhere.** Zero level checks in the whole
+  learn path, and no level gate at cast time either. Our `required_level`
+  column is the only thing stopping a level 1 character casting rank 12
+  Fireball.
+- **Spec masks unresolved** — needs `Talent.dbc`, so it needs your client.
+  Mortal Strike is in the prototype specifically as that test case.
 
 ---
 
-## Phase 2 — Skill-point budget
+## Phase 2 — Skill-point budget ⏳ mechanism built
 
-The real system. Blocked on **[the chassis question](#open-questions)**.
+The budget mechanism is independent of the body-type numbers, so it was built
+while those await sign-off.
 
-- Budget curve by level, config-driven.
-- Retire Blizzard talents via `OnPlayerCalculateTalentsPoints` (already wired,
-  behind `Classless.SuppressBlizzardTalents`).
-- Spend / respec / refund through gossip.
-- Migration for characters with spent talent points.
-- Tree and node data for the real ability pool.
+- [x] Budget curve by level, config-driven and **derived, never stored** — so
+      re-tuning re-prices the realm with no migration
+- [x] Cost enforcement, with saturating arithmetic for over-budget characters
+- [x] Respec that refunds points and removes only spells **we** granted
+- [x] Gossip shows the budget and offers respec; `.classless points` / `respec`
+- [x] Blizzard talent suppression wired (still defaulted off)
+- [x] **Body-type stat deltas approved** — three body types, armor proficiency
+      locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
+- [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
+      level 80, inside the approved 30–50% band). Every spell verified against
+      the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
+
+Details in **[PHASE2-BUDGET.md](PHASE2-BUDGET.md)**. The finding that matters:
+
+Pricing is settled: the pool costs **200 points** against 71 at level 80, so a
+maxed character affords **36%** of it. Scarcity is real — points buy depth or
+breadth, never both.
+
+**The website already reads this.** The armory renders real builds from
+`classless_character_node`, takes points spent from `cost_paid`, and derives
+the total budget with the same curve as `ClasslessConfig::BudgetForLevel`. The
+"deepest builds" board ranks on those same rows.
+
+One coupling to remember: the budget curve is derived, not stored, so
+`CLASSLESS_POINTS_FIRST_LEVEL`, `_PER_LEVEL` and `_BONUS` in `web/.env.local`
+must be changed alongside `Classless.Points.*` in `mod_classless.conf`. If
+ranks are ever added, `web/src/lib/build.ts` already probes for a `rank` column
+and will switch from "bought" to ranked pips on its own.
 
 ---
 
@@ -73,41 +99,27 @@ Removing class restrictions breaks gear assumptions.
 
 ---
 
+## Decisions made
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | Client version | **3.3.5a WotLK.** True vanilla would mean permanent core forks against VMaNGOS/CMaNGOS, fighting the maintainability goal. |
+| 2 | Hidden class chassis | **Visible "body type"** (option 2). Numbers pending sign-off — [BODY-TYPES.md](BODY-TYPES.md). |
+| 3 | Ability UI | **Gossip menus for now.** Revisit a custom addon once there are real players to justify the install friction. |
+
 ## Open questions
 
-Product decisions I need from you. Engineering can't settle these.
+### 1. Body-type numbers — **blocking Phase 2**
 
-### 1. Client version — **blocking Phase 2**
+Concrete stat deltas are in **[BODY-TYPES.md](BODY-TYPES.md)** and need your
+approval. Two sub-decisions in there matter as much as the numbers:
 
-We're on AzerothCore, so players use the **3.3.5a (WotLK) client**. There is no
-maintained "AzerothCore Classic" — the repo of that name has been dead since
-2017 and has no module system ([ADR 0001](decisions/0001-base-core.md)).
+- **Three body types or all ten classes?** (I recommend three.)
+- **Is armor proficiency purchasable?** If it is, the three body types collapse
+  into one, because proficiency is just a spell.
 
-- Happy with 3.3.5a? Optionally add vanilla-content gating (`classic-mode` SQL
-  or `mod-individual-progression`).
-- Need the **true 1.12 vanilla client**? That means VMaNGOS or CMaNGOS, no
-  module system, and a permanent core fork.
+### 2. Rank progression — the next authoring pass
 
-### 2. The hidden class chassis — **blocking Phase 2**
-
-A classless character still has a class underneath supplying base stats, attack
-power per Strength, mana per Spirit and armor proficiency. **Balance will be
-dominated by the hidden class long before the ability pool matters.**
-
-Options, in [ARCHITECTURE.md §6](ARCHITECTURE.md#6-the-unsolved-problem-hidden-class-chassis):
-
-1. One neutral chassis for everyone — cleanest, largest SQL surface, erases flavour.
-2. Chassis as a visible choice ("body type") — least work, keeps variety, some
-   combos will be strictly better.
-3. Runtime normalisation via a hidden aura — flexible, fights the core's scaling.
-
-### 3. Ability UI ambition
-
-Phases 1–3 use gossip menus: universal, works on an unmodified client, plain.
-A custom addon panel is much nicer but players must install it. Worth it, and
-when?
-
-### 4. Character creation
-
-Class still has to be picked at creation. Do we present it as a **body type**,
-hide it behind a neutral label, or leave it as-is for now?
+Rank chains run to 16 entries and a node grants exactly one rank. Either a node
+per useful rank, or one node whose rank scales with level. I lean towards
+scaling. Detail in [PHASE1-FINDINGS.md §7](PHASE1-FINDINGS.md).

@@ -1,4 +1,13 @@
--- Tomorrow's Ash - least-privilege MySQL user for the website
+-- Tomorrow's Ash - least-privilege MySQL user for website-adjacent tools
+--
+-- NOTE: the website in web/ uses its OWN, narrower user - see
+-- web/sql/grants.sql and `ta.py web sql --grants`. That one is scoped to
+-- individual COLUMNS of `account`, and additionally reaches `account_access`
+-- (to hide staff characters), `realmcharacters` and the site's own
+-- `ashmorrow_web` schema. This file provisions the broader `ashweb` user for
+-- other things that talk to the database: bots, scripts, migrations.
+--
+-- Running both is fine. If you only run the website, you only need the other.
 --
 -- Run against the AUTH database connection as an admin user, or use:
 --     python3 tools/ta.py db website-user

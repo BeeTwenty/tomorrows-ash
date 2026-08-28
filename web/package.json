@@ -1,0 +1,39 @@
+{
+  "name": "tomorrows-ash-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Public website for Tomorrow's Ash - realm Ashmorrow. Deploys independently of the game server.",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && node scripts/prepare-standalone.mjs",
+    "start": "node scripts/start.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "gen-secret": "node scripts/gen-secret.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "dependencies": {
+    "marked": "^15.0.6",
+    "mysql2": "^3.12.0",
+    "next": "^15.1.6",
+    "nodemailer": "^6.10.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "@types/nodemailer": "^6.4.17",
+    "@types/react": "^19.0.7",
+    "@types/react-dom": "^19.0.3",
+    "@tailwindcss/postcss": "^4.0.0",
+    "eslint": "^9.18.0",
+    "eslint-config-next": "^15.1.6",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
