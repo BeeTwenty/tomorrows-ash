@@ -16,6 +16,7 @@ both Windows and Linux. Standard library only, Python 3.8+.
     python3 tools/ta.py run world    # start worldserver
     python3 tools/ta.py web setup    # configure and build the website
     python3 tools/ta.py web dev-db   # give it a local database with sample data
+    python3 tools/ta.py play run     # start your own client against the realm
 
 See SETUP.md for the full walkthrough.
 """
@@ -1143,6 +1144,390 @@ def web_setup(args):
 
 
 # --------------------------------------------------------------------------
+# play - point a client at the realm and start it
+# --------------------------------------------------------------------------
+#
+# The reference implementation of the launcher (docs/decisions/0006).
+#
+# The GUI launcher in launcher/ is the thing players get. This is the same
+# behaviour with no window, no Rust build and no dependencies, which makes it
+# three useful things at once: the way to test a realm from a terminal, the
+# thing to reach for when the launcher itself is the suspect, and the
+# description of what the launcher is supposed to do that is short enough to
+# read in one sitting.
+#
+# It obeys the same rule the launcher does: it never downloads a Blizzard file.
+# See docs/decisions/0005-client-distribution.md.
+
+KNOWN_LOCALES = ["enUS", "enGB", "enCN", "enTW", "deDE", "esES", "esMX", "frFR",
+                 "itIT", "koKR", "ptBR", "ptPT", "ruRU", "zhCN", "zhTW"]
+
+WANTED_BUILD = 12340
+
+# VS_FIXEDFILEINFO.dwSignature, little-endian on disk.
+VERSION_SIGNATURE = b"\xbd\x04\xef\xfe"
+
+
+def client_dir(args):
+    """The client directory: --client, then local.json, then give up usefully."""
+    chosen = getattr(args, "client", None) or load_local().get("client_path")
+    if not chosen:
+        die("no client directory. Pass --client /path/to/WoW-3.3.5a, or put\n"
+            '       { "client_path": "/path/to/WoW-3.3.5a" } in tools/local.json.')
+    path = Path(chosen).expanduser()
+    if not path.is_dir():
+        die(f"{path} is not a directory")
+    return path
+
+
+def find_executable(root):
+    """Wow.exe, whatever case the filesystem gave it."""
+    for entry in root.iterdir():
+        if entry.is_file() and entry.name.lower() == "wow.exe":
+            return entry
+    return None
+
+
+def read_file_version(exe):
+    """
+    The four-part version a PE executable states about itself.
+
+    A port of launcher_core::client::read_file_version - see that for why the
+    .rsrc section is located first and then scanned, rather than walking the
+    resource directory tree.
+    """
+    try:
+        image = exe.read_bytes()
+    except OSError:
+        return None
+
+    start, end = 0, len(image)
+    section = rsrc_bounds(image)
+    if section:
+        start, end = section
+
+    at = image.find(VERSION_SIGNATURE, start, end)
+    while at != -1:
+        struc = int.from_bytes(image[at + 4:at + 8], "little")
+        ms = int.from_bytes(image[at + 8:at + 12], "little")
+        ls = int.from_bytes(image[at + 12:at + 16], "little")
+        major = ms >> 16
+        if struc and major:
+            return (major, ms & 0xFFFF, ls >> 16, ls & 0xFFFF)
+        at = image.find(VERSION_SIGNATURE, at + 4, end)
+    return None
+
+
+def rsrc_bounds(image):
+    """Byte range of the .rsrc section, if the PE headers parse."""
+    try:
+        if image[:2] != b"MZ":
+            return None
+        pe = int.from_bytes(image[0x3C:0x40], "little")
+        if image[pe:pe + 4] != b"PE\0\0":
+            return None
+        coff = pe + 4
+        count = int.from_bytes(image[coff + 2:coff + 4], "little")
+        optional = int.from_bytes(image[coff + 16:coff + 18], "little")
+        header = coff + 20 + optional
+        for _ in range(count):
+            if image[header:header + 5] == b".rsrc":
+                size = int.from_bytes(image[header + 16:header + 20], "little")
+                pointer = int.from_bytes(image[header + 20:header + 24], "little")
+                if 0 < pointer < len(image) and pointer + size <= len(image):
+                    return pointer, pointer + size
+                return None
+            header += 40
+    except (IndexError, ValueError):
+        return None
+    return None
+
+
+def client_locales(root):
+    data = root / "Data"
+    if not data.is_dir():
+        return []
+    found = {known for known in KNOWN_LOCALES
+             for entry in data.iterdir()
+             if entry.is_dir() and entry.name.lower() == known.lower()}
+    return sorted(found)
+
+
+def inspect_client(root):
+    """Everything tier 1 can tell us. Never raises for a merely odd client."""
+    exe = find_executable(root)
+    if not exe:
+        die(f"no Wow.exe in {root} - is that the client directory?")
+    version = read_file_version(exe)
+    return {
+        "root": root,
+        "exe": exe,
+        "version": version,
+        "build": version[3] if version else None,
+        "locales": client_locales(root),
+    }
+
+
+def find_runtimes():
+    """Wine and Proton, best first. Empty on Windows, where none is needed."""
+    if IS_WINDOWS:
+        return []
+
+    found = []
+    wine = shutil.which("wine")
+    if wine:
+        found.append({"kind": "wine", "name": "Wine (system)", "program": Path(wine),
+                      "steam_root": None})
+
+    home = Path.home()
+    for suffix in (".steam/steam", ".local/share/Steam", ".steam/root",
+                   ".var/app/com.valvesoftware.Steam/data/Steam"):
+        steam_root = home / suffix
+        if not steam_root.is_dir():
+            continue
+        libraries = {steam_root}
+        vdf = steam_root / "steamapps" / "libraryfolders.vdf"
+        if vdf.is_file():
+            for line in vdf.read_text(errors="replace").splitlines():
+                parts = line.split('"')[1::2]
+                if len(parts) >= 2 and parts[0].lower() == "path":
+                    libraries.add(Path(parts[1]))
+        for library in sorted(libraries):
+            common = library / "steamapps" / "common"
+            if not common.is_dir():
+                continue
+            for entry in sorted(common.iterdir()):
+                if entry.name.startswith("Proton") and (entry / "proton").is_file():
+                    found.append({"kind": "proton", "name": entry.name,
+                                  "program": entry / "proton", "steam_root": steam_root})
+    return found
+
+
+def write_realmlist(client, address):
+    """One line, LF, no BOM, into every locale directory the client has."""
+    if not client["locales"]:
+        die(f"no locale directory under {client['root'] / 'Data'} - expected something like Data/enUS")
+
+    written = []
+    for locale in client["locales"]:
+        path = client["root"] / "Data" / locale / "realmlist.wtf"
+        backup = path.with_name(path.name + ".ashmorrow-original")
+        if path.exists() and not backup.exists():
+            shutil.copy2(path, backup)
+        path.write_text(f"set realmlist {address}\n", encoding="ascii", newline="\n")
+        written.append(path)
+    return written
+
+
+def launch_plan(client, cfg, runtime=None):
+    """The exact command that starts the game, as data. Mirrors launcher_core::launch."""
+    args, env = [], {}
+
+    if cfg.get("renderer") == "opengl":
+        args.append("-opengl")
+    if cfg.get("windowed"):
+        args.append("-windowed")
+
+    if IS_WINDOWS:
+        return {"program": client["exe"], "args": args, "env": env, "cwd": client["root"]}
+
+    if not runtime:
+        die("no Wine or Proton found. Install Wine from your distribution, or Proton through Steam.")
+
+    prefix = Path(cfg.get("wine_prefix") or (Path.home() / ".local/share/ashmorrow/prefix"))
+    if runtime["kind"] == "proton":
+        if not runtime["steam_root"]:
+            die("Proton needs to know where Steam is installed")
+        env["STEAM_COMPAT_DATA_PATH"] = str(prefix)
+        env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(runtime["steam_root"])
+        leading = ["run", str(client["exe"])]
+    else:
+        env["WINEPREFIX"] = str(prefix)
+        env["WINEDEBUG"] = "-all"
+        leading = [str(client["exe"])]
+
+    prefix.mkdir(parents=True, exist_ok=True)
+    return {"program": runtime["program"], "args": leading + args, "env": env,
+            "cwd": client["root"]}
+
+
+def cmd_play(args):
+    cfg = load_local()
+
+    if args.action == "doctor":
+        return play_doctor(args, cfg)
+    if args.action == "verify":
+        return play_verify(args, cfg)
+    if args.action == "config":
+        return play_config(args, cfg)
+    if args.action == "run":
+        return play_run(args, cfg)
+    die(f"unknown play action: {args.action}")
+
+
+def play_doctor(args, cfg):
+    info("Client")
+    try:
+        client = inspect_client(client_dir(args))
+    except Fail as exc:
+        warn(str(exc))
+        client = None
+
+    if client:
+        ok(f"{client['exe']}")
+        if client["build"] == WANTED_BUILD:
+            ok(f"build {client['build']} - the build Ashmorrow needs")
+        elif client["build"]:
+            warn(f"this client reports {'.'.join(str(n) for n in client['version'])}, "
+                 f"and Ashmorrow needs build {WANTED_BUILD}. Nothing here can change that.")
+        else:
+            warn("no version resource in Wow.exe - this may be a repack. Proceeding anyway.")
+        ok(f"locales: {', '.join(client['locales']) or 'none found'}")
+
+    info("Running the game")
+    if IS_WINDOWS:
+        ok("Windows - the client runs natively")
+    else:
+        runtimes = find_runtimes()
+        if runtimes:
+            for runtime in runtimes:
+                ok(f"{runtime['name']} - {runtime['program']}")
+        else:
+            warn("no Wine or Proton found. `sudo apt install wine64`, or install Proton via Steam.")
+
+    info("Realm")
+    ok(f"realmlist would be set to: {cfg['realm_address']}")
+
+    info("Deep verification")
+    binary = manifest_tool()
+    if binary:
+        ok(f"{binary}")
+    else:
+        warn("not built. `cargo build --manifest-path launcher/core/Cargo.toml "
+             "--bin ashmorrow-manifest` to compare file hashes as well as structure.")
+    return 0
+
+
+def manifest_tool():
+    """The Rust helper, if someone has built it."""
+    for profile in ("release", "debug"):
+        for name in ("ashmorrow-manifest", "ashmorrow-manifest.exe"):
+            candidate = REPO / "launcher" / "core" / "target" / profile / name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def play_verify(args, cfg):
+    client = inspect_client(client_dir(args))
+    info(f"{client['root']}")
+
+    if client["build"] == WANTED_BUILD:
+        ok(f"build {client['build']}")
+    elif client["build"]:
+        die(f"this client reports {'.'.join(str(n) for n in client['version'])}. "
+            f"Ashmorrow needs build {WANTED_BUILD}, and neither this tool nor the launcher "
+            f"can turn one into the other - you need a build {WANTED_BUILD} client.")
+    else:
+        warn("no version resource in Wow.exe, so the build could not be checked")
+
+    if client["locales"]:
+        ok(f"locales: {', '.join(client['locales'])}")
+    else:
+        die(f"no locale directory under {client['root'] / 'Data'}")
+
+    manifest = REPO / "launcher" / "manifests" / "ashmorrow.json"
+    binary = manifest_tool()
+    if not binary:
+        warn("structure only. Build launcher/core to compare file hashes too:")
+        warn("  cargo build --manifest-path launcher/core/Cargo.toml --bin ashmorrow-manifest")
+        return 0
+
+    info("Comparing file hashes")
+    code = run([binary, "check", client["root"], manifest], check=False)
+    if code != 0:
+        warn("some files differ from the build we measured. That does not mean your client "
+             "is broken - it means it is not the copy we hashed.")
+    return 0
+
+
+def play_config(args, cfg):
+    client = inspect_client(client_dir(args))
+    address = args.address or cfg["realm_address"]
+    for path in write_realmlist(client, address):
+        ok(f"{path} -> set realmlist {address}")
+
+    account = args.account or cfg.get("account_name")
+    if account:
+        config_wtf = client["root"] / "WTF" / "Config.wtf"
+        set_wtf_value(config_wtf, "accountName", account)
+        ok(f"{config_wtf} -> accountName {account}")
+        info("The password field is yours to fill: the client does its own login, and "
+             "typing into it for you would mean writing into the running game's memory.")
+    return 0
+
+
+def set_wtf_value(path, key, value):
+    """Set one SET key "value" line, preserving everything else in the file."""
+    if '"' in value or "\n" in value:
+        die(f"{key} cannot contain a quote or a newline")
+
+    existing = path.read_text(errors="replace").splitlines() if path.exists() else []
+    line = f'SET {key} "{value}"'
+    out, replaced = [], False
+    for current in existing:
+        stripped = current.strip()
+        is_key = (stripped[:4].upper() == "SET " and
+                  stripped[4:].split()[:1] == [key] if len(stripped) > 4 else False)
+        if is_key:
+            if not replaced:
+                out.append(line)
+                replaced = True
+        else:
+            out.append(current)
+    if not replaced:
+        out.append(line)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_name(path.name + ".ashmorrow-original")
+    if path.exists() and not backup.exists():
+        shutil.copy2(path, backup)
+    path.write_text("\n".join(out) + "\n", encoding="utf-8", newline="\n")
+
+
+def play_run(args, cfg):
+    client = inspect_client(client_dir(args))
+
+    if client["build"] and client["build"] != WANTED_BUILD:
+        warn(f"this client reports build {client['build']}, not {WANTED_BUILD}. "
+             "Starting it anyway, but the realm will refuse the connection.")
+
+    # A dry run must not touch the client: it exists to answer "what would you
+    # do", and writing the realmlist first makes that a lie.
+    if not args.dry_run:
+        play_config(args, cfg)
+
+    runtimes = find_runtimes()
+    runtime = None
+    if runtimes:
+        wanted = args.runtime or cfg.get("runtime_name")
+        runtime = next((r for r in runtimes if r["name"] == wanted), runtimes[0])
+        info(f"through {runtime['name']}")
+
+    plan = launch_plan(client, cfg, runtime)
+    shown = " ".join([f"{k}={v}" for k, v in plan["env"].items()] +
+                     [str(plan["program"])] + [str(a) for a in plan["args"]])
+    print(f"{c('  $', 'grey')} {c(shown, 'grey')}")
+
+    if args.dry_run:
+        return 0
+
+    proc = subprocess.Popen([str(plan["program"])] + [str(a) for a in plan["args"]],
+                            cwd=str(plan["cwd"]), env={**os.environ, **plan["env"]})
+    ok(f"started, pid {proc.pid}")
+    return 0
+
+# --------------------------------------------------------------------------
 # entry point
 # --------------------------------------------------------------------------
 
@@ -1196,6 +1581,17 @@ def main():
     p.add_argument("--username", help="verify-srp6: an account the realm itself created")
     p.add_argument("--password", help="verify-srp6: that account's password")
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("play", help="point your own 3.3.5a client at the realm and start it")
+    p.add_argument("action", choices=["doctor", "verify", "config", "run"])
+    p.add_argument("--client", help="path to your WoW 3.3.5a client "
+                                    "(or set client_path in tools/local.json)")
+    p.add_argument("--address", help="realm address to write, overriding realm_address")
+    p.add_argument("--account", help="pre-fill this account name on the login screen")
+    p.add_argument("--runtime", help="run: name of the Wine or Proton runtime to use")
+    p.add_argument("--dry-run", action="store_true",
+                   help="run: print the command without starting the game")
+    p.set_defaults(func=cmd_play)
 
     args = parser.parse_args()
     try:

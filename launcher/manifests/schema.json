@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ashmorrow.example/launcher/schema.json",
+  "title": "Ashmorrow launcher manifest",
+  "description": "What the launcher is told about a realm, a client build, and Ashmorrow's own patches. launcher/core/src/manifest.rs is the authority and enforces more than this file can express; this schema exists so the document can be validated in CI and by anything that is not Rust.",
+  "type": "object",
+  "required": ["schema", "realm", "client"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": {
+      "description": "Prose for whoever edits the file. Ignored by every reader.",
+      "type": ["string", "array"]
+    },
+    "schema": {
+      "description": "Bumped when a change would make an older launcher misread this document.",
+      "const": 1
+    },
+    "realm": {
+      "type": "object",
+      "required": ["name", "address"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "address": {
+          "description": "What goes into realmlist.wtf. A hostname or an IP, never a URL.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "auth_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3724 },
+        "world_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8085 }
+      }
+    },
+    "client": {
+      "type": "object",
+      "required": ["build", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "build": { "type": "integer", "minimum": 1, "description": "12340 for 3.3.5a." },
+        "version": { "type": "string" },
+        "locales": { "type": "array", "items": { "type": "string" } },
+        "measured_from": {
+          "description": "Where these hashes were measured, so a player can judge whether 'differs from known-good' means anything for their copy.",
+          "type": "string"
+        },
+        "files": { "type": "array", "items": { "$ref": "#/$defs/clientFile" } }
+      }
+    },
+    "patches": { "type": "array", "items": { "$ref": "#/$defs/patch" } },
+    "launcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minimum_version": { "type": "string" },
+        "latest_version": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "hash": {
+      "description": "Lowercase hex BLAKE3.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relativePath": {
+      "description": "Relative to the client root, / separated. The Rust validator additionally rejects any . or .. component and any drive prefix; this pattern catches the cheap cases.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\][^\\\\]*$"
+    },
+    "clientFile": {
+      "description": "A file belonging to Blizzard. Facts only: a path, a size and a hash. There is deliberately no field in which a download location could be written, and additionalProperties is false so that adding one is an error rather than something quietly ignored. See docs/decisions/0005-client-distribution.md, rules 1 and 4.",
+      "type": "object",
+      "required": ["path", "size", "hash"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "size": { "type": "integer", "minimum": 0 },
+        "hash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "patch": {
+      "description": "A file Ashmorrow wrote. The only kind of entry that may name a location, because it is the only kind of file this launcher is allowed to fetch.",
+      "type": "object",
+      "required": ["id", "version", "path", "size", "hash", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "integer", "minimum": 1 },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "size": { "type": "integer", "minimum": 0 },
+        "hash": { "$ref": "#/$defs/hash" },
+        "url": { "type": "string", "pattern": "^https://" },
+        "summary": { "type": "string" }
+      }
+    }
+  }
+}
