@@ -38,6 +38,13 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 
+# --- Launcher (launcher/) ---
+launcher/core/target/
+launcher/src-tauri/target/
+launcher/ui/dist/
+# Cargo.lock IS committed for the launcher: it ships as a signed binary to
+# players, so the exact dependency set has to be reproducible from the tag.
+
 # --- Python ---
 __pycache__/
 *.pyc
