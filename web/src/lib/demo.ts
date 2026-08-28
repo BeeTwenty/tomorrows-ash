@@ -114,6 +114,7 @@ function buildFromSpread(seed: DemoSeed): CharacterBuild {
           rank,
           maxRank: 3,
           pointsSpent: rank,
+          granted: true,
         };
       });
       return {

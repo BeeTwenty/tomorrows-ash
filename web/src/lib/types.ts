@@ -77,6 +77,8 @@ export interface BuildNode {
   rank: number;
   maxRank: number | null;
   pointsSpent: number;
+  /** False when the character already knew this spell and was not charged. */
+  granted: boolean;
 }
 
 export interface BuildTree {

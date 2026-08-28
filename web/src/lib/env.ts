@@ -29,6 +29,14 @@ const int = (key: string, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+/** Unset stays unset - used where guessing a default would be wrong. */
+const optionalInt = (key: string): number | null => {
+  const raw = process.env[key]?.trim();
+  if (!raw) return null;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const bool = (key: string, fallback: boolean): boolean => {
   const raw = process.env[key]?.trim().toLowerCase();
   if (raw === undefined || raw === "") return fallback;
@@ -181,14 +189,26 @@ export const env = {
   },
 
   /**
-   * Mirrors `Classless.Points.*` in mod_classless.conf. The module derives a
-   * character's budget from level and never stores it, so the armory has to
-   * compute the same curve to show "20 of 71 points spent". Keep these in step
-   * with the realm's config; nothing can detect the drift automatically.
+   * The skill-point budget curve, for showing "20 of 71 spent".
+   *
+   * Spend comes from the database exactly. The *total* does not exist there at
+   * all: it is derived from level by `mod_classless.conf`, and nothing writes
+   * those parameters anywhere a website can read
+   * (docs/PHASE2-BUDGET.md §5).
+   *
+   * So this is **opt-in and unset by default**. With no
+   * CLASSLESS_POINTS_PER_LEVEL the armory shows what a character spent and no
+   * denominator - always correct, never stale. Setting it copies the server's
+   * curve into this service, which is a second copy that goes quietly wrong
+   * the day the realm is re-tuned; that trade is the operator's to make
+   * knowingly, which is why there is no default.
+   *
+   * If the module ever publishes its curve to a table, `build.ts` prefers that
+   * over both and this becomes a fallback.
    */
   classless: {
+    pointsPerLevel: optionalInt("CLASSLESS_POINTS_PER_LEVEL"),
     pointsFirstLevel: int("CLASSLESS_POINTS_FIRST_LEVEL", 10),
-    pointsPerLevel: int("CLASSLESS_POINTS_PER_LEVEL", 1),
     pointsBonus: int("CLASSLESS_POINTS_BONUS", 0),
   },
 

@@ -95,12 +95,18 @@ the armory picked both up through the same probe: points spent now come from
 what a character was actually *charged*, so re-pricing a node in
 `classless_node` no longer rewrites history for everyone who bought it earlier.
 
-One thing the site has to duplicate rather than read. The budget is derived
-from level by `ClasslessConfig::BudgetForLevel` and never stored, so
-`budgetForLevel()` recomputes the same curve from `CLASSLESS_POINTS_*` in the
-site's environment. Those three settings must match `mod_classless.conf`;
-nothing can detect the drift, which is why `.env.example` says so loudly next
-to them.
+The budget total is the one number the site cannot get right on its own.
+[PHASE2-BUDGET.md §5](../PHASE2-BUDGET.md) settles why: spend is an exact join
+on `cost_paid`, but the total comes from a level curve whose parameters live in
+`mod_classless.conf` and are written nowhere a website can read. It also
+rejects mirroring that curve in website env vars as "the drift the no-table
+decision was avoiding, just relocated", and it is right.
+
+So the armory takes the three options in order: a curve the module publishes to
+a table if one ever exists (probed for, so building it needs no change here),
+then `CLASSLESS_POINTS_*` if an operator opts in knowingly, and otherwise no
+denominator at all - "29 points spent", which is always true. The default is
+the honest one.
 
 None of it is assumed. `build.ts` probes `information_schema` for `rank`,
 `max_rank`, `cost_paid`, `sort_order`, `enabled` and `description`, so a realm

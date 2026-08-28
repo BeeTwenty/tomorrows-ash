@@ -968,9 +968,20 @@ def web_dev_db(args):
     password = cfg["web_db_pass"] or secrets.token_urlsafe(18)
     template = (WEB_DIR / "sql" / "grants.sql").read_text(encoding="utf-8")
     info("creating the website's database user")
+    user = cfg["web_db_user"]
     for host in ("localhost", "%"):
         mysql_run(cfg, template.replace("CHANGE_ME", password).replace("'localhost'", f"'{host}'"))
-    ok(f"user '{cfg['web_db_user']}' can connect from localhost and from other hosts")
+        # CREATE USER IF NOT EXISTS keeps an existing user's OLD password, so a
+        # second run would hand the site a password the server does not accept
+        # and the page would report the database down. Set it explicitly.
+        mysql_run(cfg, f"ALTER USER IF EXISTS '{user}'@'{host}' IDENTIFIED BY '{password}';")
+
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    probe = dict(cfg, mysql_user=user, mysql_pass=password)
+    rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_characters']}`.`characters` LIMIT 0;", check=False)
+    if rc != 0:
+        die(f"user '{user}' was created but cannot connect - check the MySQL error log")
+    ok(f"user '{user}' connects, from localhost and from other hosts")
 
     # 6. Remember the password, then write an .env.local that matches.
     local_file = REPO / "tools" / "local.json"

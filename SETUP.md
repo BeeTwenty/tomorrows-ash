@@ -543,6 +543,7 @@ Everything is in `web/.env.local`, which `ta.py web env` generates and
 | `MAIL_TRANSPORT` | `console` (log reset links), `smtp` (send them), `disabled` |
 | `TRUST_PROXY` | set to 1 **only** behind a reverse proxy you control |
 | `ARMORY_HIDE_GM_LEVEL` | hides staff characters site-wide; 0 turns the filter off |
+| `CLASSLESS_POINTS_PER_LEVEL` | optional. Unset, the armory shows points spent with no total. Set, it mirrors the realm's budget curve — a second copy that can go stale |
 
 The site refuses to start in production with a missing or weak
 `SESSION_SECRET`, or with no database configured unless you set

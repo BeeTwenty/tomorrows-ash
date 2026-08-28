@@ -1,5 +1,5 @@
 import type { RowDataPacket } from "mysql2";
-import { columnsOf, schema, tablesExist, tryQuery } from "./db";
+import { columnsOf, schema, tableExists, tablesExist, tryQuery } from "./db";
 import { env } from "./env";
 import { composeArchetype } from "./archetype";
 import type { BuildNode, BuildTree, CharacterBuild } from "./types";
@@ -74,6 +74,7 @@ interface CharNodeRow extends RowDataPacket {
   node_id: number;
   rank: number;
   cost_paid: number | null;
+  granted: number;
 }
 
 interface BudgetRow extends RowDataPacket {
@@ -123,23 +124,63 @@ async function interimBuild(guid: number): Promise<CharacterBuild> {
   };
 }
 
+export interface BudgetCurve {
+  firstLevel: number;
+  perLevel: number;
+  bonus: number;
+}
+
 /**
- * The point budget a character of this level is entitled to.
- *
- * Mirrors `ClasslessConfig::BudgetForLevel` in the module:
+ * `ClasslessConfig::BudgetForLevel`, given a curve.
  *
  *   level < FirstLevel ? Bonus : (level - FirstLevel + 1) * PerLevel + Bonus
- *
- * The module derives this from level and never stores it, so there is no table
- * to read - the site has to compute the same curve. That means the three
- * settings in `web/.env.local` must match `mod_classless.conf`; if they drift,
- * the armory's "of N" is wrong while everything else stays right. Hence the
- * loud comment in .env.example rather than a silent default.
  */
-export function budgetForLevel(level: number): number {
-  const { pointsFirstLevel, pointsPerLevel, pointsBonus } = env.classless;
-  if (level < pointsFirstLevel) return pointsBonus;
-  return (level - pointsFirstLevel + 1) * pointsPerLevel + pointsBonus;
+export function budgetForLevel(level: number, curve: BudgetCurve): number {
+  if (level < curve.firstLevel) return curve.bonus;
+  return (level - curve.firstLevel + 1) * curve.perLevel + curve.bonus;
+}
+
+interface CurveRow extends RowDataPacket {
+  points_first_level: number;
+  points_per_level: number;
+  points_bonus: number;
+}
+
+/**
+ * Where the budget curve comes from, in order of trustworthiness.
+ *
+ *   1. A curve the module publishes to the database. Authoritative, cannot go
+ *      stale, and does not exist yet - docs/PHASE2-BUDGET.md §5 proposes it.
+ *      Probed for so that building it needs no change here.
+ *   2. CLASSLESS_POINTS_* in this service's environment. A second copy of the
+ *      server's config: correct until someone re-tunes the realm and not here.
+ *      Opt-in, never assumed.
+ *   3. Nothing. The armory shows points spent with no denominator, which is
+ *      always true.
+ *
+ * Spend itself never comes from here - it is summed from `cost_paid`, which
+ * the database holds exactly.
+ */
+async function resolveBudgetCurve(): Promise<BudgetCurve | null> {
+  if (await tableExists(env.db.world, "classless_config")) {
+    const rows = await tryQuery<CurveRow>(
+      "classless budget curve",
+      `SELECT points_first_level, points_per_level, points_bonus
+         FROM ${schema.world}.\`classless_config\` LIMIT 1`,
+    );
+    const row = rows?.[0];
+    if (row) {
+      return {
+        firstLevel: row.points_first_level,
+        perLevel: row.points_per_level,
+        bonus: row.points_bonus,
+      };
+    }
+  }
+
+  const { pointsPerLevel, pointsFirstLevel, pointsBonus } = env.classless;
+  if (pointsPerLevel === null) return null;
+  return { firstLevel: pointsFirstLevel, perLevel: pointsPerLevel, bonus: pointsBonus };
 }
 
 export async function loadBuild(guid: number, level?: number): Promise<CharacterBuild> {
@@ -166,6 +207,10 @@ export async function loadBuild(guid: number, level?: number): Promise<Character
   // the node's current cost means re-pricing a node does not retroactively
   // rewrite what everyone who bought it earlier appears to have paid.
   const costPaidExpr = charNodeColumns.has("cost_paid") ? "`cost_paid`" : "NULL AS `cost_paid`";
+  // `granted = 0` means the character already knew that spell and it was never
+  // sold to them (docs/PHASE2-BUDGET.md §2). Worth showing: it is the
+  // difference between a choice they paid for and one their chassis came with.
+  const grantedExpr = charNodeColumns.has("granted") ? "`granted`" : "1 AS `granted`";
 
   const [trees, nodes, taken, budget] = await Promise.all([
     tryQuery<TreeRow>(
@@ -184,16 +229,24 @@ export async function loadBuild(guid: number, level?: number): Promise<Character
     ),
     tryQuery<CharNodeRow>(
       "classless character nodes",
-      `SELECT node_id, ${rankExpr}, ${costPaidExpr}
+      `SELECT node_id, ${rankExpr}, ${costPaidExpr}, ${grantedExpr}
          FROM ${schema.chars}.\`classless_character_node\`
         WHERE guid = ?`,
       [guid],
     ),
-    tryQuery<BudgetRow>(
-      "classless budget",
-      `SELECT points_total, points_spent FROM ${schema.chars}.\`classless_character\` WHERE guid = ?`,
-      [guid],
-    ),
+    // `classless_character` was considered and rejected - spend is a cheap
+    // join, and a materialised row would be a second source of truth
+    // (docs/PHASE2-BUDGET.md §5). It is still probed for rather than assumed
+    // absent, but only queried when it exists: querying a table the project has
+    // decided not to build would log an error on every profile view.
+    (async () =>
+      (await tableExists(env.db.characters, "classless_character"))
+        ? tryQuery<BudgetRow>(
+            "classless budget",
+            `SELECT points_total, points_spent FROM ${schema.chars}.\`classless_character\` WHERE guid = ?`,
+            [guid],
+          )
+        : null)(),
   ]);
 
   if (!trees || !nodes || !taken) return interimBuild(guid);
@@ -235,11 +288,17 @@ export async function loadBuild(guid: number, level?: number): Promise<Character
       rank,
       maxRank: node.max_rank,
       pointsSpent: spent,
+      granted: row.granted !== 0,
     };
     tree.nodes.push(built);
     tree.points += spent;
     pointsSpent += spent;
   }
+
+  // The denominator is optional; the numerator above never is.
+  const curve = level !== undefined ? await resolveBudgetCurve() : null;
+  const totalPoints =
+    budget?.[0]?.points_total ?? (curve && level !== undefined ? budgetForLevel(level, curve) : null);
 
   const populated = [...treesById.values()]
     .filter((tree) => tree.points > 0)
@@ -255,8 +314,7 @@ export async function loadBuild(guid: number, level?: number): Promise<Character
     // The itemised sum. It is what the tree list below it actually justifies,
     // and with `cost_paid` present it is also what the realm charged.
     pointsSpent,
-    pointsTotal:
-      budget?.[0]?.points_total ?? (level !== undefined ? budgetForLevel(level) : null),
+    pointsTotal: totalPoints,
     trees: populated,
     archetype: composeArchetype(populated.map((t) => ({ name: t.name, points: t.points }))),
     talentsRecorded: null,
