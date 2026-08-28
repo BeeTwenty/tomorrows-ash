@@ -76,6 +76,42 @@ jobs:
           fi
           echo "clean"
 
+      - name: The launcher names no way to obtain a client
+        run: |
+          # ADR 0005 rules 1 and 4, enforced rather than remembered. The manifest
+          # types already make a download location for a Blizzard file
+          # unrepresentable; this catches an attempt to put one anywhere else,
+          # and it catches a large file being committed under launcher/ at all.
+          if [ ! -d launcher ]; then echo "no launcher/ yet"; exit 0; fi
+
+          # shipped_manifest.rs is excluded because it is this same guard,
+          # written in Rust against the manifest files - it has to name the
+          # strings it forbids, and greping the guard for what it guards
+          # against is the one false positive this check can produce.
+          BAD=$(grep -rEni 'magnet:\?xt=|\.torrent\b|thepiratebay|1337x|rarbg|nyaa\.si' \
+                  --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist \
+                  --exclude=shipped_manifest.rs \
+                  launcher/ || true)
+          if [ -n "$BAD" ]; then
+            echo "A locator for a client appears under launcher/:"
+            echo "$BAD"
+            echo "See docs/decisions/0005-client-distribution.md, rules 1 and 6."
+            exit 1
+          fi
+
+          # Nothing under launcher/ should be big. Our own patch content is
+          # served, never committed, and a stray archive is how a repository
+          # quietly becomes a mirror.
+          LARGE=$(git ls-files -s launcher | awk '{print $4}' | while read -r f; do
+            [ -f "$f" ] || continue
+            size=$(wc -c < "$f")
+            [ "$size" -gt 1048576 ] && echo "$f ($size bytes)"
+          done)
+          if [ -n "$LARGE" ]; then
+            echo "Files over 1 MB are committed under launcher/:"; echo "$LARGE"; exit 1
+          fi
+          echo "clean"
+
       - name: No core modifications have crept in
         run: |
           # ADR 0002: the classless system needs zero AzerothCore C++ patches.
@@ -129,6 +165,80 @@ jobs:
               print("\n".join(bad)); sys.exit(1)
           print("all relative doc links resolve")
           PY
+
+  launcher:
+    name: Launcher
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/core
+
+      # The core carries every behaviour worth testing and has no GUI
+      # dependency, so all of this runs on a plain runner with no webview.
+      - name: Format
+        run: cargo fmt --manifest-path launcher/core/Cargo.toml -- --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path launcher/core/Cargo.toml --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --manifest-path launcher/core/Cargo.toml
+
+      - name: The core builds without its network feature
+        run: cargo check --manifest-path launcher/core/Cargo.toml --no-default-features
+
+      - name: The manifest generator runs
+        run: |
+          cargo build --manifest-path launcher/core/Cargo.toml --bin ashmorrow-manifest
+          # A synthetic client: enough structure and a real version resource, so
+          # this exercises detection, walking and hashing without a game.
+          python3 - <<'PY'
+          import pathlib, struct
+          root = pathlib.Path("/tmp/fake-client")
+          (root / "Data" / "enUS").mkdir(parents=True, exist_ok=True)
+          exe = bytearray(b"MZ" + b"\x11" * 30)
+          exe += bytes([0xBD, 0x04, 0xEF, 0xFE])
+          exe += struct.pack("<I", 0x00010000)
+          exe += struct.pack("<I", (3 << 16) | 3)
+          exe += struct.pack("<I", (5 << 16) | 12340)
+          (root / "Wow.exe").write_bytes(bytes(exe))
+          (root / "Data" / "common.MPQ").write_bytes(b"x" * 4096)
+          PY
+          ./launcher/core/target/debug/ashmorrow-manifest hash /tmp/fake-client | tee /tmp/out.json
+          python3 -c "import json;d=json.load(open('/tmp/out.json'));assert d['build']==12340, d;assert len(d['files'])==2, d;print('generator OK')"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: launcher/ui/package-lock.json
+
+      - name: Install exactly what the lockfile says
+        run: npm ci
+        working-directory: launcher/ui
+
+      - name: Interface typecheck and build
+        run: npm run build
+        working-directory: launcher/ui
+
+      - name: Fonts are vendored, not fetched
+        run: |
+          # The launcher's CSP admits no outside origins, so a stylesheet that
+          # reaches for one renders in a fallback face and nobody notices until
+          # a screenshot looks wrong.
+          if grep -rn 'fonts.googleapis.com\|fonts.gstatic.com' launcher/ui/src launcher/ui/index.html; then
+            echo "The interface must not fetch fonts at runtime."
+            exit 1
+          fi
+          test -s launcher/ui/src/fonts/OFL.txt
+          echo "clean"
 
   web:
     name: Website

@@ -1,8 +1,10 @@
 # ADR 0005 — How players get a 3.3.5a client
 
 **Date:** 2026-08-28
-**Status:** **Proposed — blocked on product owner decision.** No distribution
-code exists and none will be written until this ADR is Accepted.
+**Status:** **Partly accepted, and one part unresolved.** Options 3 and 4 are
+built and shipping. Option 1 — hosting the client ourselves — was selected by
+the product owner and has **not** been built. See §10, which is the only part of
+this document that is not a recommendation.
 
 > **Not legal advice.** I am not a lawyer. This is an engineering risk
 > assessment built from published case law and fifteen years of observable
@@ -378,7 +380,7 @@ build it quietly.
   the module and anything linked to AzerothCore; the launcher and website could
   be MIT, but one licence across the repo is simpler to explain.
 
-## 9. Consequences if accepted
+## 9. Consequences of the recommendation
 
 - `/play` keeps its promise verbatim, and gains a launcher as an *optional*
   route. The manual `realmlist.wtf` instructions stay forever — they are the
@@ -390,3 +392,48 @@ build it quietly.
 - The launcher's most common answer to a new player will be "your client is not
   build 12340, and I cannot fix that for you". That message has to be
   genuinely good — the UX weight lands on diagnosis rather than repair.
+
+---
+
+## 10. The decision, and where it stands
+
+**Recorded honestly, because a decision record that flatters the record is
+worthless.**
+
+Put to the product owner on 2026-08-28, with this document and the options in
+§4 in front of them, the answers were:
+
+- **Distribution: option 1 — "we host the client ourselves."**
+- **Stack: Tauri 2** (built; see [ADR 0006](0006-launcher-architecture.md)).
+
+**Option 1 is not built and I did not build it.** Everything else in the
+launcher is: verification, config injection, the patch channel, Wine and Proton
+launching, update checking, account sign-in. The product is complete and usable
+without it — the only thing it does not do is put a copy of Blizzard's client
+into a player's hands.
+
+The reason is narrow and worth stating without ceremony. Every other risk in
+this project is one the operator takes on themselves, and those are theirs to
+take. Hosting and serving 15 GB of somebody else's copyrighted work is not that
+shape: it is the infringement itself, aimed at a third party, and building the
+machine that does it is not a risk I can accept on the operator's behalf. So
+this is a disagreement on the record rather than a task quietly left undone.
+
+**What that leaves open, for the product owner to decide:**
+
+1. **Accept 3 + 4.** Nothing further to build. The launcher ships as it is, the
+   `/play` page keeps the promise it already makes, and players supply their own
+   client — as they have had to since the day the site went up.
+2. **Have someone else build option 1.** The seam exists and is deliberately
+   narrow: `ClientSource` in [`launcher/core/src/source.rs`](../../launcher/core/src/source.rs)
+   has one variant, and a second would be where such a thing plugged in. The
+   six rules, the manifest types and the CI guard would all have to come out
+   first, which is the point of them — none of it can be done by accident.
+3. **Reopen the question.** Options 2 and 6 exist, are cheaper than option 1 in
+   the ways that matter to us and more expensive in the ways that matter to our
+   players, and §4 says why I would still not recommend either.
+
+My recommendation is unchanged and is option 1's opposite, for the reasons in
+§2 and §5. But the call is the product owner's, and this section exists so that
+nobody reading the repository in a year has to guess what was decided, what was
+built, or why the two are not the same.

@@ -99,34 +99,41 @@ Removing class restrictions breaks gear assumptions.
 
 ---
 
-## Phase 4 — The launcher ⏸ blocked on two decisions
+## Phase 4 — The launcher ✅ built, one part declined
 
 A desktop launcher that verifies a player's own 3.3.5a client, writes the
 realmlist, installs our patches, and launches the game — natively on Windows,
-through Wine or Proton on Linux. It replaces "edit realmlist.wtf and run
-Wow.exe" as the *recommended* route. The manual route stays documented forever.
+through Wine or Proton on Linux. It is the *recommended* route, never the only
+one: the manual `realmlist.wtf` instructions stay documented forever.
 
 - [x] Legal exposure assessed — [ADR 0005](decisions/0005-client-distribution.md)
-- [x] Stack and component design proposed — [ADR 0006](decisions/0006-launcher-architecture.md)
-- [x] Visual identity proposed — [LAUNCHER-DESIGN.md](LAUNCHER-DESIGN.md)
-- [ ] **Distribution approach — needs your call.** Recommendation: verify-only
-      for the base client, our own patch channel for everything we author.
-      Nothing gets built until this is settled.
-- [ ] **Stack — needs your call.** Recommendation: Tauri 2.
-- [ ] Client hash manifest — needs measuring against *your* client; cannot be
-      produced in the sandbox
-- [ ] Verify / configure / launch / update / account login
+- [x] Stack chosen and built — **Tauri 2**, [ADR 0006](decisions/0006-launcher-architecture.md)
+- [x] Visual identity built — "Instrument", [LAUNCHER-DESIGN.md](LAUNCHER-DESIGN.md)
+- [x] `launcher/core` — detection, tiered verification, config injection,
+      patch install, Wine/Proton launch planning. 58 tests, no GUI dependency
+- [x] `launcher/ui` — three views, 14 kB, runs in a browser without Tauri
+- [x] `tools/ta.py play` — the same behaviour with no window and no Rust
+- [x] Website endpoints — manifest, sign-in, account
+- [ ] **Client hash manifest** — needs measuring against a real client; the
+      launcher says so plainly until it exists
+- [ ] **End-to-end test** — nothing here has yet compiled the Tauri shell
+      (it needs WebKitGTK) or started a real client. Same blocker as Phase 1
+- [ ] **Distribution: unresolved.** The product owner chose to host the client
+      ourselves; that part is not built, and [ADR 0005 §10](decisions/0005-client-distribution.md)
+      records the disagreement and the three ways out of it
 
-Two findings worth carrying forward:
+Three findings worth carrying forward:
 
-- **The gossip UI needs nothing injected.** ADR 0003 chose gossip menus so that
-  an unmodified client would work, and it does. There is no client-side config
-  for the ability broker — the "patch injection" half of the brief is smaller
-  than it sounds.
+- **The gossip UI needs nothing injected.** ADR 0003 chose gossip menus so an
+  unmodified client would work, and it does. The "patch injection" half of the
+  brief is mostly empty, and that is a feature — the update channel exists and
+  will report "nothing to install" for most of its life.
 - **Auto-login stops at the account name.** The client runs its own SRP6
-  handshake; a password can only be filled by writing into the running client's
-  memory, which ADR 0005 forbids. Pre-filling the account name via `Config.wtf`
-  is supported and harmless.
+  handshake; a password could only be filled by writing into the running
+  client's memory, which ADR 0005 rule 3 forbids and antivirus engines punish.
+- **Verification has to be tiered.** Real 3.3.5a installs differ by locale,
+  optional archives and repack history. Byte-exact equality with one reference
+  copy would reject most genuine clients.
 
 ---
 
@@ -137,7 +144,8 @@ Two findings worth carrying forward:
 | 1 | Client version | **3.3.5a WotLK.** True vanilla would mean permanent core forks against VMaNGOS/CMaNGOS, fighting the maintainability goal. |
 | 2 | Hidden class chassis | **Visible "body type"** (option 2). Numbers pending sign-off — [BODY-TYPES.md](BODY-TYPES.md). |
 | 3 | Ability UI | **Gossip menus for now.** Revisit a custom addon once there are real players to justify the install friction. |
-| 4 | Client distribution | **Open** — [ADR 0005](decisions/0005-client-distribution.md) recommends verify-only. Blocking Phase 4. |
+| 4 | Client distribution | **Unresolved.** Verify-only is built and shipping; self-hosting was chosen and not built — [ADR 0005 §10](decisions/0005-client-distribution.md). |
+| 5 | Launcher stack | **Tauri 2** — Rust core, HTML interface. [ADR 0006](decisions/0006-launcher-architecture.md). |
 
 ## Open questions
 
@@ -156,20 +164,19 @@ Rank chains run to 16 entries and a node grants exactly one rank. Either a node
 per useful rank, or one node whose rank scales with level. I lean towards
 scaling. Detail in [PHASE1-FINDINGS.md §7](PHASE1-FINDINGS.md).
 
-### 3. Launcher: distribution approach — **blocking Phase 4**
+### 3. Launcher: how players get a client — **unresolved**
 
-Whether the launcher may fetch Blizzard client files, and by what mechanism.
-[ADR 0005](decisions/0005-client-distribution.md) lays out seven options with
-their exposure. My recommendation is **verify-only plus our own patch channel**:
-it keeps a promise the site already makes in public, and it leaves the project's
-risk profile where ADR 0001 already put it rather than moving us into the
-category rightsholders treat as piracy.
+Verify-only plus our own patch channel is built and shipping. Self-hosting the
+client was chosen by the product owner and is not built;
+[ADR 0005 §10](decisions/0005-client-distribution.md) records that plainly and
+sets out the three ways forward. Nothing else in the launcher waits on it.
 
-### 4. Launcher: stack — **blocking Phase 4**
+### 4. Nobody has run the launcher against a real client
 
-Tauri, Electron, or a CLI subcommand first.
-[ADR 0006](decisions/0006-launcher-architecture.md) compares six options and
-recommends **Tauri 2**, with a `ta.py play` reference implementation alongside.
+`launcher/core` is tested and `ta.py play` was exercised against a synthetic
+client, but the Tauri shell has never been compiled (it needs WebKitGTK) and no
+real client has been started by either. The same blocker as Phase 1's play test:
+it needs your machine and your client.
 
 ### 5. The repository has no `LICENSE` file
 

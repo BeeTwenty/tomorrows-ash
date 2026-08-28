@@ -1,11 +1,10 @@
 # ADR 0006 — The Ashmorrow launcher: stack and architecture
 
 **Date:** 2026-08-28
-**Status:** **Proposed — awaiting product owner approval of the stack.**
+**Status:** **Accepted** (product owner, 2026-08-28) and built.
 
 Companion to [ADR 0005](0005-client-distribution.md), which decides *what the
-launcher is allowed to fetch*. This one decides *what it is built out of*. Both
-are open; 0005 is the harder gate.
+launcher is allowed to fetch*. This one decides *what it is built out of*.
 
 ---
 
@@ -111,18 +110,20 @@ and the reference implementation the GUI is checked against.
 ```
 launcher/
   README.md               the six rules from ADR 0005, in the code's own house
-  src-tauri/
+  core/                   ALL behaviour, as a plain library with no GUI dep
     src/
-      main.rs
-      manifest.rs         fetch, verify signature, cache the manifest
+      app.rs              the state machine the shell drives
+      manifest.rs         the types that make ADR 0005 rule 1 a parse error
       verify.rs           parallel BLAKE3, streaming progress, mtime cache
-      install.rs          realmlist.wtf, Config.wtf, our patch MPQ placement
+      client.rs           detection; the build read out of Wow.exe itself
+      install.rs          realmlist.wtf, Config.wtf, patch placement
       launch.rs           Windows: spawn directly. Linux: wine/proton.
       wine.rs             prefix management, Proton discovery, env assembly
-      account.rs          website API client; token in the OS keyring
+      net.rs              the HTTP transport, here so that CI compiles it
+      source.rs           where a client may come from. One variant.
       settings.rs         per-user config in the OS config dir
-    tauri.conf.json
-  src/                    UI — TypeScript, no framework
+  src-tauri/              the window, and nothing else
+  ui/                     UI — TypeScript, no framework
   manifests/
     schema.json           the manifest contract
     ashmorrow.json        realm config; client hashes once we can generate them
@@ -134,6 +135,12 @@ launcher/
 `launcher/` is its own service, deployed on its own cadence, exactly like `web/`
 and for the same reason (ADR 0004): coupling something that ships weekly to
 something that takes an hour to build is how the fast thing stops shipping.
+
+The `core` / `src-tauri` split earned itself during the build. `src-tauri`
+cannot compile without a system webview, so anything living in it is outside
+`cargo test`'s reach — which is why even the HTTP transport ended up in `core`
+behind a feature flag. The shell is now 150 lines of argument marshalling, and
+the 58 tests cover everything else.
 
 ---
 
@@ -183,9 +190,16 @@ reference install will reject most genuine clients and become a support queue.
 
 **Nobody can generate the manifest but you.** Hashes are facts and safe to
 publish, but they have to be measured from a real client, and there is not one
-in this sandbox. `launcher/tools/hash_client.py` runs against your install and
-emits the manifest; until it has, Tier 2 is empty and the launcher is honest
-about that in the UI.
+in this sandbox. `cargo run --bin ashmorrow-manifest -- hash <client>` emits it;
+until someone has, Tier 2 is empty and the launcher is honest about that in the
+UI.
+
+That tool is Rust rather than a script beside the others for one reason: the
+hashes it emits have to be the hashes the verifier computes, and the only way to
+guarantee that is to call the same code. Python has no BLAKE3 in its standard
+library, so a script would have meant either a second implementation or a
+dependency players' machines would need — and a second implementation of a hash
+is a second thing that can be subtly wrong.
 
 **Proton is not Wine with a nicer name.** Running through Proton needs
 `STEAM_COMPAT_DATA_PATH` and `STEAM_COMPAT_CLIENT_INSTALL_PATH` set and the
@@ -214,10 +228,12 @@ or install Wine ourselves.
 
 ## 7. Open questions
 
-1. **Stack: Tauri, Electron, or CLI-only first?** My recommendation is Tauri,
-   with `ta.py play` built alongside as the reference implementation.
-2. **Does the launcher ship before the realm is playable?** It cannot be tested
+1. **Does the launcher ship before the realm is playable?** It cannot be tested
    end-to-end without a client and a running realm, and Phase 1's play test is
    still blocked on the same thing. Suggest: build it, ship it as a pre-release,
    call it beta until someone has actually launched the game with it.
-3. **`LICENSE`** — still missing from the repo (ADR 0005 §8).
+2. **`LICENSE`** — still missing from the repo (ADR 0005 §8).
+3. **Nothing has been built end to end.** `launcher/core` is tested and
+   `ta.py play` was exercised against a synthetic client, but no machine in
+   this project has yet compiled the Tauri shell (it needs WebKitGTK) or
+   started a real client with either of them.

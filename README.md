@@ -44,6 +44,7 @@ tools/ta.py              build / database / run / web CLI (Windows + Linux)
 modules/mod-classless/   the classless system, as an AzerothCore module
 realm/ashmorrow/         realm-specific data
 web/                     the public website — deploys separately from the realm
+launcher/                the desktop launcher — deploys separately from both
 docs/                    research, decisions, roadmap
 docs/reference/          SRP6 implementations and DB examples for other tools
 .acore/                  fetched core — gitignored, never committed
@@ -69,6 +70,8 @@ this repository. There is no hidden divergence. See
 | [docs/LAUNCHER-DESIGN.md](docs/LAUNCHER-DESIGN.md) | the launcher's visual identity — proposed, awaiting sign-off |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | phases, status, open questions |
 | [web/README.md](web/README.md) | the public website: stack, layout, how to run it |
+| [launcher/README.md](launcher/README.md) | the launcher: what it does, what it refuses to do, how to build it |
+| [docs/LAUNCHER-DESIGN.md](docs/LAUNCHER-DESIGN.md) | the launcher's visual identity |
 | [docs/decisions/](docs/decisions/) | why the notable choices were made |
 
 ---
@@ -104,4 +107,6 @@ keeps our code cleanly separable and already public.
 
 World of Warcraft is a trademark of Blizzard Entertainment. This project ships
 no Blizzard content: you supply your own 3.3.5a client, and client data is
-gitignored.
+gitignored. That holds for the launcher too — it verifies a client you already
+have and downloads none of it, for the reasons set out in
+[ADR 0005](docs/decisions/0005-client-distribution.md).
