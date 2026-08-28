@@ -169,3 +169,69 @@ contain `world`, `characters` or `auth` or the migration is silently ignored.
   asserts, fix the document and say so — §3 exists because of that.
 - **Phases end in a written report**: what was built, what was decided and why,
   what is risky or unfinished, and what the product owner needs to decide.
+
+---
+
+## 9. The website (`web/`)
+
+Owned by `claude/tomorrows-ash-website-ksj53j` per §6. A separate Next.js
+service: it reads the realm's database but builds, deploys and fails on its own,
+and needs none of the server toolchain above.
+
+```bash
+cd web
+npm install
+npm run dev        # http://localhost:3000 — runs on sample data with no database
+npm run check      # typecheck + lint + unit tests. Run before pushing.
+npm run build      # then `npm start` serves the standalone build
+
+npx tsx --test src/lib/srp6.test.ts     # one test file
+```
+
+From the repo root, `ta.py` drives its ops too:
+
+```bash
+python3 tools/ta.py web dev-db --yes    # MySQL + schemas + module SQL + sample characters + .env.local
+python3 tools/ta.py web setup           # install, configure, build
+python3 tools/ta.py web sql --grants    # site's own schema + least-privilege MySQL user
+python3 tools/ta.py web doctor
+python3 tools/ta.py web verify-srp6 --username SOME --password ITSPASSWORD
+```
+
+With no `DB_HOST` the site runs in **demo mode** on fixtures and says so on every
+affected page — which is why the design was reviewable before a realm existed.
+
+### Traps specific to this half
+
+**Never prerender realm data.** Pages that read the database are
+`force-dynamic`; caching lives in the data layer. A prerendered page bakes in
+whatever the build machine could see, which in a container is nothing.
+
+**SRP6 must match the core byte for byte.** `src/lib/srp6.ts` is ported from the
+pinned upstream, and its test asserts against a vector captured from the compiled
+`Acore::Crypto::SRP6` (`docs/reference/srp6/testvector.json`). Get the
+little-endian conversions wrong and registration silently creates accounts the
+game client can never log into. `ta.py web verify-srp6` checks it against a real
+account the server itself made.
+
+**The game client's limits are the real limits.** Account names and passwords cap
+at 16 characters because the 3.3.5a client cannot send more. A form that accepts
+more creates accounts nobody can use.
+
+**Probe the schema, never assume it.** `src/lib/build.ts` asks
+`information_schema` which columns exist, so the armory renders correctly before
+and after a module migration and degrades to an honest "not yet" instead of
+inventing data. Two details of the shared contract in §6 are load-bearing here:
+there are **no ranks** (a node is bought once — no `rank` or `max_rank` column),
+and **`granted = 0`** means the character already knew that spell and was never
+charged, so respec must leave it alone.
+
+That probing is not theoretical. The armory was written against the §5 sketch in
+`ARCHITECTURE.md`, which had a `rank` column the shipped schema does not have.
+The query failed, the error was swallowed, and every character with purchases
+rendered "the classless system is not live on this realm yet" — the honest
+fallback giving a dishonest answer.
+
+**Own your tables applies here too.** Everything the site owns lives in its own
+`ashmorrow_web` schema (sessions, reset tokens, rate limits, audit log). It never
+adds a column to an AzerothCore table.
