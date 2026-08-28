@@ -10,6 +10,10 @@ import path from "node:path";
  * upstream expects the deployer to copy them. Doing it here means
  * `npm run build && npm start` works the same on a laptop, in a container and
  * under systemd, instead of only inside the Dockerfile.
+ *
+ * It runs as part of `npm run build`, which means it also runs on platforms
+ * that build Next.js their own way. It must therefore never fail a build it
+ * has nothing to contribute to - see the exit(0) below.
  */
 const root = process.cwd();
 const standalone = path.join(root, ".next", "standalone");
@@ -24,8 +28,13 @@ const exists = async (target) => {
 };
 
 if (!(await exists(standalone))) {
-  console.error("No .next/standalone directory - run `next build` first.");
-  process.exit(1);
+  // Not an error. This step exists for self-hosting, where `npm start` serves
+  // .next/standalone. Platforms that build and serve Next.js themselves -
+  // Vercel among them - do not leave a standalone directory behind, and this
+  // script must not fail their build over a directory they had no reason to
+  // produce. Anything that genuinely needs it will find `npm start` says so.
+  console.log("No .next/standalone directory - skipping (the platform serves Next.js itself).");
+  process.exit(0);
 }
 
 const copies = [
