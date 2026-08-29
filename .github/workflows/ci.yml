@@ -76,6 +76,55 @@ jobs:
           fi
           echo "clean"
 
+      - name: The licence is present and consistent
+        run: |
+          # ADR 0007. This repository spent its whole life so far asserting that
+          # AzerothCore is AGPL-3.0; it is GPL-2.0-or-later, and the wrong claim
+          # had reached the public FAQ. AGPL-3.0 is incompatible with
+          # GPL-2.0-only, so this is a real hazard rather than a typo.
+          test -f LICENSE || { echo "LICENSE is missing"; exit 1; }
+          grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE || { echo "LICENSE is not the GPL"; exit 1; }
+          grep -q "Version 2, June 1991" LICENSE || { echo "LICENSE is not GPL-2"; exit 1; }
+
+          STALE=$(grep -rn 'AGPL\|Affero' \
+                    --include='*.md' --include='*.toml' --include='*.json' \
+                    --include='*.ts' --include='*.tsx' --include='*.py' \
+                    --include='*.cpp' --include='*.h' \
+                    --exclude-dir=node_modules --exclude-dir=target \
+                    --exclude-dir=.next --exclude-dir=.acore \
+                    . | grep -v 'not AGPL-3.0' | grep -v '0007-licence.md' || true)
+          if [ -n "$STALE" ]; then
+            echo "Something still claims this project is AGPL. It is GPL-2.0-or-later:"
+            echo "$STALE"
+            echo "See docs/decisions/0007-licence.md."
+            exit 1
+          fi
+
+          # Our own C++ links into a GPL binary alongside the core's, so a file
+          # without a notice is genuinely ambiguous about its terms.
+          BARE=$(grep -rLi 'GNU General Public License' modules --include='*.cpp' --include='*.h' || true)
+          if [ -n "$BARE" ]; then
+            echo "These module sources carry no licence header:"; echo "$BARE"; exit 1
+          fi
+
+          # Every manifest a package manager reads should agree with LICENSE.
+          python3 - <<'PY'
+          import json, pathlib, sys, re
+          bad = []
+          for path in ["web/package.json", "launcher/ui/package.json"]:
+              got = json.loads(pathlib.Path(path).read_text()).get("license")
+              if got != "GPL-2.0-or-later":
+                  bad.append(f"{path}: license is {got!r}")
+          for path in ["launcher/core/Cargo.toml", "launcher/src-tauri/Cargo.toml"]:
+              text = pathlib.Path(path).read_text()
+              if not re.search(r'^license\s*=\s*"GPL-2\.0-or-later"', text, re.M):
+                  bad.append(f"{path}: license is not GPL-2.0-or-later")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("manifests agree with LICENSE")
+          PY
+          echo "clean"
+
       - name: The launcher names no way to obtain a client
         run: |
           # ADR 0005 rules 1 and 4, enforced rather than remembered. The manifest

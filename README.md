@@ -101,9 +101,15 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.
 
 ## Licence
 
-AzerothCore is **AGPL-3.0**, and work derived from it inherits that. As a
-public-facing server we must be able to publish our source — the overlay layout
-keeps our code cleanly separable and already public.
+**[GPL-2.0-or-later](LICENSE)**, matching AzerothCore, which is GPL-2.0-or-later
+at our pinned commit. The reasoning — what actually derives from the core, what
+does not, and why the launcher binary ships as GPL-3.0-or-later — is in
+[ADR 0007](docs/decisions/0007-licence.md).
+
+Publishing our source is a **choice**, not an obligation: under GPL-2, running a
+server and serving a website are not distribution and owe nobody anything. We
+publish because the project is built in the open. The overlay layout keeps our
+code cleanly separable and already public.
 
 World of Warcraft is a trademark of Blizzard Entertainment. This project ships
 no Blizzard content: you supply your own 3.3.5a client, and client data is

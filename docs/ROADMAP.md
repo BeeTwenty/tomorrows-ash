@@ -178,8 +178,10 @@ client, but the Tauri shell has never been compiled (it needs WebKitGTK) and no
 real client has been started by either. The same blocker as Phase 1's play test:
 it needs your machine and your client.
 
-### 5. The repository has no `LICENSE` file
+### 5. ~~The repository has no `LICENSE` file~~ — settled
 
-Noticed while working through ADR 0005. AzerothCore is AGPL-3.0 and the module
-inherits it; the website and launcher are not derived from it and could be
-anything. One licence across the repo is simpler to explain than three.
+`GPL-2.0-or-later`, matching AzerothCore. [ADR 0007](decisions/0007-licence.md)
+has the analysis, including two things this repository had wrong: AzerothCore is
+GPL-2.0-or-later, not AGPL-3.0, and publishing our source has always been a
+choice rather than an obligation — under GPL-2, running a server is not
+distribution.

@@ -74,7 +74,7 @@ across cores, so the research and the data model carry over.
 ## Consequences
 
 - Pinned upstream in `upstream.json`; bumping is a one-line change.
-- AGPL-3.0 (AzerothCore's licence) applies to derived work. As a public server
+- GPL-2.0-or-later (AzerothCore's licence) applies to derived work. As a public server
   we must be able to publish our source. The overlay layout makes that easy —
   our code is already separate.
 - `azerothcore.org` is blocked by this sandbox's egress proxy, so setup docs

@@ -66,7 +66,7 @@ export function SiteFooter() {
             >
               AzerothCore
             </a>{" "}
-            (AGPL-3.0). Our source lives at{" "}
+            (GPL-2.0-or-later). Our source lives at{" "}
             <a
               href="https://github.com/BeeTwenty/tomorrows-ash"
               className="text-ash transition-colors hover:text-ember"

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.77"
 description = "Client verification, config injection and launch logic for the Ashmorrow launcher."
-license = "AGPL-3.0-or-later"
+license = "GPL-2.0-or-later"
 
 [lib]
 name = "launcher_core"

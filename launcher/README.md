@@ -190,6 +190,17 @@ any Steam library — and tells you what to install when there is nothing.
 Releases build on a GitHub Actions matrix: `windows-latest` for `.exe`/`.msi`,
 `ubuntu-22.04` for `.AppImage`/`.deb`.
 
+### Licence, at the point it matters
+
+The repository is `GPL-2.0-or-later` ([ADR 0007](../docs/decisions/0007-licence.md)),
+but **the launcher binary is conveyed under GPL-3.0-or-later**. Its TLS stack
+pulls in `ring`, which is `Apache-2.0 AND ISC` with no permissive arm to choose,
+and Apache-2.0 cannot be combined with GPL-2.0. There is no way around it —
+`native-tls` means OpenSSL 3.x, also Apache-2.0 — and no need for one, because
+upstream's "or any later version" grant covers it. Ship the release with a
+GPL-3.0-or-later notice and the corresponding source, and note that the vendored
+IBM Plex fonts stay under OFL-1.1 (`ui/src/fonts/OFL.txt`).
+
 **Unsigned, with published SHA-256 sums**, per ADR 0005 §6. Signing needs a
 certificate bound to a verified legal identity on a hardware token, and putting
 a real name on a certificate attached to a WoW private server is a decision to

@@ -51,7 +51,7 @@ Plainer, yes. But it works for everybody on day one.
 ## Is the source public?
 
 All of it. [BeeTwenty/tomorrows-ash](https://github.com/BeeTwenty/tomorrows-ash) — the server module,
-this website, the setup tooling and the design documents. The server core we build on is AGPL-3.0,
+this website, the setup tooling and the design documents. The server core we build on is GPL-2.0-or-later,
 and work derived from it inherits that, so publishing is an obligation as well as a preference.
 
 ## How do I report a bug?
