@@ -151,10 +151,15 @@ jobs:
           # Nothing under launcher/ should be big. Our own patch content is
           # served, never committed, and a stray archive is how a repository
           # quietly becomes a mirror.
+          # `if` rather than `[ ... ] && echo`: the && form makes the loop's exit
+          # status 1 whenever the LAST file is under the limit, which under
+          # `bash -e` aborts the step before it can report anything. The guard
+          # then fails on a clean tree and passes nothing - it was failing this
+          # way on every commit that had a launcher/ directory.
           LARGE=$(git ls-files -s launcher | awk '{print $4}' | while read -r f; do
             [ -f "$f" ] || continue
             size=$(wc -c < "$f")
-            [ "$size" -gt 1048576 ] && echo "$f ($size bytes)"
+            if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes)"; fi
           done)
           if [ -n "$LARGE" ]; then
             echo "Files over 1 MB are committed under launcher/:"; echo "$LARGE"; exit 1
