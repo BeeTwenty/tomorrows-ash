@@ -161,6 +161,39 @@ clients and become a support queue.
 
 ---
 
+## What it sets up for you
+
+On Linux, "I have Wine installed" is nowhere near "I can play". A prefix has to
+exist, DXVK has to be unpacked into the right one of two system directories, and
+Wine has to be told to prefer it. Get the directory wrong and the game starts,
+draws a black window, and tells you nothing. That is the single biggest source
+of friction for a Linux player, and the launcher does all of it:
+
+| Step | What happens |
+|---|---|
+| Prefix | `wineboot -u` against a prefix the launcher owns at `~/.local/share/ashmorrow/prefix`. Safe to re-run, so this is also the repair path |
+| DXVK | Fetched over https, size and BLAKE3 checked **before** a byte is written, then the 32-bit `d3d9.dll` unpacked into `syswow64` or `system32` depending on the prefix architecture |
+| Overrides | A `.reg` applied with `regedit`, setting `d3d9` to `native,builtin` — written as a file rather than by editing `user.reg`, because the on-disk format is Wine's business |
+
+Only `d3d9.dll`. WoW 3.3.5a is a 32-bit Direct3D 9 executable, and installing
+the D3D10/11 and DXGI libraries too would be cargo cult.
+
+DXVK is zlib-licensed free software — not ours, and not Blizzard's, which is
+what lets a manifest entry carry a URL at all. Every component states the
+licence it is distributed under, and a test fails the build if one does not.
+
+The launch bar will not say `LAUNCH` until this is done. A prefix without DXVK
+starts the game and shows a black window, which is a worse outcome than not
+starting it, so an unprovisioned runtime reaches the button rather than hiding
+in a status row.
+
+```bash
+python3 tools/ta.py play provision            # the same work, no GUI
+python3 tools/ta.py play provision --dry-run  # say what would happen
+```
+
+---
+
 ## What it will not do
 
 **It will not download a client.** Not from us, not from a mirror, not from a
@@ -180,8 +213,12 @@ classified as malware.
 `~/.local/share/ashmorrow/prefix`. "The launcher broke my other games" is not a
 failure mode worth owning.
 
-**It will not install Wine.** It finds what you have — system Wine, Proton from
-any Steam library — and tells you what to install when there is nothing.
+**It will not install Wine itself.** Wine belongs to your distribution's package
+manager, and a launcher that installs system packages behind your back has
+overstepped. It finds what you have — system Wine, Proton from any Steam
+library — and tells you what to install when there is nothing.
+
+Everything *after* Wine, it does do. See below.
 
 ---
 

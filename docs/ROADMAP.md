@@ -112,6 +112,9 @@ one: the manual `realmlist.wtf` instructions stay documented forever.
 - [x] `launcher/core` — detection, tiered verification, config injection,
       patch install, Wine/Proton launch planning. 58 tests, no GUI dependency
 - [x] `launcher/ui` — three views, 14 kB, runs in a browser without Tauri
+- [x] **Linux runtime provisioning** — creates the Wine prefix, downloads and
+      verifies DXVK, unpacks the 32-bit `d3d9.dll` into the right system
+      directory, sets the DLL override. Tested against a real DXVK release
 - [x] `tools/ta.py play` — the same behaviour with no window and no Rust
 - [x] Website endpoints — manifest, sign-in, account
 - [ ] **Client hash manifest** — needs measuring against a real client; the

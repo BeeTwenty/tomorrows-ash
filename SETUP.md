@@ -704,6 +704,7 @@ Save the typing by putting the path in `tools/local.json`:
 | `doctor` | what is on this machine: client, build number, locales, Wine/Proton, realm address |
 | `verify` | checks the client is build 12340 and, if `ashmorrow-manifest` is built, compares file hashes |
 | `config` | writes `realmlist.wtf` into every locale directory, and optionally pre-fills the account name |
+| `provision` | creates the Wine prefix and installs DXVK into it. Linux only; safe to re-run |
 | `run` | `config`, then starts the game. `--dry-run` prints the command and touches nothing |
 
 Your existing `realmlist.wtf` and `Config.wtf` are copied to
@@ -781,7 +782,7 @@ cargo run --manifest-path launcher/core/Cargo.toml \
 
 ### 10.5 Linux: Wine and Proton
 
-The launcher finds what you have and never installs anything.
+**Install Wine yourself. The launcher does everything after that.**
 
 ```bash
 sudo apt install wine64        # Debian/Ubuntu
@@ -789,16 +790,34 @@ sudo dnf install wine          # Fedora
 sudo pacman -S wine            # Arch
 ```
 
-Proton is found automatically in every Steam library listed in
+Proton works too, and is found automatically in every Steam library listed in
 `steamapps/libraryfolders.vdf`, including a Flatpak Steam.
 
-It manages **its own** Wine prefix at `~/.local/share/ashmorrow/prefix` and
+Then, either in the launcher (the button says `SET UP RUNTIME`) or from a
+terminal:
+
+```bash
+python3 tools/ta.py play provision
+```
+
+That creates a Wine prefix, downloads DXVK, verifies it, unpacks the 32-bit
+`d3d9.dll` into the right system directory for your prefix's architecture, and
+tells Wine to prefer it. Roughly ninety seconds and a 10 MB download, and it is
+the difference between "Wine is installed" and "the game runs".
+
+It is safe to re-run — `wineboot -u` and the component check are both
+idempotent — so it is also the repair path when a prefix goes wrong.
+
+Wine itself is deliberately **not** installed for you: system packages belong
+to your package manager, not to a game launcher.
+
+The prefix is the launcher's own, at `~/.local/share/ashmorrow/prefix`. It
 never touches `~/.wine` or any prefix belonging to another game.
 
 | Symptom | Try |
 |---|---|
-| Black screen or nothing draws | switch the renderer to OpenGL in Settings, or `-opengl` by hand |
-| Nothing found | install Wine from your distribution, or Proton through Steam |
+| Black screen or nothing draws | run `play provision` — this is almost always a missing or misplaced DXVK. Failing that, switch the renderer to OpenGL in Settings |
+| Nothing found | install Wine from your distribution, or Proton through Steam. Everything after that, `play provision` does |
 | Proton fails immediately | it needs Steam installed, not just the Proton folder — the launcher reports which of the two is missing |
 | Fonts are boxes | `winetricks corefonts` in the launcher's prefix |
 

@@ -4,12 +4,19 @@
   "title": "Ashmorrow launcher manifest",
   "description": "What the launcher is told about a realm, a client build, and Ashmorrow's own patches. launcher/core/src/manifest.rs is the authority and enforces more than this file can express; this schema exists so the document can be validated in CI and by anything that is not Rust.",
   "type": "object",
-  "required": ["schema", "realm", "client"],
+  "required": [
+    "schema",
+    "realm",
+    "client"
+  ],
   "additionalProperties": false,
   "properties": {
     "$comment": {
       "description": "Prose for whoever edits the file. Ignored by every reader.",
-      "type": ["string", "array"]
+      "type": [
+        "string",
+        "array"
+      ]
     },
     "schema": {
       "description": "Bumped when a change would make an older launcher misread this document.",
@@ -17,42 +24,93 @@
     },
     "realm": {
       "type": "object",
-      "required": ["name", "address"],
+      "required": [
+        "name",
+        "address"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
         "address": {
           "description": "What goes into realmlist.wtf. A hostname or an IP, never a URL.",
           "type": "string",
           "minLength": 1,
           "pattern": "^[A-Za-z0-9._-]+$"
         },
-        "auth_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 3724 },
-        "world_port": { "type": "integer", "minimum": 1, "maximum": 65535, "default": 8085 }
+        "auth_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 3724
+        },
+        "world_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8085
+        }
       }
     },
     "client": {
       "type": "object",
-      "required": ["build", "version"],
+      "required": [
+        "build",
+        "version"
+      ],
       "additionalProperties": false,
       "properties": {
-        "build": { "type": "integer", "minimum": 1, "description": "12340 for 3.3.5a." },
-        "version": { "type": "string" },
-        "locales": { "type": "array", "items": { "type": "string" } },
+        "build": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "12340 for 3.3.5a."
+        },
+        "version": {
+          "type": "string"
+        },
+        "locales": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "measured_from": {
           "description": "Where these hashes were measured, so a player can judge whether 'differs from known-good' means anything for their copy.",
           "type": "string"
         },
-        "files": { "type": "array", "items": { "$ref": "#/$defs/clientFile" } }
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clientFile"
+          }
+        }
       }
     },
-    "patches": { "type": "array", "items": { "$ref": "#/$defs/patch" } },
+    "patches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/patch"
+      }
+    },
     "launcher": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "minimum_version": { "type": "string" },
-        "latest_version": { "type": "string" }
+        "minimum_version": {
+          "type": "string"
+        },
+        "latest_version": {
+          "type": "string"
+        }
+      }
+    },
+    "runtime": {
+      "description": "Free software the launcher installs into its OWN Wine prefix so a Linux player does not have to assemble a runtime by hand. Not ours and not Blizzard's; the distinction that lets these carry a URL is that they are third-party free software we are entitled to redistribute.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/runtimeComponent"
       }
     }
   },
@@ -71,28 +129,120 @@
     "clientFile": {
       "description": "A file belonging to Blizzard. Facts only: a path, a size and a hash. There is deliberately no field in which a download location could be written, and additionalProperties is false so that adding one is an error rather than something quietly ignored. See docs/decisions/0005-client-distribution.md, rules 1 and 4.",
       "type": "object",
-      "required": ["path", "size", "hash"],
+      "required": [
+        "path",
+        "size",
+        "hash"
+      ],
       "additionalProperties": false,
       "properties": {
-        "path": { "$ref": "#/$defs/relativePath" },
-        "size": { "type": "integer", "minimum": 0 },
-        "hash": { "$ref": "#/$defs/hash" }
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        }
       }
     },
     "patch": {
       "description": "A file Ashmorrow wrote. The only kind of entry that may name a location, because it is the only kind of file this launcher is allowed to fetch.",
       "type": "object",
-      "required": ["id", "version", "path", "size", "hash", "url"],
+      "required": [
+        "id",
+        "version",
+        "path",
+        "size",
+        "hash",
+        "url"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "minLength": 1 },
-        "version": { "type": "integer", "minimum": 1 },
-        "path": { "$ref": "#/$defs/relativePath" },
-        "size": { "type": "integer", "minimum": 0 },
-        "hash": { "$ref": "#/$defs/hash" },
-        "url": { "type": "string", "pattern": "^https://" },
-        "summary": { "type": "string" }
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "summary": {
+          "type": "string"
+        }
       }
+    },
+    "runtimeComponent": {
+      "description": "A third-party free-software component. Same two invariants as a patch: an https URL, and a hash checked before anything is written.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "version",
+        "size",
+        "hash",
+        "url"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "dxvk"
+          ],
+          "description": "How the installer should unpack it."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "hash": {
+          "$ref": "#/$defs/hash"
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "licence": {
+          "type": "string",
+          "description": "Recorded so a release can state it."
+        },
+        "summary": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^\\$comment": {
+      "description": "Prose for whoever edits the file. Ignored by every reader.",
+      "type": [
+        "string",
+        "array"
+      ]
     }
   }
 }

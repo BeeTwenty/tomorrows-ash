@@ -53,6 +53,31 @@ fn no_manifest_names_a_place_to_get_a_client() {
     }
 }
 
+/// Anything the launcher installs that is not ours has to say what it is
+/// distributed under.
+///
+/// Not machine-checkable in the sense that matters — nothing can prove a URL
+/// points at free software — but it forces whoever adds a component to have
+/// looked, and it puts the answer somewhere a release notice can quote.
+#[test]
+fn every_runtime_component_declares_a_licence() {
+    let bytes = std::fs::read(manifests().join("ashmorrow.json")).expect("the shipped manifest");
+    let manifest = Manifest::parse(&bytes).expect("it parses");
+
+    for component in &manifest.runtime {
+        assert!(
+            !component.licence.trim().is_empty(),
+            "runtime component {:?} does not say what licence it is distributed under",
+            component.id
+        );
+        assert!(
+            component.url.starts_with("https://"),
+            "runtime component {:?} is not served over https",
+            component.id
+        );
+    }
+}
+
 /// The schema is published for anything that is not Rust to validate against,
 /// so it has to stay in step with the parser's own idea of the version.
 #[test]

@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::install;
 use crate::launch::{self, LaunchOptions, LaunchPlan, Platform};
 use crate::manifest::Manifest;
+use crate::provision::{self, PrefixState};
 use crate::settings::Settings;
 use crate::verify::{self, HashCache, Progress, Report};
 use crate::wine::{self, Runtime};
@@ -229,6 +230,124 @@ impl App {
     }
 
     /* ----------------------------------------------------------------- *
+     * The Wine prefix
+     * ----------------------------------------------------------------- */
+
+    /// The prefix the launcher owns. Never a system one.
+    pub fn prefix(&self) -> Option<PathBuf> {
+        if cfg!(windows) {
+            return None;
+        }
+        self.settings.prefix.clone().or_else(wine::default_prefix)
+    }
+
+    pub fn prefix_state(&self) -> Option<PrefixState> {
+        self.prefix().map(|path| PrefixState::read(&path))
+    }
+
+    /// True when Linux has everything it needs to actually start the game.
+    ///
+    /// A prefix that exists but has no DXVK will launch WoW and then show a
+    /// black window, which is worse than not launching — so "ready" means
+    /// provisioned, not merely present.
+    pub fn runtime_ready(&self) -> bool {
+        if cfg!(windows) {
+            return true;
+        }
+        let Some(state) = self.prefix_state() else {
+            return false;
+        };
+        state.initialised
+            && self
+                .manifest
+                .as_ref()
+                .map(|m| m.runtime.iter().all(|c| state.has(&c.id)))
+                .unwrap_or(true)
+    }
+
+    /// Create the prefix and install everything the game needs to run in it.
+    ///
+    /// Long-running: it shells out to Wine and downloads. `note` is called with
+    /// each step so the interface can say what is happening rather than showing
+    /// an indeterminate spinner for two minutes.
+    pub fn provision_runtime(
+        &mut self,
+        http: &dyn Http,
+        note: &dyn Fn(&str),
+    ) -> Result<Vec<String>> {
+        if cfg!(windows) {
+            return Ok(vec![
+                "Windows runs the client natively — nothing to set up.".into(),
+            ]);
+        }
+
+        let runtime = self.chosen_runtime().ok_or(Error::NoWine)?;
+        let prefix = self.prefix().ok_or_else(|| {
+            Error::Message("could not work out where to put the Wine prefix".into())
+        })?;
+        let manifest = self.manifest.as_ref().ok_or_else(no_manifest)?;
+
+        let mut done = Vec::new();
+
+        // 1. The prefix itself. `wineboot -u` is safe to re-run, so this is
+        //    also the repair path.
+        std::fs::create_dir_all(&prefix).map_err(|e| Error::Io {
+            path: prefix.clone(),
+            source: e,
+        })?;
+        let boot = provision::initialise(&runtime, &prefix);
+        note(boot.description);
+        run_to_completion(boot)?;
+        done.push(format!("prefix at {}", prefix.display()));
+
+        // 2. Components, skipping anything already correct.
+        let state = PrefixState::read(&prefix);
+        let mut installed_any = false;
+        for component in &manifest.runtime {
+            if state.has(&component.id) {
+                continue;
+            }
+            note(&format!(
+                "downloading {} {}",
+                component.id, component.version
+            ));
+            let bytes = http.get(&component.url)?;
+            note(&format!("installing {}", component.id));
+            let written = provision::install_component(component, &bytes, &state)?;
+            done.push(format!(
+                "{} {} ({} files)",
+                component.id,
+                component.version,
+                written.len()
+            ));
+            installed_any = true;
+        }
+
+        // 3. Overrides, once, after everything is in place — Wine only reads
+        //    them at process start, so ordering here is not cosmetic.
+        if installed_any {
+            let dlls: Vec<&str> = manifest
+                .runtime
+                .iter()
+                .flat_map(|c| provision::overrides_for(c.kind).iter().copied())
+                .collect();
+            let reg_path = prefix.join("ashmorrow-overrides.reg");
+            std::fs::write(&reg_path, provision::dll_override_reg(&dlls)).map_err(|e| {
+                Error::Io {
+                    path: reg_path.clone(),
+                    source: e,
+                }
+            })?;
+            let apply = provision::apply_registry(&runtime, &prefix, &reg_path);
+            note(apply.description);
+            run_to_completion(apply)?;
+            done.push(format!("{} DLL override(s)", dlls.len()));
+        }
+
+        Ok(done)
+    }
+
+    /* ----------------------------------------------------------------- *
      * Account
      * ----------------------------------------------------------------- */
 
@@ -264,6 +383,16 @@ impl App {
 
     pub fn runtimes(&self) -> &[Runtime] {
         &self.runtimes
+    }
+
+    /// Replace what discovery found.
+    ///
+    /// For a player with a Wine build somewhere we do not look — a Lutris
+    /// runner, a self-compiled one, a Proton fork outside a Steam library — and
+    /// for tests, which must be able to exercise the Linux path on a machine
+    /// with no Wine installed at all.
+    pub fn use_runtimes(&mut self, runtimes: Vec<Runtime>) {
+        self.runtimes = runtimes;
     }
 
     fn chosen_runtime(&self) -> Option<Runtime> {
@@ -399,28 +528,51 @@ impl App {
             None => rows.push(row("ACCOUNT", "not signed in", RowState::Idle, "optional")),
         }
 
+        let mut runtime_ready = true;
         let runtime = if cfg!(windows) {
             "native".to_string()
         } else {
             match self.chosen_runtime() {
-                Some(runtime) => runtime.name,
+                Some(runtime) => {
+                    runtime_ready = self.runtime_ready();
+                    let (value, state) = if runtime_ready {
+                        ("ready", RowState::Ok)
+                    } else {
+                        ("not set up yet", RowState::Warn)
+                    };
+                    rows.push(row(
+                        "RUNTIME",
+                        &format!("{} · {value}", runtime.name),
+                        state,
+                        if runtime_ready {
+                            ""
+                        } else {
+                            "the launcher will create a Wine prefix and install DXVK into it"
+                        },
+                    ));
+                    runtime.name
+                }
                 None => {
                     if blocked.is_empty() {
-                        blocked =
-                            "no Wine or Proton found — install Wine from your distribution".into();
+                        blocked = "no Wine or Proton found — install Wine from your distribution, \
+                                   or Proton through Steam. Everything after that, the launcher does."
+                            .into();
                     }
+                    rows.push(row("RUNTIME", "none found", RowState::Block, ""));
                     "none".into()
                 }
             }
         };
 
-        let can_launch = blocked.is_empty() && self.client.is_some();
+        let can_launch = blocked.is_empty() && self.client.is_some() && runtime_ready;
         let action = if self.client.is_none() {
             "SELECT CLIENT"
         } else if !blocked.is_empty() {
             "BLOCKED"
         } else if self.last_report.is_none() {
             "VERIFY"
+        } else if !runtime_ready {
+            "SET UP RUNTIME"
         } else if patch_count > 0 {
             "INSTALL PATCH"
         } else {
@@ -459,6 +611,21 @@ fn row(key: &str, value: &str, state: RowState, detail: &str) -> Row {
         state,
         detail: detail.into(),
     }
+}
+
+/// Run a prefix command and turn a non-zero exit into something readable.
+fn run_to_completion(command: provision::PrefixCommand) -> Result<()> {
+    let status = command
+        .command()
+        .status()
+        .map_err(|e| Error::Message(format!("could not run {}: {e}", command.program.display())))?;
+    if !status.success() {
+        return Err(Error::Message(format!(
+            "{} failed ({status}). Try removing the prefix and setting it up again.",
+            command.description
+        )));
+    }
+    Ok(())
 }
 
 fn no_client() -> Error {
@@ -670,6 +837,57 @@ mod tests {
 
         app.settings.realm_address = Some("192.168.1.50".into());
         assert_eq!(app.realm_address().as_deref(), Some("192.168.1.50"));
+    }
+
+    /// The launch bar's whole promise is that its label is the truth. On Linux
+    /// a prefix with no DXVK starts the game and shows a black window, which is
+    /// a worse outcome than not starting it — so an unprovisioned runtime has
+    /// to reach the button, not just a status row.
+    #[cfg(unix)]
+    #[test]
+    fn an_unprovisioned_runtime_stops_the_button_saying_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let client_dir = dir.path().join("wow");
+        fake_client(&client_dir);
+
+        let manifest = manifest_json().replace(
+            r#""client":"#,
+            &format!(
+                r#""runtime": [{{ "id": "dxvk", "kind": "dxvk", "version": "2.4.1",
+                    "size": 10, "hash": "{HASH_OF_HELLO}",
+                    "url": "https://example.invalid/dxvk.tar.gz" }}],
+                   "client":"#
+            ),
+        );
+        let http = FakeHttp::new(&[("https://ashmorrow.example/api/launcher/manifest", &manifest)]);
+
+        let mut app = app_in(dir.path());
+        app.refresh_manifest(&http).unwrap();
+        app.choose_client(&client_dir).unwrap();
+        app.verify(&|_| {}).unwrap();
+
+        // A Wine that discovery would not have found, because this machine has
+        // none — which is exactly the case `use_runtimes` exists for.
+        app.use_runtimes(vec![crate::wine::Runtime {
+            kind: crate::wine::RuntimeKind::Wine,
+            name: "Wine (test)".into(),
+            program: PathBuf::from("/usr/bin/wine"),
+            steam_root: None,
+        }]);
+
+        // A prefix that exists but has nothing installed in it.
+        let prefix = dir.path().join("prefix");
+        std::fs::create_dir_all(prefix.join("drive_c/windows/system32")).unwrap();
+        app.settings.prefix = Some(prefix);
+
+        assert!(!app.runtime_ready());
+        let status = app.status();
+        assert_eq!(status.action, "SET UP RUNTIME");
+        assert!(!status.can_launch);
+        assert!(
+            status.rows.iter().any(|r| r.key == "RUNTIME"),
+            "the runtime has to be a visible row, not a silent precondition"
+        );
     }
 
     #[test]

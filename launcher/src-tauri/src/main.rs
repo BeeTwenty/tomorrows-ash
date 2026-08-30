@@ -104,6 +104,22 @@ fn runtimes(shared: tauri::State<'_, Shared>) -> Answer<Vec<Runtime>> {
     Ok(shared.app.lock().unwrap().runtimes().to_vec())
 }
 
+/// Set up the Wine prefix and install what the game needs to run in it.
+///
+/// Long-running: it shells out to Wine and downloads. Steps are emitted as they
+/// happen, because "creating the Wine prefix" for ninety seconds is a very
+/// different experience from an unlabelled spinner.
+#[tauri::command]
+fn provision_runtime(
+    handle: tauri::AppHandle,
+    shared: tauri::State<'_, Shared>,
+) -> Answer<Vec<String>> {
+    let mut app = shared.app.lock().unwrap();
+    say(app.provision_runtime(&shared.http, &|step| {
+        let _ = handle.emit("provision:step", step);
+    }))
+}
+
 #[tauri::command]
 fn settings(shared: tauri::State<'_, Shared>) -> Answer<Settings> {
     Ok(shared.app.lock().unwrap().settings.clone())
@@ -162,6 +178,7 @@ fn main() {
             ledger,
             apply_config,
             install_patches,
+            provision_runtime,
             login,
             runtimes,
             settings,

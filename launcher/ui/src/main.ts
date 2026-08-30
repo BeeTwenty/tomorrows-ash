@@ -5,7 +5,7 @@
  * that needs a virtual DOM to draw four status rows has been over-thought, and
  * every kilobyte here is one the player downloads before deciding to care.
  */
-import { api, onProgress, pickFolder } from "./api";
+import { api, onProgress, onStep, pickFolder } from "./api";
 import type { FileReport, Progress, Report, Runtime, Settings, Status } from "./types";
 
 type View = "status" | "ledger" | "settings";
@@ -413,6 +413,13 @@ async function act(): Promise<void> {
     });
   }
 
+  if (action === "SET UP RUNTIME") {
+    return run("setting up the runtime", async () => {
+      await api.provisionRuntime();
+      state.status = await api.status();
+    });
+  }
+
   if (action === "INSTALL PATCH") {
     return run("installing", async () => {
       await api.installPatches();
@@ -455,6 +462,13 @@ function render(): void {
 
 async function start(): Promise<void> {
   render();
+  await onStep((step) => {
+    // The busy label is the narration: one line, replaced, never a log.
+    if (state.busy) {
+      state.busy = step;
+      render();
+    }
+  });
   await onProgress((progress) => {
     state.progress = progress;
     // Only the bar changed; a full re-render at hashing speed would be the one

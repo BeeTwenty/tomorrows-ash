@@ -39,6 +39,17 @@ export interface LauncherManifest {
     url: string;
     summary?: string;
   }[];
+  /** Free software the launcher installs into its own Wine prefix. */
+  runtime: {
+    id: string;
+    kind: "dxvk";
+    version: string;
+    size: number;
+    hash: string;
+    url: string;
+    licence?: string;
+    summary?: string;
+  }[];
   launcher: { minimum_version: string; latest_version: string };
 }
 
@@ -56,6 +67,7 @@ export type AuthoredManifest = {
   realm?: Partial<LauncherManifest["realm"]>;
   client?: Partial<LauncherManifest["client"]>;
   patches?: LauncherManifest["patches"];
+  runtime?: LauncherManifest["runtime"];
   launcher?: Partial<LauncherManifest["launcher"]>;
 };
 
@@ -117,6 +129,9 @@ export function assembleManifest(authored: AuthoredManifest): LauncherManifest {
     // Patch URLs are absolute in the authored file and are passed through as
     // they are; the launcher refuses any that is not https.
     patches: authored.patches ?? [],
+    // Third-party free software, passed through as authored. The launcher
+    // refuses any URL that is not https and checks every hash before writing.
+    runtime: authored.runtime ?? [],
     launcher: {
       minimum_version: authored.launcher?.minimum_version ?? "0.1.0",
       latest_version: authored.launcher?.latest_version ?? "0.1.0",
