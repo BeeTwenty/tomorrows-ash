@@ -13,10 +13,19 @@ gone wrong, or would, and the invariants that hold the design together.
 `git clone` gives you our work only. The core is **fetched**, not vendored:
 
 ```bash
-python3 tools/ta.py doctor      # what's missing on this machine
-python3 tools/ta.py bootstrap   # clones AzerothCore at the pin into .acore/
-python3 tools/ta.py configure && python3 tools/ta.py build
+./install.sh          # Linux/macOS - deps, core, build, database, configs
+.\install.ps1         # Windows
 ```
+
+Both are thin wrappers over `python3 tools/ta.py install`, which is where the
+logic lives so both platforms run the same code. It is idempotent: re-run after
+a failure and it skips what already succeeded. The individual steps
+(`doctor`, `bootstrap`, `configure`, `build`, `db`, `conf`) still exist for
+working on one thing at a time.
+
+Client data extraction — the four extractors in the right order, from the right
+directory, with output filed where the server looks — is
+`ta.py extract --client PATH`.
 
 `.acore/` is gitignored and must never be committed. `tools/ta.py` is the single
 entry point for build, database and run — read its `--help` before reaching for

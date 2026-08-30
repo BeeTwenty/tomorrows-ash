@@ -18,9 +18,17 @@ Built on [AzerothCore](https://github.com/azerothcore/azerothcore-wotlk)
 ```bash
 git clone https://github.com/BeeTwenty/tomorrows-ash.git
 cd tomorrows-ash
-python3 tools/ta.py doctor      # what's missing on this machine?
-python3 tools/ta.py bootstrap   # fetch AzerothCore at the pinned commit
-python3 tools/ta.py configure && python3 tools/ta.py build
+
+./install.sh          # Linux / macOS
+.\install.ps1         # Windows (PowerShell)
+```
+
+One command: dependencies, AzerothCore at the pinned commit, build, databases
+and configs. Re-runnable — it skips whatever already succeeded. Point it at your
+own WoW 3.3.5a client and it extracts the map data too:
+
+```bash
+./install.sh --client ~/Games/WoW-3.3.5a
 ```
 
 The **website** is a separate service and needs none of the above — it runs on

@@ -34,7 +34,42 @@ copy. Section 5 explains what to do with it.
 
 ---
 
-## 1. Linux — quick path
+## 1. The short way
+
+From a fresh clone, on either platform:
+
+```bash
+# Linux / macOS
+./install.sh
+
+# Windows (PowerShell)
+.\install.ps1
+```
+
+That does dependencies, fetches AzerothCore at the pinned commit, builds,
+creates the databases and renders the server configs. It is **idempotent** —
+re-run it after a failure and it skips what already succeeded.
+
+If you already have your WoW 3.3.5a client, hand it over and the installer does
+the client-data extraction too:
+
+```bash
+./install.sh --client ~/Games/WoW-3.3.5a
+.\install.ps1 -ClientPath 'C:\Games\WoW-3.3.5a'
+```
+
+Useful flags: `--yes` (never prompt), `--skip-mmaps` (defer the multi-hour
+pathfinding step so you can play sooner), `-j N` (parallel jobs).
+
+> The first build takes 20–60 minutes and about 15 GB. The installer tells you
+> before it starts.
+
+Everything below is the same process done by hand, for when a single step needs
+attention.
+
+---
+
+## 2. Linux — step by step
 
 ```bash
 # 1. dependencies
@@ -65,7 +100,7 @@ python3 tools/ta.py db init      # create the three schemas
 python3 tools/ta.py conf
 ```
 
-Then go to **section 5** (client data) — the server will not start without it.
+Then go to **section 6** (client data) — the server will not start without it.
 
 > **If `db up` fails with "429 Too Many Requests"**, that is Docker Hub
 > rate-limiting anonymous image pulls — nothing is wrong with your setup. Either
@@ -94,7 +129,7 @@ Skip `ta.py db up`; `db init`, `conf` and `db realm` work unchanged.
 
 ---
 
-## 2. Windows — quick path
+## 3. Windows — step by step
 
 Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
 
@@ -169,10 +204,12 @@ to your PATH and reopen PowerShell.
 
 ---
 
-## 3. What `ta.py` does
+## 4. What `ta.py` does
 
 | Command | Purpose |
 |---|---|
+| **`install`** | **everything below, in one command** |
+| `extract --client PATH` | pull map/vmap/mmap/DBC data out of your WoW client |
 | `doctor` | check prerequisites and report what's missing |
 | `bootstrap` | clone AzerothCore at the pinned commit into `.acore/`, link our modules |
 | `sync` | re-link/re-copy modules after editing (only needed in copy mode) |
@@ -183,7 +220,7 @@ to your PATH and reopen PowerShell.
 | `db realm` | register the **Ashmorrow** realm row |
 | `conf` | render `dist/etc/*.conf` pointed at your database |
 | `run auth` / `run world` | start a server binary |
-| `web setup` | install, configure and build the website (section 9) |
+| `web setup` | install, configure and build the website (section 10) |
 | `web sql` | create the website's own schema (and its MySQL user, with `--grants`) |
 | `web start` / `web dev` | run the website |
 | `web doctor` | check the website's prerequisites |
@@ -194,7 +231,7 @@ environment variables. Never commit credentials.
 
 ---
 
-## 4. Databases
+## 5. Databases
 
 `ta.py db init` creates three empty schemas:
 
@@ -231,10 +268,22 @@ The website itself uses `web/src/lib/srp6.ts`, which CI checks against the same 
 
 ---
 
-## 5. Client data (required — the server won't start without it)
+## 6. Client data (required — the server won't start without it)
 
 The server needs map, vmap, mmap and DBC data **extracted from your own WoW
 3.3.5a client**. This is the slowest one-time step.
+
+**The easy way** — one command, correct order, output filed where the server
+looks for it:
+
+```bash
+python3 tools/ta.py extract --client /path/to/WoW-3.3.5a
+python3 tools/ta.py extract --client /path/to/WoW-3.3.5a --skip-mmaps   # play sooner
+```
+
+It validates the path before starting (so you don't discover a typo an hour in),
+skips anything already extracted so an interrupted run resumes, and cleans up
+its intermediates. The rest of this section is what it does, by hand.
 
 The extractors were built alongside the server into `dist/bin/`:
 `map_extractor`, `vmap4_extractor`, `vmap4_assembler`, `mmaps_generator`.
@@ -270,7 +319,7 @@ gitignored — client data must never be committed.
 
 ---
 
-## 6. First run
+## 7. First run
 
 Two processes. Two terminals.
 
@@ -282,7 +331,7 @@ python3 tools/ta.py run auth
 python3 tools/ta.py run world
 ```
 
-First `run world` performs the big SQL import described in section 4. Wait for:
+First `run world` performs the big SQL import described in section 5. Wait for:
 
 ```
 World initialized in X minutes Y seconds
@@ -306,7 +355,7 @@ Restart the authserver after `db realm` so it picks up the new realm row.
 
 ---
 
-## 7. Connecting a client
+## 8. Connecting a client
 
 1. Copy your WoW 3.3.5a client somewhere (do not point it at the extraction
    folder you used above if you'd rather keep that pristine — either works).
@@ -341,7 +390,7 @@ homelab box's firewall for LAN play.
 
 ---
 
-## 8. The classless module
+## 9. The classless module
 
 `modules/mod-classless` is built into the server automatically. Its config is
 installed to `dist/etc/mod_classless.conf`.
@@ -395,7 +444,7 @@ exists**, or characters will have no way to spend points at all.
 
 ---
 
-## 9. The website
+## 10. The website
 
 The public site — landing page, account registration, armory, rankings, realm
 status, wiki and patch notes — lives in **`web/`** and is a **separate
@@ -656,7 +705,7 @@ sudo systemctl restart ashmorrow-web
 
 ---
 
-## 10. The launcher
+## 11. The launcher
 
 **`launcher/`** is a desktop application that verifies a player's own 3.3.5a
 client, writes the realmlist, installs Ashmorrow's patches and starts the game —
@@ -664,7 +713,7 @@ natively on Windows, through Wine or Proton on Linux. Like the website, it is a
 **separate service** with its own build and its own release cadence.
 
 It replaces "edit `realmlist.wtf` and run `Wow.exe`" as the *recommended* route.
-It never replaces it as the only one: section 7 stays correct forever, and is
+It never replaces it as the only one: section 8 stays correct forever, and is
 what you fall back to when the launcher is broken, unavailable on your platform,
 or simply not something you want to run.
 
@@ -816,19 +865,23 @@ never touches `~/.wine` or any prefix belonging to another game.
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `no C++ compiler` from `doctor` | Linux: `apt install build-essential`. Windows: VS 2022 with the C++ workload |
 | CMake can't find Boost | `BOOST_ROOT` not set, or PowerShell not reopened after setting it |
+| `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
+| `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+| Installer stopped partway | just run it again — it skips whatever already succeeded |
+| `extract` rejects your client path | it wants the folder holding `Wow.exe` and `Data/`, not `Data/` itself |
 | Server starts, database stays empty | no `mysql` client on PATH — see section 0 |
-| `Could not find DBC file` / instant exit | client data missing — section 5 |
+| `Could not find DBC file` / instant exit | client data missing — section 6 |
 | Client: "unable to connect" | authserver not running, or `realmlist.wtf` wrong |
-| Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 7 step 3 |
+| Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 8 step 3 |
 | Module edits don't take effect | `ta.py` fell back to copy mode — run `ta.py sync` |
 | Out of disk during build | full build needs ~15 GB. `ta.py configure --tools none` skips the extractors if you already have client data |
-| `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
+| `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 2) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
 Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.6](#106-launcher-troubleshooting).

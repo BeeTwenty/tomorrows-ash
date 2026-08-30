@@ -2,21 +2,23 @@
 """
 ta.py - Tomorrow's Ash developer CLI.
 
-One entry point for setting up, building and running the Ashmorrow realm on
-both Windows and Linux. Standard library only, Python 3.8+.
+One entry point for setting up, building and running the Ashmorrow realm on both
+Windows and Linux. Standard library only, Python 3.8+.
 
-    python3 tools/ta.py doctor       # check your machine has what it needs
-    python3 tools/ta.py bootstrap    # fetch pinned AzerothCore + overlay our module
-    python3 tools/ta.py configure    # run cmake configure
-    python3 tools/ta.py build        # compile
-    python3 tools/ta.py db up        # start MySQL (docker)
-    python3 tools/ta.py db init      # create the three databases
-    python3 tools/ta.py conf         # render server configs for realm Ashmorrow
-    python3 tools/ta.py db realm     # register the Ashmorrow realm row
-    python3 tools/ta.py run world    # start worldserver
-    python3 tools/ta.py web setup    # configure and build the website
-    python3 tools/ta.py web dev-db   # give it a local database with sample data
-    python3 tools/ta.py play run     # start your own client against the realm
+    python3 tools/ta.py install          # everything: deps, core, build, db, configs
+    python3 tools/ta.py install --client /path/to/WoW-3.3.5a   # ...and client data
+
+That is the whole setup. The individual steps below still exist for when
+something needs doing on its own:
+
+    doctor                 check this machine has what it needs
+    bootstrap              fetch pinned AzerothCore, overlay our modules
+    configure / build      cmake, then compile
+    extract --client PATH  map/vmap/mmap/DBC data from your own WoW client
+    db up|init|realm       database lifecycle and realm registration
+    conf                   render server configs
+    run auth|world         start a server
+    web / play             the website, and pointing a client at the realm
 
 See SETUP.md for the full walkthrough.
 """
@@ -679,6 +681,287 @@ def cmd_conf(args):
 # --------------------------------------------------------------------------
 # run
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# one-shot installer
+# --------------------------------------------------------------------------
+
+APT_PACKAGES = [
+    "git", "cmake", "make", "clang", "ccache", "ninja-build",
+    "libboost-all-dev", "libssl-dev", "libmysqlclient-dev",
+    "libreadline-dev", "libbz2-dev", "libncurses-dev",
+    "mysql-client",
+]
+
+
+def step(number, total, title):
+    print()
+    print(c(f"[{number}/{total}] {title}", "blue"))
+    print(c("-" * (len(title) + 8), "grey"))
+
+
+def confirm(question, assume_yes):
+    if assume_yes:
+        print(f"     {question} yes (--yes)")
+        return True
+    try:
+        return input(f"     {question} [Y/n] ").strip().lower() in ("", "y", "yes")
+    except EOFError:
+        return False
+
+
+def ensure_local_config(assume_yes):
+    """Write tools/local.json with a generated database password.
+
+    The shipped default password exists so the tooling runs out of the box in a
+    throwaway sandbox. A real install should not use it, and asking someone to
+    invent one by hand is how installs end up with 'password'.
+    """
+    local = REPO / "tools" / "local.json"
+    if local.exists():
+        ok(f"{local.relative_to(REPO)} exists, leaving it alone")
+        return json.loads(local.read_text(encoding="utf-8"))
+
+    import secrets
+    cfg = {
+        "mysql_pass": secrets.token_urlsafe(18),
+        "website_db_pass": secrets.token_urlsafe(18),
+        "web_db_pass": secrets.token_urlsafe(18),
+    }
+    local.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    ok(f"wrote {local.relative_to(REPO)} with generated passwords")
+    warn("that file is gitignored. Back it up; it is the only copy.")
+    return cfg
+
+
+def install_linux_packages(assume_yes):
+    if IS_WINDOWS or not shutil.which("apt-get"):
+        return False
+    missing = [pkg for pkg in ("cmake", "git") if not shutil.which(pkg)]
+    have_boost = Path("/usr/include/boost/version.hpp").exists()
+    have_mysql = Path("/usr/include/mysql/mysql.h").exists()
+    if not missing and have_boost and have_mysql:
+        ok("build dependencies already present")
+        return True
+
+    print("     The build needs Boost, OpenSSL, MySQL headers and a compiler.")
+    if not confirm("Install them with apt-get?", assume_yes):
+        warn("skipping - install them yourself, then re-run")
+        return False
+
+    sudo = [] if os.geteuid() == 0 else ["sudo"]
+    env = {"DEBIAN_FRONTEND": "noninteractive"}
+    run(sudo + ["apt-get", "update", "-qq"], check=False, env=env)
+    rc = run(sudo + ["apt-get", "install", "-y"] + APT_PACKAGES, check=False, env=env)
+    if rc != 0:
+        warn("apt-get reported problems; continuing, the build will say if something is missing")
+    return True
+
+
+def cmd_install(args):
+    """Take a fresh clone to a running realm in one command."""
+    total = 7 if args.client else 6
+    print()
+    print(c("  Tomorrow's Ash - installing realm Ashmorrow", "blue"))
+    print(f"  repo: {REPO}")
+    if args.yes:
+        print("  running non-interactively (--yes)")
+
+    # 1 -----------------------------------------------------------------
+    step(1, total, "Prerequisites")
+    if not IS_WINDOWS:
+        install_linux_packages(args.yes)
+    else:
+        print("     On Windows the compiler comes from Visual Studio 2022 and")
+        print("     Boost/OpenSSL/MySQL are installed by hand - see SETUP.md section 2.")
+    if cmd_doctor(argparse.Namespace()) != 0:
+        die("prerequisites are missing - see above, then re-run")
+
+    # 2 -----------------------------------------------------------------
+    step(2, total, "Local configuration")
+    ensure_local_config(args.yes)
+
+    # 3 -----------------------------------------------------------------
+    step(3, total, "Fetching AzerothCore at the pinned commit")
+    if acore_dir().exists():
+        ok("core checkout already present")
+        cmd_sync(argparse.Namespace())
+    else:
+        print("     Downloads roughly 1 GB. This is the slow part before the build.")
+        cmd_bootstrap(argparse.Namespace(force=False))
+
+    # 4 -----------------------------------------------------------------
+    step(4, total, "Building the server")
+    if args.skip_build:
+        warn("skipped (--skip-build)")
+    else:
+        binary = dist_dir() / "bin" / ("worldserver.exe" if IS_WINDOWS else "worldserver")
+        if binary.exists() and not args.rebuild:
+            ok("worldserver already built - pass --rebuild to force")
+        else:
+            print("     First build takes 20-60 minutes and about 15 GB.")
+            cmd_configure(argparse.Namespace(build_type=None, tools=None, generator=args.generator))
+            cmd_build(argparse.Namespace(jobs=args.jobs))
+
+    # 5 -----------------------------------------------------------------
+    step(5, total, "Database")
+    cfg = load_local()
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        started = False
+        if shutil.which("docker"):
+            print("     No MySQL reachable. Trying Docker.")
+            started = cmd_db(argparse.Namespace(action="up")) == 0
+        if not started:
+            warn("could not start MySQL automatically.")
+            print("     Install it natively and put the credentials in tools/local.json:")
+            print("       Linux:   sudo apt install mysql-server")
+            print("       Windows: the MySQL 8.x installer")
+            print("     Then re-run this installer; everything above is already done.")
+            return 1
+    else:
+        ok("MySQL is reachable")
+    cmd_db(argparse.Namespace(action="init"))
+
+    # 6 -----------------------------------------------------------------
+    step(6, total, "Server configuration")
+    cmd_conf(argparse.Namespace(force=False))
+
+    # 7 -----------------------------------------------------------------
+    if args.client:
+        step(7, total, "Client data")
+        cmd_extract(argparse.Namespace(client=args.client, skip_mmaps=args.skip_mmaps, jobs=args.jobs))
+
+    # done ---------------------------------------------------------------
+    print()
+    print(c("  Installed.", "green"))
+    print()
+    if not args.client:
+        print("  One thing is left, and it needs your own WoW 3.3.5a client:")
+        print()
+        print(c("     python3 tools/ta.py extract --client /path/to/WoW-3.3.5a", "yellow"))
+        print()
+        print("  The server cannot start without it - it exits at")
+        print("  'Failed to find map files for starting areas'. Add --skip-mmaps to")
+        print("  defer the multi-hour pathfinding step and play sooner.")
+        print()
+    print("  Then, in two terminals:")
+    print(c("     python3 tools/ta.py run auth", "yellow"))
+    print(c("     python3 tools/ta.py run world", "yellow"))
+    print()
+    print("  The first world start imports ~800 MB of SQL and looks frozen for")
+    print("  several minutes. That happens once.")
+    print()
+    print("  Finally, name the realm and make an account:")
+    print(c("     python3 tools/ta.py db realm", "yellow"))
+    print("     (then in the worldserver console) account create <user> <pass>")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
+# client data extraction
+# --------------------------------------------------------------------------
+
+# Ordered because each step consumes the previous one's output. Run from the
+# client directory; every extractor writes into its working directory.
+EXTRACT_STEPS = [
+    ("map_extractor",    [],                        ["dbc", "maps"], "DBC and map data", "~10 min"),
+    ("vmap4_extractor",  [],                        ["Buildings"],   "line-of-sight geometry", "~15 min"),
+    ("vmap4_assembler",  ["Buildings", "vmaps"],    ["vmaps"],       "assembling vmaps", "~5 min"),
+    ("mmaps_generator",  [],                        ["mmaps"],       "NPC pathfinding", "HOURS"),
+]
+
+
+def looks_like_wow_client(path):
+    """Cheap sanity check so we fail before a multi-hour run, not during it."""
+    p = Path(path)
+    if not p.is_dir():
+        return "not a directory"
+    data = p / "Data"
+    if not data.is_dir():
+        return "no Data/ subdirectory - is this the WoW client folder?"
+    if not any(data.glob("*.MPQ")) and not any(data.glob("*.mpq")):
+        return "Data/ contains no .MPQ archives"
+    return None
+
+
+def cmd_extract(args):
+    """Run the client-data extractors and file the results where the server looks.
+
+    This is the single most tedious part of standing up a realm: four tools, in
+    a specific order, run from the client directory, with the output moved
+    somewhere else afterwards. Getting the order wrong wastes hours.
+    """
+    client = Path(args.client).expanduser().resolve()
+    problem = looks_like_wow_client(client)
+    if problem:
+        die(f"{client}: {problem}\n"
+            "  Point --client at your WoW 3.3.5a folder - the one containing Wow.exe and Data/.")
+
+    bindir = dist_dir() / "bin"
+    if not bindir.is_dir():
+        die("extractors not built - run `ta.py build` first")
+
+    target = REPO / "data" / "client"
+    target.mkdir(parents=True, exist_ok=True)
+
+    steps = list(EXTRACT_STEPS)
+    if args.skip_mmaps:
+        steps = [s for s in steps if s[0] != "mmaps_generator"]
+        warn("skipping mmaps: NPC pathfinding will be poor, but the realm runs.")
+
+    info(f"extracting from {client}")
+    print(f"     output goes to {target.relative_to(REPO)}/")
+    print()
+
+    for index, (tool, tool_args, produces, what, duration) in enumerate(steps, start=1):
+        exe = bindir / (tool + (".exe" if IS_WINDOWS else ""))
+        if not exe.exists():
+            die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
+
+        # Skip anything already sitting in the destination, so an interrupted
+        # extraction resumes instead of starting over.
+        if all((target / produced).exists() for produced in produces):
+            ok(f"[{index}/{len(steps)}] {what} - already extracted, skipping")
+            continue
+
+        info(f"[{index}/{len(steps)}] {what} ({duration})")
+        if tool == "mmaps_generator":
+            jobs = args.jobs or os.cpu_count() or 4
+            tool_args = ["--threads", str(jobs)]
+            warn("this is the long one. It is safe to stop and re-run later.")
+
+        for produced in produces:
+            (client / produced).mkdir(exist_ok=True) if produced in ("vmaps", "mmaps") else None
+
+        rc = run([str(exe)] + tool_args, cwd=client, check=False)
+        if rc != 0:
+            die(f"{tool} failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+        for produced in produces:
+            src = client / produced
+            if not src.exists():
+                die(f"{tool} reported success but produced no {produced}/")
+            if produced == "Buildings":
+                continue          # intermediate, consumed by vmap4_assembler
+            dest = target / produced
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(src), str(dest))
+            ok(f"  {produced}/ -> {dest.relative_to(REPO)}/")
+
+    leftovers = client / "Buildings"
+    if leftovers.exists():
+        info("removing the Buildings/ intermediate")
+        shutil.rmtree(leftovers, ignore_errors=True)
+
+    print()
+    ok("client data ready")
+    print(f"     {target.relative_to(REPO)}/ now holds: "
+          f"{', '.join(sorted(d.name for d in target.iterdir() if d.is_dir()))}")
+    return 0
+
 
 def cmd_run(args):
     binary = "authserver" if args.target == "auth" else "worldserver"
@@ -1539,6 +1822,22 @@ def main():
         epilog=__doc__,
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("install", help="one command: dependencies, core, build, database, configs")
+    p.add_argument("--yes", "-y", action="store_true", help="don't ask, assume yes")
+    p.add_argument("--client", help="path to your WoW 3.3.5a folder; also extracts client data")
+    p.add_argument("--skip-mmaps", action="store_true", help="defer the multi-hour pathfinding step")
+    p.add_argument("--skip-build", action="store_true", help="don't compile (for testing the rest)")
+    p.add_argument("--rebuild", action="store_true", help="rebuild even if worldserver exists")
+    p.add_argument("-j", "--jobs", type=int, help="parallel build/extract jobs")
+    p.add_argument("--generator", help="explicit CMake generator")
+    p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("extract", help="extract map/vmap/mmap/DBC data from your WoW client")
+    p.add_argument("--client", required=True, help="path to your WoW 3.3.5a folder")
+    p.add_argument("--skip-mmaps", action="store_true", help="skip the multi-hour pathfinding step")
+    p.add_argument("-j", "--jobs", type=int, help="threads for mmaps generation")
+    p.set_defaults(func=cmd_extract)
 
     sub.add_parser("doctor", help="check prerequisites").set_defaults(func=cmd_doctor)
 
