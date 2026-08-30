@@ -1,0 +1,29 @@
+[package]
+name = "ashmorrow-launcher-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+description = "Client verification, config injection and launch logic for the Ashmorrow launcher."
+license = "GPL-2.0-or-later"
+
+[lib]
+name = "launcher_core"
+path = "src/lib.rs"
+
+[dependencies]
+blake3 = "1"
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ureq = { version = "2.10", optional = true }
+
+[features]
+# The real HTTP transport. Off by default so anything embedding the core for
+# verification alone does not pull in a TLS stack; the Tauri shell turns it on.
+default = ["net"]
+net = ["dep:ureq"]
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"

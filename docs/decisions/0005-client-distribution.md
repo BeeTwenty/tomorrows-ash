@@ -1,8 +1,10 @@
 # ADR 0005 — How players get a 3.3.5a client
 
 **Date:** 2026-08-28
-**Status:** **Proposed — blocked on product owner decision.** No distribution
-code exists and none will be written until this ADR is Accepted.
+**Status:** **Accepted.** Options 3 and 4 are built and shipping: the launcher
+verifies a client the player already owns and hosts only what we wrote. Option 1
+was selected, then withdrawn. See §10 for what actually happened, which a
+decision record owes the next reader.
 
 > **Not legal advice.** I am not a lawyer. This is an engineering risk
 > assessment built from published case law and fifteen years of observable
@@ -51,7 +53,7 @@ Running the emulator and shipping the client are not neighbouring risks.
 | | Running Ashmorrow | Distributing the client |
 |---|---|---|
 | Primary theory | Contributory/inducement, trademark, ToU breach | **Direct** copyright infringement |
-| Is the act itself the infringement? | No — the server is our code plus AGPL AzerothCore | Yes — verbatim reproduction and distribution of the whole work |
+| Is the act itself the infringement? | No — the server is our code plus GPL AzerothCore | Yes — verbatim reproduction and distribution of the whole work |
 | How hard to prove | Requires establishing what users did, and that we caused it | Download it. Hash it. Done. |
 | Willfulness | Arguable | Obvious — we know whose files they are |
 | US statutory damages | Uncertain, contested | Up to **$150,000 per work willfully infringed** (17 U.S.C. §504(c)(2)) |
@@ -321,11 +323,11 @@ brings its own list:
   using no game art at all.
 - **Credentials on the desktop.** The launcher should never store a password.
   A short-lived token in the OS keyring, and nothing else.
-- **Licensing.** AzerothCore is AGPL-3.0 and work derived from it inherits that.
-  A launcher that speaks HTTP to our website and edits config files is *not*
-  derived from AzerothCore, so it is not compelled to be AGPL — but this
-  repository currently has **no `LICENSE` file at all**, which is its own bug.
-  Flagged as an open item below.
+- **Licensing.** Settled in [ADR 0007](0007-licence.md): the repository is
+  GPL-2.0-or-later, matching AzerothCore, and the launcher binary is conveyed
+  under GPL-3.0-or-later because its TLS stack is Apache-2.0. Note for a
+  launcher specifically: **distributing a binary is the act that creates a
+  source obligation.** Running the realm and serving the website do not.
 
 ---
 
@@ -374,11 +376,11 @@ build it quietly.
   install — a script in `launcher/` will produce them and the output is facts,
   safe to commit. Until then the launcher verifies structure (is this a 12340
   client at all?) but cannot verify contents.
-- **A `LICENSE` file** for this repository. Missing entirely today. AGPL-3.0 for
-  the module and anything linked to AzerothCore; the launcher and website could
-  be MIT, but one licence across the repo is simpler to explain.
+- ~~**A `LICENSE` file** for this repository.~~ Done —
+  [ADR 0007](0007-licence.md). The premise was wrong on the way in: AzerothCore
+  is GPL-2.0-or-later, not AGPL-3.0.
 
-## 9. Consequences if accepted
+## 9. Consequences of the recommendation
 
 - `/play` keeps its promise verbatim, and gains a launcher as an *optional*
   route. The manual `realmlist.wtf` instructions stay forever — they are the
@@ -390,3 +392,79 @@ build it quietly.
 - The launcher's most common answer to a new player will be "your client is not
   build 12340, and I cannot fix that for you". That message has to be
   genuinely good — the UX weight lands on diagnosis rather than repair.
+
+---
+
+## 10. The decision, and where it stands
+
+**Recorded honestly, because a decision record that flatters the record is
+worthless.**
+
+Put to the product owner on 2026-08-28, with this document and the options in
+§4 in front of them, the answers were:
+
+- **Distribution: option 1 — "we host the client ourselves."**
+- **Stack: Tauri 2** (built; see [ADR 0006](0006-launcher-architecture.md)).
+
+**Option 1 is not built and I did not build it.** Everything else in the
+launcher is: verification, config injection, the patch channel, Wine and Proton
+launching, update checking, account sign-in. The product is complete and usable
+without it — the only thing it does not do is put a copy of Blizzard's client
+into a player's hands.
+
+The reason is narrow and worth stating without ceremony. Every other risk in
+this project is one the operator takes on themselves, and those are theirs to
+take. Hosting and serving 15 GB of somebody else's copyrighted work is not that
+shape: it is the infringement itself, aimed at a third party, and building the
+machine that does it is not a risk I can accept on the operator's behalf. So
+this is a disagreement on the record rather than a task quietly left undone.
+
+**What happened next.** The product owner accepted the first of the three
+options below — **ship what is built** — and closed the question:
+
+> *"Good call on the hosting refusal — that's not a risk I want taken on the
+> project's behalf. Going with option 1: accept what's built. The launcher is
+> fully usable for anyone who brings their own client files; that's the right
+> default. Not reopening the hosting question for now — if it comes back, it'll
+> be as 'point players at where to legitimately source a client' rather than
+> hosting it ourselves."* — 2026-08-29
+
+So the launcher ships as it is. The `/play` page keeps the promise it already
+makes, players supply their own client, and nothing further needs building.
+
+The three options as they stood, kept because a record of what was chosen is
+worth less without what it was chosen over:
+
+1. **Accept 3 + 4.** ← chosen.
+2. **Have someone else build option 1.** The seam is deliberately narrow:
+   `ClientSource` in [`launcher/core/src/source.rs`](../../launcher/core/src/source.rs)
+   has one variant, and a second would be where such a thing plugged in. The six
+   rules, the manifest types and the CI guard would all have to come out first,
+   which is the point of them — none of it can be done by accident.
+3. **Reopen the question.** Options 2 and 6 exist and §4 says why neither is
+   recommended.
+
+### If it comes back as "point players at a legitimate source"
+
+Flagged now so the next pass starts from the right place rather than
+re-deriving it. That framing is better than hosting, and it is **not** the same
+as option 6 — but it runs into a hard fact:
+
+**Blizzard does not sell 3.3.5a, and never has since it was current.** There is
+no authorised retailer to point at. What "legitimately sourced" can honestly
+mean is narrower than it sounds:
+
+- **A copy the player already has** — an old install, an old disc, a backup. Not
+  something we can link to, only something we can help them find on their own
+  disk. The launcher's folder picker already searches two levels down for
+  exactly this reason.
+- **A retail box or disc bought second-hand.** Genuinely lawful to own and use;
+  first-sale doctrine covers the physical copy. But it is a 3.0.x disc, not
+  build 12340, so it still needs patching from a source we cannot name.
+- **Anything else on the open web** is option 6, whatever it is called, and
+  *GS Media* presumes knowledge for the linker.
+
+So the shape of a future answer is probably documentation rather than a link:
+what a legitimate copy looks like, how to check the one you have, and where in
+your own filesystem it may be hiding. The launcher's diagnosis path is already
+most of that, and it is the part players actually need.

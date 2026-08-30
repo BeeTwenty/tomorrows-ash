@@ -1,0 +1,41 @@
+{
+  "$comment": [
+    "The Ashmorrow realm's launcher manifest. The website serves this at",
+    "/api/launcher/manifest, filling the realm address in from its own",
+    "environment so this file never has to know a deployment's hostname.",
+    "",
+    "client.files is EMPTY, and that is the honest current state: hashes have",
+    "to be measured against a real 3.3.5a client, and nobody has done that",
+    "yet. Until they are, the launcher checks structure and build number, and",
+    "says in its own interface that it has nothing to compare contents with.",
+    "",
+    "To fill it in, from a machine that has a client:",
+    "",
+    "  cargo run --manifest-path launcher/core/Cargo.toml \\",
+    "        --bin ashmorrow-manifest -- hash /path/to/WoW-3.3.5a",
+    "",
+    "then paste build, version, locales and files in here, and record where",
+    "the copy came from in measured_from. The output is paths, sizes and",
+    "hashes - facts, safe to commit and publish. No client bytes leave the",
+    "machine that runs it, and none are ever committed here."
+  ],
+  "schema": 1,
+  "realm": {
+    "name": "Ashmorrow",
+    "address": "127.0.0.1",
+    "auth_port": 3724,
+    "world_port": 8085
+  },
+  "client": {
+    "build": 12340,
+    "version": "3.3.5a",
+    "locales": [],
+    "measured_from": "",
+    "files": []
+  },
+  "patches": [],
+  "launcher": {
+    "minimum_version": "0.1.0",
+    "latest_version": "0.1.0"
+  }
+}

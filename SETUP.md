@@ -330,6 +330,12 @@ Restart the authserver after `db realm` so it picks up the new realm row.
    "I can log in but the realm is offline" cause.
 4. Launch `Wow.exe` and log in with the account you created.
 
+> **Or let the launcher do steps 2-4.** `python3 tools/ta.py play run --client
+> /path/to/WoW-3.3.5a` writes the realmlist and starts the game, on either
+> platform; the desktop launcher in `launcher/` does the same with a window.
+> Section 10. This section stays correct either way — it is the fallback when
+> the launcher is not an option.
+
 Ports: **3724** (authserver) and **8085** (worldserver). Open both on the
 homelab box's firewall for LAN play.
 
@@ -650,7 +656,167 @@ sudo systemctl restart ashmorrow-web
 
 ---
 
-## 10. Troubleshooting
+## 10. The launcher
+
+**`launcher/`** is a desktop application that verifies a player's own 3.3.5a
+client, writes the realmlist, installs Ashmorrow's patches and starts the game —
+natively on Windows, through Wine or Proton on Linux. Like the website, it is a
+**separate service** with its own build and its own release cadence.
+
+It replaces "edit `realmlist.wtf` and run `Wow.exe`" as the *recommended* route.
+It never replaces it as the only one: section 7 stays correct forever, and is
+what you fall back to when the launcher is broken, unavailable on your platform,
+or simply not something you want to run.
+
+**It does not download a game client, and it never will.** You supply your own
+3.3.5a build 12340 client, exactly as the rest of this guide already assumes.
+Why, at length: [ADR 0005](docs/decisions/0005-client-distribution.md).
+
+Its code map is in [launcher/README.md](launcher/README.md); the stack decision
+is [ADR 0006](docs/decisions/0006-launcher-architecture.md); the interface's
+design is [docs/LAUNCHER-DESIGN.md](docs/LAUNCHER-DESIGN.md).
+
+### 10.1 Without building anything
+
+`ta.py play` does the same work from a terminal. Pure Python, no dependencies,
+no Rust, both platforms — and it is the first thing to reach for when something
+is wrong, because it prints every decision it makes.
+
+```bash
+# Linux
+python3 tools/ta.py play doctor --client /path/to/WoW-3.3.5a
+python3 tools/ta.py play verify --client /path/to/WoW-3.3.5a
+python3 tools/ta.py play run    --client /path/to/WoW-3.3.5a
+
+# Windows
+python tools\ta.py play doctor --client C:\Games\WoW-3.3.5a
+python tools\ta.py play run    --client C:\Games\WoW-3.3.5a
+```
+
+Save the typing by putting the path in `tools/local.json`:
+
+```json
+{ "client_path": "/path/to/WoW-3.3.5a", "realm_address": "192.168.1.50" }
+```
+
+| Action | Does |
+|---|---|
+| `doctor` | what is on this machine: client, build number, locales, Wine/Proton, realm address |
+| `verify` | checks the client is build 12340 and, if `ashmorrow-manifest` is built, compares file hashes |
+| `config` | writes `realmlist.wtf` into every locale directory, and optionally pre-fills the account name |
+| `run` | `config`, then starts the game. `--dry-run` prints the command and touches nothing |
+
+Your existing `realmlist.wtf` and `Config.wtf` are copied to
+`*.ashmorrow-original` the first time — once, before we have ever written, so
+the backup always holds what *you* had.
+
+### 10.2 Building the desktop launcher
+
+**Prerequisites** on top of Rust 1.77+ and Node 20+:
+
+```bash
+# Linux (Ubuntu/Debian)
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
+                 libayatana-appindicator3-dev librsvg2-dev
+```
+
+On **Windows**, WebView2 ships with Windows 10 21H2 and later, so the MSVC build
+tools are all you need.
+
+```bash
+cd launcher/ui && npm install && cd ..
+cargo install tauri-cli --version '^2' --locked
+
+cargo tauri dev      # run it
+cargo tauri build    # bundle it -> src-tauri/target/release/bundle/
+```
+
+Point it at a site other than production with `ASHMORROW_BASE_URL`:
+
+```bash
+ASHMORROW_BASE_URL=http://127.0.0.1:3000 cargo tauri dev
+```
+
+### 10.3 Working on it without a webview
+
+The interface answers from a demo adapter when Tauri is absent, so it opens in
+an ordinary browser — no Rust, no client, no realm:
+
+```bash
+cd launcher/ui && npm run dev     # http://localhost:5173
+```
+
+And the half that matters is testable anywhere:
+
+```bash
+cargo test   --manifest-path launcher/core/Cargo.toml
+cargo clippy --manifest-path launcher/core/Cargo.toml --all-targets -- -D warnings
+cd launcher/ui && npm run typecheck
+```
+
+### 10.4 The hash manifest
+
+`launcher/manifests/ashmorrow.json` ships with an **empty** file list. Hashes
+have to be measured against a real client, and nobody has done that yet — until
+they do, the launcher checks structure and build number and says so plainly
+rather than implying it verified anything.
+
+From a machine that has a client:
+
+```bash
+cargo run --manifest-path launcher/core/Cargo.toml \
+      --bin ashmorrow-manifest -- hash /path/to/WoW-3.3.5a > client.json
+```
+
+Paste `build`, `version`, `locales` and `files` into `ashmorrow.json`, and put
+where the copy came from in `measured_from`. The output is paths, sizes and
+hashes — facts, safe to commit. No client bytes leave the machine that runs it.
+
+To check a client against a manifest without the GUI:
+
+```bash
+cargo run --manifest-path launcher/core/Cargo.toml \
+      --bin ashmorrow-manifest -- check /path/to/WoW-3.3.5a launcher/manifests/ashmorrow.json
+```
+
+### 10.5 Linux: Wine and Proton
+
+The launcher finds what you have and never installs anything.
+
+```bash
+sudo apt install wine64        # Debian/Ubuntu
+sudo dnf install wine          # Fedora
+sudo pacman -S wine            # Arch
+```
+
+Proton is found automatically in every Steam library listed in
+`steamapps/libraryfolders.vdf`, including a Flatpak Steam.
+
+It manages **its own** Wine prefix at `~/.local/share/ashmorrow/prefix` and
+never touches `~/.wine` or any prefix belonging to another game.
+
+| Symptom | Try |
+|---|---|
+| Black screen or nothing draws | switch the renderer to OpenGL in Settings, or `-opengl` by hand |
+| Nothing found | install Wine from your distribution, or Proton through Steam |
+| Proton fails immediately | it needs Steam installed, not just the Proton folder — the launcher reports which of the two is missing |
+| Fonts are boxes | `winetricks corefonts` in the launcher's prefix |
+
+### 10.6 Launcher troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| "this client reports 2.4.3.8606" | it is a TBC client. Ashmorrow needs 3.3.5a build 12340, and nothing here can convert one into the other |
+| "no version resource in Wow.exe" | a repack that stripped it. The launcher proceeds and warns; verify by hand |
+| "no locale directory under Data" | the client is incomplete — `Data/enUS` or the equivalent must exist |
+| Files "differ from the build we measured" | your copy is not the one we hashed. Usually harmless; the Ledger tab names every file |
+| The launcher cannot reach the realm | it reads `/api/launcher/manifest` from the website. If the site is down, use `ta.py play` |
+| SmartScreen or antivirus warning | the binaries are unsigned by choice — ADR 0005 §6. Check the published SHA-256 sums |
+| Login works on the site, not in the launcher | account names and passwords are capped at 16 characters; the client silently truncates longer ones |
+
+---
+
+## 11. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -665,7 +831,7 @@ sudo systemctl restart ashmorrow-web
 | `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
-Website problems have their own table in [section 9.8](#98-website-troubleshooting).
+Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.6](#106-launcher-troubleshooting).
 
 Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
 or `python3 tools/ta.py web doctor` for the website.

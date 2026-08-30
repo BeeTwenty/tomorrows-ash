@@ -1,0 +1,490 @@
+@import "./fonts/fonts.css";
+
+/* ==========================================================================
+   Ashmorrow launcher — "Instrument"
+   --------------------------------------------------------------------------
+   Three rules, and everything here is one of them:
+
+     1. Colour is information, never decoration. The palette is high-contrast
+        monochrome; a hue appears only when it means something, and each means
+        exactly one thing. Ember means "the realm is alive" — the same thing it
+        means on the website, and the only warm pixel in the application.
+     2. No game art. Not one image. It is the wrong register for a tool, and it
+        makes ADR 0005 rule 5 unbreakable by construction.
+     3. Nothing moves unless something changed.
+
+   The site is warm near-black, a light serif and drifting ash. This shares
+   none of it on purpose — see docs/LAUNCHER-DESIGN.md.
+   ========================================================================== */
+
+:root {
+  --ground: #f4f5f7;
+  --panel: #ffffff;
+  --panel-sunk: #eceef1;
+  --rule: #d6dae0;
+  --rule-strong: #b9bfc8;
+  --text: #16191e;
+  --dim: #5b6572;
+  --faint: #858e9a;
+
+  --ok: #1f7a4d;
+  --warn: #8a6212;
+  --block: #b03a2c;
+  --busy: #1f5f96;
+  --realm: #d1500f;
+
+  --font-ui: "IBM Plex Sans Condensed", "Segoe UI Semibold", "Helvetica Neue", system-ui, sans-serif;
+  --font-num: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --grid: 4px;
+  --motion: 120ms linear;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #14161a;
+    --panel: #1b1e24;
+    --panel-sunk: #101216;
+    --rule: #2b3038;
+    --rule-strong: #3a414c;
+    --text: #e6e9ee;
+    --dim: #98a1ae;
+    --faint: #5f6875;
+
+    --ok: #4ec98a;
+    --warn: #e0a83c;
+    --block: #e05f52;
+    --busy: #5aa9e6;
+    --realm: #ff6a1f;
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #14161a;
+  --panel: #1b1e24;
+  --panel-sunk: #101216;
+  --rule: #2b3038;
+  --rule-strong: #3a414c;
+  --text: #e6e9ee;
+  --dim: #98a1ae;
+  --faint: #5f6875;
+
+  --ok: #4ec98a;
+  --warn: #e0a83c;
+  --block: #e05f52;
+  --busy: #5aa9e6;
+  --realm: #ff6a1f;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0; /* rule: square. The site rounds 2px; we do not round. */
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  user-select: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--busy);
+  outline-offset: -2px;
+}
+
+/* --------------------------------------------------------------------------
+   The readout strip. Always visible, never moves, positions never change, so
+   the eye learns where each number lives. This is the launcher's one repeated
+   gesture — the equivalent of the site's ember rule.
+   -------------------------------------------------------------------------- */
+
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 9px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  font-family: var(--font-num);
+  font-size: 11px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow-x: auto;
+  flex: none;
+}
+
+.mark {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--text);
+}
+
+.strip .live {
+  color: var(--realm);
+}
+
+.strip .spacer {
+  flex: 1;
+}
+
+/* Tabs are labels, not buttons: the launcher has three views, not a navigation. */
+.tabs {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.tab {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  transition: color var(--motion), border-color var(--motion);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--text);
+  border-color: var(--rule-strong);
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------------------
+   Views
+   -------------------------------------------------------------------------- */
+
+main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 14px;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.row .key {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  padding-top: 2px;
+}
+
+.row .value {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.row .detail {
+  font-size: 11.5px;
+  color: var(--dim);
+  margin-top: 3px;
+}
+
+/* The only colour in the application, and it is carrying the whole message. */
+.pip {
+  font-family: var(--font-num);
+  font-size: 12px;
+  line-height: 1.2;
+  padding-top: 1px;
+}
+
+.pip.ok {
+  color: var(--ok);
+}
+.pip.warn {
+  color: var(--warn);
+}
+.pip.block {
+  color: var(--block);
+}
+.pip.busy {
+  color: var(--busy);
+}
+.pip.idle {
+  color: var(--faint);
+}
+
+.bar {
+  height: 6px;
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  margin: 6px 0 4px;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  background: var(--busy);
+  transition: width var(--motion);
+}
+
+/* --------------------------------------------------------------------------
+   Diagnosis. When verification fails this is the most important thing in the
+   application, so it is written prose with a finding in it, not a modal.
+   -------------------------------------------------------------------------- */
+
+.note {
+  margin-top: 18px;
+  border-top: 1px solid var(--rule);
+  padding-top: 12px;
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.note .flag {
+  font-family: var(--font-num);
+  flex: none;
+}
+
+.note.warn .flag {
+  color: var(--warn);
+}
+.note.block .flag {
+  color: var(--block);
+}
+
+.note b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.link {
+  color: var(--busy);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   The ledger. Every other launcher hides this under "advanced"; here it is one
+   click away, because the truth about your install is what we are offering.
+   -------------------------------------------------------------------------- */
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-num);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: text;
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--ground);
+  text-align: left;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0 10px 6px 0;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+tbody td {
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--rule);
+  color: var(--text);
+  vertical-align: top;
+}
+
+tbody td.state {
+  white-space: nowrap;
+}
+tbody td.note-cell {
+  color: var(--dim);
+  word-break: break-all;
+}
+
+/* --------------------------------------------------------------------------
+   Settings
+   -------------------------------------------------------------------------- */
+
+.field {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.field label {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+}
+
+.field input[type="text"],
+.field input[type="password"],
+.field select {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  padding: 6px 8px;
+  width: 100%;
+  user-select: text;
+}
+
+.field .inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ghost {
+  border: 1px solid var(--rule-strong);
+  padding: 6px 12px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  transition: border-color var(--motion), color var(--motion);
+  white-space: nowrap;
+}
+
+.ghost:hover:not(:disabled) {
+  border-color: var(--busy);
+  color: var(--busy);
+}
+
+.ghost:disabled {
+  color: var(--faint);
+  border-color: var(--rule);
+  cursor: not-allowed;
+}
+
+.hint {
+  font-size: 11.5px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin: 4px 0 20px;
+}
+
+h2 {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+h2:not(:first-child) {
+  margin-top: 28px;
+}
+
+/* --------------------------------------------------------------------------
+   The launch bar. Its label is the state — never a Play button that is a lie,
+   and when it is disabled it says why, in the button.
+   -------------------------------------------------------------------------- */
+
+.launch {
+  flex: none;
+  width: 100%;
+  border-top: 1px solid var(--rule-strong);
+  background: var(--panel);
+  padding: 14px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-indent: 0.42em;
+  text-transform: uppercase;
+  color: var(--text);
+  transition: background var(--motion), color var(--motion);
+}
+
+.launch:hover:not(:disabled) {
+  background: var(--panel-sunk);
+}
+
+.launch:disabled {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.launch .why {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-indent: 0;
+  text-transform: none;
+  color: var(--dim);
+  margin-top: 5px;
+}
+
+.launch.busy {
+  color: var(--busy);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

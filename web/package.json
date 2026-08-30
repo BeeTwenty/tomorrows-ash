@@ -2,6 +2,7 @@
   "name": "tomorrows-ash-web",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-2.0-or-later",
   "description": "Public website for Tomorrow's Ash - realm Ashmorrow. Deploys independently of the game server.",
   "engines": {
     "node": ">=20.9.0"
