@@ -23,9 +23,13 @@ cd tomorrows-ash
 .\install.ps1         # Windows (PowerShell)
 ```
 
-One command: dependencies, AzerothCore at the pinned commit, build, databases
-and configs. Re-runnable — it skips whatever already succeeded. Point it at your
-own WoW 3.3.5a client and it extracts the map data too:
+A guided setup: it asks where MySQL should live (Docker, this machine, or
+another box), what address players should be redirected to after login, and how
+to build — then does dependencies, AzerothCore at the pinned commit, the build,
+databases and configs. Re-runnable; it skips whatever already succeeded. Every
+question has a flag, so it also works unattended.
+
+Point it at your own WoW 3.3.5a client and it extracts the map data too:
 
 ```bash
 ./install.sh --client ~/Games/WoW-3.3.5a

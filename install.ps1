@@ -1,8 +1,9 @@
 # Tomorrow's Ash - one-command install (Windows).
 #
-#   .\install.ps1                                  set up everything but client data
+#   .\install.ps1                                  guided setup - asks about the choices
 #   .\install.ps1 -ClientPath 'C:\Games\WoW335'    ...and extract client data too
-#   .\install.ps1 -Yes -SkipMmaps                  unattended, defer the slow step
+#   .\install.ps1 -Db local -DbUser root           answer some questions up front
+#   .\install.ps1 -Yes                             ask nothing, take defaults
 #
 # If PowerShell refuses to run this, it is the execution policy, not the script:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -12,13 +13,31 @@
 
 [CmdletBinding()]
 param(
-    [string] $ClientPath,
-    [switch] $Yes,
-    [switch] $SkipMmaps,
+    # Leave everything unset to be asked about it interactively.
+    [ValidateSet('docker', 'local', 'remote')]
+    [string] $Db,
+    [string] $DbHost,
+    [string] $DbPort,
+    [string] $DbUser,
+    [string] $DbPassword,
+
+    [string] $RealmName,
+    [string] $RealmAddress,
+    [string] $RealmPort,
+
+    [ValidateSet('Release', 'RelWithDebInfo', 'Debug')]
+    [string] $BuildType,
+    [switch] $NoTools,
     [switch] $SkipBuild,
     [switch] $Rebuild,
     [int]    $Jobs,
-    [string] $Generator
+    [string] $Generator,
+
+    [string] $ClientPath,
+    [switch] $SkipMmaps,
+
+    [switch] $Reconfigure,
+    [switch] $Yes
 )
 
 $ErrorActionPreference = 'Stop'
@@ -49,13 +68,24 @@ if (-not $python) {
 # Linux and macOS, where a backslash is not a path separator.
 $taPath = Join-Path -Path 'tools' -ChildPath 'ta.py'
 $taArgs = @($taPath, 'install')
-if ($ClientPath) { $taArgs += @('--client', $ClientPath) }
-if ($Yes)        { $taArgs += '--yes' }
-if ($SkipMmaps)  { $taArgs += '--skip-mmaps' }
-if ($SkipBuild)  { $taArgs += '--skip-build' }
-if ($Rebuild)    { $taArgs += '--rebuild' }
-if ($Jobs)       { $taArgs += @('-j', "$Jobs") }
-if ($Generator)  { $taArgs += @('--generator', $Generator) }
+if ($Db)           { $taArgs += @('--db', $Db) }
+if ($DbHost)       { $taArgs += @('--db-host', $DbHost) }
+if ($DbPort)       { $taArgs += @('--db-port', $DbPort) }
+if ($DbUser)       { $taArgs += @('--db-user', $DbUser) }
+if ($DbPassword)   { $taArgs += @('--db-password', $DbPassword) }
+if ($RealmName)    { $taArgs += @('--realm-name', $RealmName) }
+if ($RealmAddress) { $taArgs += @('--realm-address', $RealmAddress) }
+if ($RealmPort)    { $taArgs += @('--realm-port', $RealmPort) }
+if ($BuildType)    { $taArgs += @('--build-type', $BuildType) }
+if ($NoTools)      { $taArgs += '--no-tools' }
+if ($SkipBuild)    { $taArgs += '--skip-build' }
+if ($Rebuild)      { $taArgs += '--rebuild' }
+if ($Jobs)         { $taArgs += @('-j', "$Jobs") }
+if ($Generator)    { $taArgs += @('--generator', $Generator) }
+if ($ClientPath)   { $taArgs += @('--client', $ClientPath) }
+if ($SkipMmaps)    { $taArgs += '--skip-mmaps' }
+if ($Reconfigure)  { $taArgs += '--reconfigure' }
+if ($Yes)          { $taArgs += '--yes' }
 
 & $python.Exe @($python.Prefix + $taArgs)
 exit $LASTEXITCODE

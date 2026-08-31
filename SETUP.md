@@ -46,9 +46,32 @@ From a fresh clone, on either platform:
 .\install.ps1
 ```
 
-That does dependencies, fetches AzerothCore at the pinned commit, builds,
-creates the databases and renders the server configs. It is **idempotent** —
-re-run it after a failure and it skips what already succeeded.
+It asks you about the choices that matter, then does dependencies, fetches
+AzerothCore at the pinned commit, builds, creates the databases and renders the
+server configs. It is **idempotent** — re-run it after a failure and it skips
+what already succeeded.
+
+What it asks:
+
+| Question | Options | Why it matters |
+|---|---|---|
+| Where the databases live | Docker container / MySQL already on this machine / MySQL on another machine | The homelab case is usually the third — realm and database on different boxes |
+| Realm address | defaults to your detected LAN IP | This is what clients are redirected to **after** login. `127.0.0.1` here is the usual cause of "login works but the realm shows offline" |
+| Realm name and world port | `Ashmorrow`, `8085` | |
+| Build type | Release / RelWithDebInfo / Debug | Release to play; the others are larger and only for debugging |
+| Build the extractors? | yes | Skipping shortens the build, but you need them unless you already have extracted client data |
+
+**Every question has a matching flag**, so the same script serves a first-time
+setup and an unattended rebuild:
+
+```bash
+./install.sh --db remote --db-host db.homelab.lan --db-user acore \
+             --realm-address 192.168.1.50 --build-type Release
+```
+
+`--yes` answers nothing and takes defaults. `--reconfigure` re-asks and
+overwrites an existing `tools/local.json`. `install.ps1` takes the same options
+in PowerShell style (`-Db remote -DbHost db.homelab.lan`).
 
 If you already have your WoW 3.3.5a client, hand it over and the installer does
 the client-data extraction too:

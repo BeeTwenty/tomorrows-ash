@@ -492,7 +492,7 @@ def cmd_db(args):
                 warn("")
                 warn("then put the credentials in tools/local.json and use `db init`")
                 warn("directly - `db up` is only needed for the Docker route.")
-                warn("See SETUP.md section 1, 'Linux without Docker'.")
+                warn("See SETUP.md section 2, 'Linux without Docker'.")
                 return 1
         info("waiting for MySQL to accept connections")
         import time
@@ -700,38 +700,290 @@ def step(number, total, title):
     print(c("-" * (len(title) + 8), "grey"))
 
 
-def confirm(question, assume_yes):
-    if assume_yes:
-        print(f"     {question} yes (--yes)")
-        return True
+_UNSET = object()
+
+
+class Prompt:
+    """Interactive questions with non-interactive fallbacks.
+
+    Every question can be answered three ways, in priority order: a command-line
+    flag, an answer typed at the prompt, or the default. That means the same
+    installer serves someone setting up their first realm and a scripted rebuild
+    on a machine with no terminal, without maintaining two code paths.
+    """
+
+    def __init__(self, assume_yes):
+        self.assume_yes = assume_yes
+        # A piped stdin cannot answer questions; fall back to defaults rather
+        # than raising EOFError halfway through an install.
+        self.interactive = sys.stdin is not None and sys.stdin.isatty()
+        if assume_yes:
+            self.interactive = False
+
+    def _auto(self, question, shown, why, value=_UNSET):
+        """Report an answer we did not have to ask for, and return it.
+
+        `shown` is what the operator sees, `value` is what the caller gets. They
+        differ whenever displaying the real answer would be wrong - a password
+        must print as asterisks, and a menu prints a human label while the
+        caller needs the key behind it.
+        """
+        print(f"     {question} {c(str(shown), 'yellow')}  ({why})")
+        return shown if value is _UNSET else value
+
+    def confirm(self, question, default=True, override=None):
+        if override is not None:
+            return self._auto(question, "yes" if override else "no", "from flag")
+        if not self.interactive:
+            return self._auto(question, "yes" if default else "no", "default")
+        suffix = "[Y/n]" if default else "[y/N]"
+        while True:
+            try:
+                answer = input(f"     {question} {suffix} ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return default
+            if not answer:
+                return default
+            if answer in ("y", "yes"):
+                return True
+            if answer in ("n", "no"):
+                return False
+            print(f"       please answer y or n")
+
+    def text(self, question, default="", override=None, allow_empty=False):
+        if override is not None:
+            return self._auto(question, override, "from flag")
+        if not self.interactive:
+            return self._auto(question, default or "(empty)", "default", value=default)
+        shown = f" [{default}]" if default else ""
+        while True:
+            try:
+                answer = input(f"     {question}{shown}: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return default
+            answer = answer or default
+            if answer or allow_empty:
+                return answer
+            print("       a value is required")
+
+    def secret(self, question, override=None, generate=False):
+        """Ask for a password without echoing it. Can generate one instead."""
+        if override is not None:
+            return self._auto(question, "*" * 8, "from flag", value=override)
+        if not self.interactive:
+            import secrets
+            value = secrets.token_urlsafe(18) if generate else ""
+            return self._auto(question, "generated" if generate else "(empty)",
+                              "default", value=value)
+        import getpass
+        while True:
+            try:
+                answer = getpass.getpass(f"     {question}"
+                                         f"{' (blank to generate one)' if generate else ''}: ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                answer = ""
+            if answer:
+                return answer
+            if generate:
+                import secrets
+                value = secrets.token_urlsafe(18)
+                print(f"       generated a random password")
+                return value
+            print("       a password is required")
+
+    def choice(self, question, options, default=0, override=None):
+        """options is [(key, label, description)]. Returns the chosen key."""
+        keys = [o[0] for o in options]
+        if override is not None:
+            if override not in keys:
+                die(f"{override!r} is not one of: {', '.join(keys)}")
+            label = next(o[1] for o in options if o[0] == override)
+            return self._auto(question, label, "from flag", value=override)
+        if not self.interactive:
+            return self._auto(question, options[default][1], "default",
+                              value=keys[default])
+
+        print()
+        print(f"     {question}")
+        for index, (key, label, description) in enumerate(options):
+            marker = c("*", "green") if index == default else " "
+            print(f"       {marker} {index + 1}) {c(label, 'yellow')}")
+            for line in description.splitlines():
+                print(f"            {line}")
+        while True:
+            try:
+                answer = input(f"     choose 1-{len(options)} [{default + 1}]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return keys[default]
+            if not answer:
+                return keys[default]
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                return keys[int(answer) - 1]
+            if answer.lower() in keys:
+                return answer.lower()
+            print(f"       enter a number from 1 to {len(options)}")
+
+
+def local_ip_guess():
+    """Best guess at this machine's LAN address.
+
+    Opening a UDP socket to a public address does not send anything; it just
+    makes the OS pick the interface it would route through. Used to offer a
+    sensible realm address, because the default of 127.0.0.1 is the single most
+    common cause of "I can log in but the realm shows offline".
+    """
+    import ipaddress
+    import socket
     try:
-        return input(f"     {question} [Y/n] ").strip().lower() in ("", "y", "yes")
-    except EOFError:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 9))
+            found = sock.getsockname()[0]
+        finally:
+            sock.close()
+    except OSError:
+        return None
+
+    # Only offer something a player could actually connect to. Loopback is the
+    # bug this exists to avoid, and a container can hand back link-local or
+    # documentation-range addresses that would be worse than no suggestion.
+    try:
+        addr = ipaddress.ip_address(found)
+    except ValueError:
+        return None
+    if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+        return None
+    if addr in ipaddress.ip_network("192.0.2.0/24"):      # TEST-NET-1
+        return None
+    return found
+
+
+def confirm(question, assume_yes):
+    """Kept for the older call sites that predate the Prompt class."""
+    return Prompt(assume_yes).confirm(question)
+
+
+def docker_available():
+    """True only if the Docker daemon actually answers, not merely installed."""
+    if not shutil.which("docker"):
         return False
+    rc, _, _ = capture(["docker", "info", "--format", "{{.ServerVersion}}"])
+    return rc == 0
 
 
-def ensure_local_config(assume_yes):
-    """Write tools/local.json with a generated database password.
+def choose_database(prompt, args, cfg):
+    """Decide where MySQL lives, and record it in tools/local.json.
 
-    The shipped default password exists so the tooling runs out of the box in a
-    throwaway sandbox. A real install should not use it, and asking someone to
-    invent one by hand is how installs end up with 'password'.
+    Three genuinely different situations, and guessing wrong wastes real time:
+    a throwaway container, a service already on this box, or a database
+    somewhere else entirely (the common homelab case, where the realm and the
+    website are not the same machine).
+    """
+    mode = prompt.choice(
+        "Where should the databases live?",
+        [
+            ("docker", "Docker container",
+             "Easiest. Creates a MySQL 8.4 container we manage for you.\n"
+             "Needs Docker installed and able to pull images."),
+            ("local", "MySQL already on this machine",
+             "Use a MySQL/MariaDB service you have installed.\n"
+             "You will be asked for its credentials."),
+            ("remote", "MySQL on another machine",
+             "Point at a database server elsewhere on your network.\n"
+             "The realm needs low latency to it - same LAN, not the internet."),
+        ],
+        # The CLI being installed is not the same as the daemon running - a
+        # stopped daemon is common, and defaulting to Docker there sends people
+        # down a path that cannot work.
+        default=0 if docker_available() else 1,
+        override=args.db,
+    )
+
+    if mode == "docker":
+        if not shutil.which("docker"):
+            die("Docker is not installed. Install it, or re-run and choose another option.")
+        if not docker_available():
+            warn("Docker is installed but its daemon is not responding.")
+            print("       Start it (`sudo systemctl start docker`, or Docker Desktop)")
+            print("       and re-run, or re-run and choose another option.")
+            if not prompt.confirm("Continue anyway?", default=False):
+                die("Docker daemon unavailable")
+        cfg["mysql_host"] = "127.0.0.1"
+        cfg["mysql_port"] = int(prompt.text("Port to publish MySQL on", "3306",
+                                            override=args.db_port))
+        cfg["mysql_user"] = "root"
+        cfg["mysql_pass"] = prompt.secret("Password for the container's root user",
+                                          override=args.db_password, generate=True)
+        return mode
+
+    cfg["mysql_host"] = prompt.text(
+        "Database host", "127.0.0.1" if mode == "local" else "",
+        override=args.db_host)
+    cfg["mysql_port"] = int(prompt.text("Database port", "3306", override=args.db_port))
+    cfg["mysql_user"] = prompt.text("Database user (needs CREATE DATABASE)", "root",
+                                    override=args.db_user)
+    cfg["mysql_pass"] = prompt.secret(f"Password for {cfg['mysql_user']}",
+                                      override=args.db_password)
+    return mode
+
+
+def choose_realm(prompt, args, cfg):
+    """Realm identity, and the address players are redirected to after login."""
+    cfg["realm_name"] = prompt.text("Realm name", cfg.get("realm_name", "Ashmorrow"),
+                                    override=args.realm_name)
+
+    guess = local_ip_guess()
+    print()
+    print("     The realm address is what the client is redirected to AFTER login.")
+    print("     127.0.0.1 works only for playing on this same machine. If anyone")
+    print("     else will connect, use this machine's LAN address instead - this")
+    print("     is the usual cause of 'login works but the realm shows offline'.")
+    if guess:
+        print(f"     This machine looks like {c(guess, 'yellow')} on your network.")
+
+    cfg["realm_address"] = prompt.text("Realm address", guess or "127.0.0.1",
+                                       override=args.realm_address)
+    cfg["realm_port"] = int(prompt.text("World server port", "8085", override=args.realm_port))
+    return cfg
+
+
+def ensure_local_config(prompt, args):
+    """Build tools/local.json from the answers, without clobbering existing ones.
+
+    The shipped defaults exist so the tooling runs in a throwaway sandbox. A
+    real install should not use them, and asking somebody to invent a password
+    by hand is how installs end up with 'password'.
     """
     local = REPO / "tools" / "local.json"
+    existing = {}
     if local.exists():
-        ok(f"{local.relative_to(REPO)} exists, leaving it alone")
-        return json.loads(local.read_text(encoding="utf-8"))
+        try:
+            existing = json.loads(local.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            die(f"tools/local.json is not valid JSON: {exc}")
+        ok(f"{local.relative_to(REPO)} already exists")
+        if not prompt.confirm("Reconfigure it?", default=False, override=args.reconfigure or None):
+            return existing, None
 
+    cfg = dict(existing)
+    mode = choose_database(prompt, args, cfg)
+    choose_realm(prompt, args, cfg)
+
+    # Service passwords the operator never types; generated unless already set.
     import secrets
-    cfg = {
-        "mysql_pass": secrets.token_urlsafe(18),
-        "website_db_pass": secrets.token_urlsafe(18),
-        "web_db_pass": secrets.token_urlsafe(18),
-    }
-    local.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
-    ok(f"wrote {local.relative_to(REPO)} with generated passwords")
-    warn("that file is gitignored. Back it up; it is the only copy.")
-    return cfg
+    for key in ("website_db_pass", "web_db_pass"):
+        cfg.setdefault(key, secrets.token_urlsafe(18))
+
+    cfg["db_mode"] = mode
+    local.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print()
+    ok(f"wrote {local.relative_to(REPO)}")
+    warn("that file holds your passwords, is gitignored, and is the only copy.")
+    return cfg, mode
 
 
 def install_linux_packages(assume_yes):
@@ -759,27 +1011,52 @@ def install_linux_packages(assume_yes):
 
 
 def cmd_install(args):
-    """Take a fresh clone to a running realm in one command."""
-    total = 7 if args.client else 6
+    """Take a fresh clone to a running realm, asking about the choices that matter."""
+    prompt = Prompt(args.yes)
+
     print()
     print(c("  Tomorrow's Ash - installing realm Ashmorrow", "blue"))
     print(f"  repo: {REPO}")
     if args.yes:
-        print("  running non-interactively (--yes)")
+        print("  non-interactive (--yes): taking defaults for anything not passed as a flag")
+    elif not prompt.interactive:
+        print("  stdin is not a terminal: taking defaults for anything not passed as a flag")
+
+    total = 7 if args.client else 6
 
     # 1 -----------------------------------------------------------------
     step(1, total, "Prerequisites")
     if not IS_WINDOWS:
         install_linux_packages(args.yes)
     else:
-        print("     On Windows the compiler comes from Visual Studio 2022 and")
-        print("     Boost/OpenSSL/MySQL are installed by hand - see SETUP.md section 2.")
+        print("     On Windows the compiler comes from Visual Studio 2022, and")
+        print("     Boost/OpenSSL/MySQL are installed by hand - see SETUP.md section 3.")
     if cmd_doctor(argparse.Namespace()) != 0:
         die("prerequisites are missing - see above, then re-run")
 
     # 2 -----------------------------------------------------------------
-    step(2, total, "Local configuration")
-    ensure_local_config(args.yes)
+    step(2, total, "How do you want this set up?")
+    cfg, db_mode = ensure_local_config(prompt, args)
+    if db_mode is None:
+        db_mode = cfg.get("db_mode", "docker")
+
+    build_type = prompt.choice(
+        "Build type",
+        [
+            ("Release", "Release", "Fastest server, smallest build. Use this to play."),
+            ("RelWithDebInfo", "Release with debug info",
+             "Same speed, keeps symbols so crashes are diagnosable.\nLarger build directory."),
+            ("Debug", "Debug", "Slow. Only for tracking down a specific bug."),
+        ],
+        default=0,
+        override=args.build_type,
+    )
+    want_tools = prompt.confirm(
+        "Build the client-data extractors?", default=True,
+        override=(False if args.no_tools else None))
+    if not want_tools:
+        print("       skipping them shortens the build, but you will need them")
+        print("       later unless you already have extracted client data.")
 
     # 3 -----------------------------------------------------------------
     step(3, total, "Fetching AzerothCore at the pinned commit")
@@ -787,7 +1064,7 @@ def cmd_install(args):
         ok("core checkout already present")
         cmd_sync(argparse.Namespace())
     else:
-        print("     Downloads roughly 1 GB. This is the slow part before the build.")
+        print("     Downloads roughly 1 GB.")
         cmd_bootstrap(argparse.Namespace(force=False))
 
     # 4 -----------------------------------------------------------------
@@ -799,43 +1076,58 @@ def cmd_install(args):
         if binary.exists() and not args.rebuild:
             ok("worldserver already built - pass --rebuild to force")
         else:
-            print("     First build takes 20-60 minutes and about 15 GB.")
-            cmd_configure(argparse.Namespace(build_type=None, tools=None, generator=args.generator))
+            print(f"     {build_type} build, first run takes 20-60 minutes and about 15 GB.")
+            cmd_configure(argparse.Namespace(
+                build_type=build_type,
+                tools="all" if want_tools else "none",
+                generator=args.generator))
             cmd_build(argparse.Namespace(jobs=args.jobs))
 
     # 5 -----------------------------------------------------------------
     step(5, total, "Database")
     cfg = load_local()
     rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+
+    if rc != 0 and db_mode == "docker":
+        print("     Starting the MySQL container.")
+        if cmd_db(argparse.Namespace(action="up")) != 0:
+            return 1
+        rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+
     if rc != 0:
-        started = False
-        if shutil.which("docker"):
-            print("     No MySQL reachable. Trying Docker.")
-            started = cmd_db(argparse.Namespace(action="up")) == 0
-        if not started:
-            warn("could not start MySQL automatically.")
-            print("     Install it natively and put the credentials in tools/local.json:")
+        warn(f"cannot reach MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} "
+             f"as {cfg['mysql_user']}.")
+        if db_mode == "local":
+            print("     Install and start it, then re-run - everything above is done:")
             print("       Linux:   sudo apt install mysql-server")
             print("       Windows: the MySQL 8.x installer")
-            print("     Then re-run this installer; everything above is already done.")
-            return 1
-    else:
-        ok("MySQL is reachable")
+        else:
+            print("     Check the host, port, credentials and that the server allows")
+            print("     remote connections (bind-address) and the firewall permits it.")
+            print("     Fix tools/local.json, then re-run.")
+        return 1
+
+    ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
     cmd_db(argparse.Namespace(action="init"))
 
     # 6 -----------------------------------------------------------------
     step(6, total, "Server configuration")
-    cmd_conf(argparse.Namespace(force=False))
+    cmd_conf(argparse.Namespace(force=args.reconfigure))
 
     # 7 -----------------------------------------------------------------
     if args.client:
         step(7, total, "Client data")
-        cmd_extract(argparse.Namespace(client=args.client, skip_mmaps=args.skip_mmaps, jobs=args.jobs))
+        cmd_extract(argparse.Namespace(client=args.client,
+                                       skip_mmaps=args.skip_mmaps, jobs=args.jobs))
 
     # done ---------------------------------------------------------------
     print()
     print(c("  Installed.", "green"))
     print()
+    print(f"  Realm     {cfg['realm_name']} at {cfg['realm_address']}:{cfg['realm_port']}")
+    print(f"  Database  {cfg['mysql_user']}@{cfg['mysql_host']}:{cfg['mysql_port']} ({db_mode})")
+    print()
+
     if not args.client:
         print("  One thing is left, and it needs your own WoW 3.3.5a client:")
         print()
@@ -845,6 +1137,7 @@ def cmd_install(args):
         print("  'Failed to find map files for starting areas'. Add --skip-mmaps to")
         print("  defer the multi-hour pathfinding step and play sooner.")
         print()
+
     print("  Then, in two terminals:")
     print(c("     python3 tools/ta.py run auth", "yellow"))
     print(c("     python3 tools/ta.py run world", "yellow"))
@@ -852,7 +1145,7 @@ def cmd_install(args):
     print("  The first world start imports ~800 MB of SQL and looks frozen for")
     print("  several minutes. That happens once.")
     print()
-    print("  Finally, name the realm and make an account:")
+    print("  Finally, register the realm and make an account:")
     print(c("     python3 tools/ta.py db realm", "yellow"))
     print("     (then in the worldserver console) account create <user> <pass>")
     print()
@@ -1823,14 +2116,36 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("install", help="one command: dependencies, core, build, database, configs")
-    p.add_argument("--yes", "-y", action="store_true", help="don't ask, assume yes")
-    p.add_argument("--client", help="path to your WoW 3.3.5a folder; also extracts client data")
-    p.add_argument("--skip-mmaps", action="store_true", help="defer the multi-hour pathfinding step")
-    p.add_argument("--skip-build", action="store_true", help="don't compile (for testing the rest)")
+    p = sub.add_parser("install", help="guided setup: dependencies, core, build, database, configs")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="don't ask anything; take defaults for whatever isn't a flag")
+    p.add_argument("--reconfigure", action="store_true",
+                   help="re-ask the setup questions and overwrite existing configs")
+    # database
+    p.add_argument("--db", choices=["docker", "local", "remote"],
+                   help="where MySQL lives (skips that question)")
+    p.add_argument("--db-host", help="database host (local/remote)")
+    p.add_argument("--db-port", help="database port")
+    p.add_argument("--db-user", help="database user; needs CREATE DATABASE")
+    p.add_argument("--db-password", help="database password (prefer the prompt; "
+                                         "a flag lands in your shell history)")
+    # realm
+    p.add_argument("--realm-name", help="realm name shown in the client")
+    p.add_argument("--realm-address", help="address clients are redirected to after login; "
+                                           "use your LAN IP if anyone else connects")
+    p.add_argument("--realm-port", help="world server port")
+    # build
+    p.add_argument("--build-type", choices=["Release", "RelWithDebInfo", "Debug"],
+                   help="compiler build type")
+    p.add_argument("--no-tools", action="store_true",
+                   help="don't build the client-data extractors")
+    p.add_argument("--skip-build", action="store_true", help="don't compile at all")
     p.add_argument("--rebuild", action="store_true", help="rebuild even if worldserver exists")
     p.add_argument("-j", "--jobs", type=int, help="parallel build/extract jobs")
     p.add_argument("--generator", help="explicit CMake generator")
+    # client data
+    p.add_argument("--client", help="path to your WoW 3.3.5a folder; also extracts client data")
+    p.add_argument("--skip-mmaps", action="store_true", help="defer the multi-hour pathfinding step")
     p.set_defaults(func=cmd_install)
 
     p = sub.add_parser("extract", help="extract map/vmap/mmap/DBC data from your WoW client")

@@ -2,9 +2,13 @@
 #
 # Tomorrow's Ash - one-command install (Linux and macOS).
 #
-#   ./install.sh                                   set up everything but client data
+#   ./install.sh                                   guided setup - asks about the choices
 #   ./install.sh --client ~/WoW-3.3.5a             ...and extract client data too
-#   ./install.sh --yes --skip-mmaps                unattended, defer the slow step
+#   ./install.sh --db local --db-user root         answer some questions up front
+#   ./install.sh --yes                             ask nothing, take defaults
+#
+# Every question has a matching flag, so the same script serves a first-time
+# setup and an unattended rebuild. --help lists them all.
 #
 # All this does is find a usable Python and hand over to tools/ta.py, which is
 # where the actual logic lives so that Windows and Linux run the same code.

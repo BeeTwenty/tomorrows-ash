@@ -22,6 +22,16 @@ jobs:
       - name: ta.py --help works
         run: python tools/ta.py --help
 
+      - name: Installer choice logic
+        run: |
+          # The installer's answers become the realm's configuration, so a bug
+          # here is a broken install rather than a cosmetic problem. Two caught
+          # this way: a --db flag storing the menu label instead of the key, and
+          # --db-password storing the asterisks shown on screen.
+          rm -f tools/local.json
+          python tools/tests/test_install_choices.py
+          rm -f tools/local.json
+
       - name: upstream.json is valid and complete
         run: |
           python - <<'PY'
