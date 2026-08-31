@@ -4,6 +4,7 @@
 #   .\install.ps1 -ClientPath 'C:\Games\WoW335'    ...and extract client data too
 #   .\install.ps1 -Database local -DbUser root      answer some questions up front
 #   .\install.ps1 -Yes                             ask nothing, take defaults
+#   .\install.ps1 -PythonPath C:\Py\python.exe     if detection picks the wrong Python
 #
 # If PowerShell refuses to run this, it is the execution policy, not the script:
 #   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -40,35 +41,109 @@ param(
     [switch] $SkipMmaps,
 
     [switch] $Reconfigure,
-    [switch] $Yes
+    [switch] $Yes,
+
+    # Escape hatch: skip interpreter detection entirely and use this one.
+    [string] $PythonPath
 )
 
-$ErrorActionPreference = 'Stop'
+# NOT 'Stop' at script scope. Windows PowerShell 5.1 turns *any* native command
+# writing to stderr into a terminating NativeCommandError, and plenty of healthy
+# tools write to stderr - Python prints its startup banner there. Errors we
+# actually care about are checked explicitly via $LASTEXITCODE.
+$ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 
+function Test-PythonCandidate {
+    <#
+        Is this executable really a Python 3.8+? Returns the version string, or
+        $null. Never throws.
+
+        Checks the OUTPUT rather than the exit code. Plenty of things exit 0
+        when handed `-c <string>` without being Python at all - /bin/echo does,
+        and so does the Microsoft Store's python.exe stub. Accepting one of
+        those produces a confusing failure much later instead of here.
+
+        The marker is assembled from the version numbers at runtime, so an
+        executable that merely echoes its arguments back cannot produce it: the
+        literal source text has no digits where the pattern needs them.
+
+        Deliberately avoids splatting (@array) and lets nothing reach the error
+        stream: on Windows PowerShell 5.1 a dropped argument makes python start
+        its REPL, whose banner then surfaces as a NativeCommandError rather than
+        as "wrong version". Both look nothing like the real cause.
+    #>
+    param(
+        [Parameter(Mandatory)] [string] $Exe,
+        [switch] $UsePyLauncher
+    )
+
+    $code = 'import sys; print("TA_PYTHON %d %d" % sys.version_info[:2])'
+    try {
+        if ($UsePyLauncher) {
+            $output = & $Exe -3 -c $code 2>&1
+        } else {
+            $output = & $Exe -c $code 2>&1
+        }
+    } catch {
+        return $null
+    }
+
+    $text = ($output | Out-String)
+    if ($text -notmatch 'TA_PYTHON (\d+) (\d+)') { return $null }
+
+    $major = [int] $Matches[1]
+    $minor = [int] $Matches[2]
+    if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 8)) { return $null }
+    return "$major.$minor"
+}
+
 function Find-Python {
+    # -CommandType Application so a PowerShell alias or function named 'python'
+    # cannot shadow the real interpreter.
     foreach ($candidate in @('python', 'python3', 'py')) {
-        $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
+        $cmd = Get-Command $candidate -CommandType Application -ErrorAction SilentlyContinue |
+               Select-Object -First 1
         if (-not $cmd) { continue }
-        # 'py' needs a version argument; everything else runs directly.
-        $probe = if ($candidate -eq 'py') { @('-3', '-c') } else { @('-c') }
-        & $cmd.Source @probe 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>$null
-        if ($LASTEXITCODE -eq 0) { return @{ Exe = $cmd.Source; Prefix = @(if ($candidate -eq 'py') { '-3' }) } }
+
+        $isPyLauncher = ($candidate -eq 'py')
+        $version = Test-PythonCandidate -Exe $cmd.Source -UsePyLauncher:$isPyLauncher
+        if ($version) {
+            return [pscustomobject]@{
+                Exe = $cmd.Source; UsePyLauncher = $isPyLauncher; Version = $version
+            }
+        }
     }
     return $null
 }
 
-$python = Find-Python
+if ($PythonPath) {
+    if (-not (Test-Path $PythonPath)) {
+        Write-Host "No such file: $PythonPath" -ForegroundColor Red
+        exit 1
+    }
+    $resolved = (Resolve-Path $PythonPath).Path
+    $version = Test-PythonCandidate -Exe $resolved
+    if (-not $version) {
+        Write-Host "$resolved is not a usable Python 3.8+." -ForegroundColor Red
+        exit 1
+    }
+    $python = [pscustomobject]@{ Exe = $resolved; UsePyLauncher = $false; Version = $version }
+} else {
+    $python = Find-Python
+}
+
 if (-not $python) {
     Write-Host "Python 3.8+ is required and was not found." -ForegroundColor Red
     Write-Host ""
     Write-Host "  Install it from https://www.python.org/downloads/"
     Write-Host "  Tick 'Add python.exe to PATH' during setup, then reopen PowerShell."
+    Write-Host ""
+    Write-Host "  If Python IS installed and this still fails, point at it directly:"
+    Write-Host "    .\install.ps1 -PythonPath 'C:\Path\To\python.exe'"
     exit 1
 }
 
-# Join-Path rather than a literal 'tools\ta.py': PowerShell Core also runs on
-# Linux and macOS, where a backslash is not a path separator.
 $taPath = Join-Path -Path 'tools' -ChildPath 'ta.py'
 $taArgs = @($taPath, 'install')
 if ($Database)     { $taArgs += @('--db', $Database) }
@@ -90,5 +165,11 @@ if ($SkipMmaps)    { $taArgs += '--skip-mmaps' }
 if ($Reconfigure)  { $taArgs += '--reconfigure' }
 if ($Yes)          { $taArgs += '--yes' }
 
-& $python.Exe @($python.Prefix + $taArgs)
+# An array passed to a native command is unrolled into separate arguments, so
+# this needs no splatting - which is what went wrong in the probe above.
+if ($python.UsePyLauncher) {
+    & $python.Exe -3 $taArgs
+} else {
+    & $python.Exe $taArgs
+}
 exit $LASTEXITCODE

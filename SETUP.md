@@ -96,6 +96,7 @@ setup and an unattended rebuild. A question whose flag is supplied is not asked.
 | `--skip-mmaps` | `-SkipMmaps` | flag | Defer the multi-hour pathfinding step |
 | `--reconfigure` | `-Reconfigure` | flag | Re-ask everything, overwrite `tools/local.json` |
 | `--yes` / `-y` | `-Yes` | flag | Ask nothing; take defaults for anything not flagged |
+| — | `-PythonPath` | path to `python.exe` | Windows only. Skip interpreter detection when it picks the wrong Python |
 
 Your answers are written to **`tools/local.json`**, which every other `ta.py`
 command reads. It holds your database password, is gitignored, and is the only
@@ -961,6 +962,8 @@ never touches `~/.wine` or any prefix belonging to another game.
 | CMake can't find Boost | `BOOST_ROOT` not set, or PowerShell not reopened after setting it |
 | `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
 | `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+| `install.ps1` : `NativeCommandError` naming Python | interpreter detection tripped over your Python. Point at it directly: `.\install.ps1 -PythonPath 'C:\Path\To\python.exe'` |
+| "Python 3.8+ is required and was not found" but it is installed | `python` may be the Microsoft Store stub. Use `-PythonPath`, or reinstall from python.org ticking *Add python.exe to PATH* |
 | Installer stopped partway | just run it again — it skips whatever already succeeded |
 | `extract` rejects your client path | it wants the folder holding `Wow.exe` and `Data/`, not `Data/` itself |
 | Server starts, database stays empty | no `mysql` client on PATH — see section 0 |
