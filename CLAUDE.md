@@ -72,7 +72,9 @@ Do not re-derive them from memory; if you doubt one, verify it the same way.
 | Granting a spell cascades into its rank chain | **Not for a fresh grant.** Both recursion branches in `learnSpell` require the spell to be *already known*. |
 | Learning or casting is level-gated | **Neither is.** Zero level checks in the entire learn path. `classless_node.required_level` is the only gate that exists. |
 | `AllowableClass` is a plain bitmask | It is a **signed** int where **`-1` means all classes**. Treat as a bitmask only when not `-1`. |
-| Script hooks can grant permissions | **They can only veto.** `CALL_ENABLED_BOOLEAN_HOOKS` returns false if any script says false. Loosening must come from data. |
+| Script hooks can grant permissions | **Boolean hooks can only veto** — `CALL_ENABLED_BOOLEAN_HOOKS` returns false if any script says false. **But `OnPlayerIsClass` is not one of them:** it returns `Optional<bool>`, first script with a value wins, and it may return *true* (`ScriptDefines/PlayerScript.cpp:570`, used by `Player::IsClass`, `Player.cpp:1350`). That is the one documented way to loosen a hardcoded class check without a core edit. See `docs/PHASE3-ITEMIZATION.md §4`. |
+| Class-restricted gear is gated by `AllowableClass` | **The class mask is the weaker of two gates and not the one implementing the design.** Armor proficiency is a *skill* granted by a spell, checked separately (`PlayerStorage.cpp:2339`), and plate is sold only by Warrior and Paladin class trainers — `Trainer::IsTrainerValidForPlayer` compares `getClass()` with no hook. Clear the mask and the ladder still holds. |
+| Cloth chest pieces are `INVTYPE_CHEST` | **They are `INVTYPE_ROBE` (20).** Any query comparing armor classes by slot that filters on 5 alone drops cloth entirely and looks like it worked. |
 
 ---
 
@@ -154,16 +156,22 @@ Coordinate, do not collide:
 | `tools/ta.py` | build / db / run CLI |
 | `tools/gen_trees.py` | generates tree SQL, verifies every spell |
 | `tools/spell_cascade.py` | what does granting this spell drag in? |
+| `tools/audit_items.py` | class restrictions on gear, measured; generates the unlock SQL |
 | `docs/CLASS-RESTRICTIONS.md` | how AzerothCore enforces class rules, with file:line |
 | `docs/ARCHITECTURE.md` | repo model, module rules |
 | `docs/BODY-TYPES.md` | the three body types, final |
 | `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
+| `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
 
 Module SQL goes in `modules/mod-classless/data/sql/db-{world,characters,auth}/`
 and is applied automatically by AzerothCore's updater. The directory name must
 contain `world`, `characters` or `auth` or the migration is silently ignored.
+
+`modules/mod-classless/data/sql-staged/` is deliberately outside that tree: it
+holds generated migrations that are written but must not run until somebody
+decides they should. Promoting one is a `git mv` into `data/sql/db-world/`.
 
 ---
 

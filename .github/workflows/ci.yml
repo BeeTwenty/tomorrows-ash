@@ -293,6 +293,38 @@ jobs:
           print("module SQL layout OK")
           PY
 
+      - name: Staged SQL cannot be applied by accident
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          # sql-staged/ holds generated migrations that are written but must not
+          # run until somebody decides they should. The updater only reads
+          # data/sql/db-*, so the guard is simply that nothing staged has also
+          # been left in the applied tree under the same name - which is what a
+          # half-finished "promote it" looks like.
+          bad = []
+          for name in json.load(open("upstream.json"))["modules"]:
+              staged = pathlib.Path("modules") / name / "data" / "sql-staged"
+              applied = pathlib.Path("modules") / name / "data" / "sql"
+              if not staged.is_dir():
+                  continue
+              if staged.resolve().is_relative_to(applied.resolve()):
+                  bad.append(f"{staged}: inside data/sql, the updater would run it")
+              names = {f.name for f in staged.glob("*.sql")}
+              for f in applied.rglob("*.sql"):
+                  if f.name in names:
+                      bad.append(f"{f}: same filename as a staged migration")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("staged SQL is staged")
+          PY
+
+      - name: The item audit tool is runnable
+        run: |
+          python -c "import ast; ast.parse(open('tools/audit_items.py').read())"
+          python tools/audit_items.py --help > /dev/null
+          echo "audit_items.py OK"
+
       - name: Documentation links resolve
         run: |
           python - <<'PY'
