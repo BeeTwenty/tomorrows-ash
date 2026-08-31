@@ -27,6 +27,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -209,6 +210,56 @@ def mysql_client_hint():
     return "sudo apt install mysql-client (or mariadb-client)"
 
 
+BOOST_MIN_WINDOWS = (1, 78)
+BOOST_MIN_POSIX = (1, 74)
+
+
+def read_boost_version(root):
+    """Parse boost/version.hpp under `root`. Returns (major, minor) or None."""
+    header = Path(root) / "boost" / "version.hpp"
+    if not header.is_file():
+        return None
+    try:
+        text = header.read_text(errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"#define\s+BOOST_VERSION\s+(\d+)", text)
+    if not m:
+        return None
+    raw = int(m.group(1))                 # e.g. 107800 -> 1.78.0
+    return (raw // 100000, (raw // 100) % 1000)
+
+
+def find_boost():
+    """Locate a Boost installation and its version.
+
+    Checks the environment variables AzerothCore and CMake actually honour, in
+    the order they take effect, then the conventional Windows location. Returns
+    (root, (major, minor)) or (None, None).
+
+    `Boost_ROOT` is the spelling deps/boost/CMakeLists.txt reads explicitly on
+    Windows; CMake's own find also accepts BOOST_ROOT and BOOSTROOT.
+    """
+    roots = []
+    for var in ("Boost_ROOT", "BOOST_ROOT", "BOOSTROOT"):
+        value = os.environ.get(var)
+        if value:
+            roots.append((var, value))
+
+    if IS_WINDOWS:
+        for candidate in sorted(Path("C:/local").glob("boost_*"), reverse=True):
+            roots.append(("C:/local", str(candidate)))
+    else:
+        for candidate in ("/usr/include", "/usr/local/include", "/opt/homebrew/include"):
+            roots.append(("system", candidate))
+
+    for source, root in roots:
+        version = read_boost_version(root)
+        if version:
+            return (root, version, source)
+    return (None, None, None)
+
+
 def cmd_doctor(args):
     cfg = load_local()
     up = load_upstream()
@@ -254,8 +305,42 @@ def cmd_doctor(args):
 
     check("docker", "needed for `ta.py db up`; skip if you run MySQL natively", required=False)
 
+    # Boost is the dependency that most often stops a Windows build, and it
+    # does so only at cmake configure time - after the fetch, and after the
+    # operator has waited. Check it here, where it costs a second.
+    boost_root, boost_version, boost_source = find_boost()
+    boost_min = BOOST_MIN_WINDOWS if IS_WINDOWS else BOOST_MIN_POSIX
+    if boost_version and boost_version >= boost_min:
+        ok(f"{'boost':<10} {boost_version[0]}.{boost_version[1]} at {boost_root}")
+    elif boost_version:
+        problems.append(
+            f"Boost {boost_version[0]}.{boost_version[1]} is too old; "
+            f"{boost_min[0]}.{boost_min[1]}+ is required")
+        print(f"{c('  XX', 'red')} {'boost':<10} {boost_version[0]}.{boost_version[1]} at {boost_root} "
+              f"- too old, need {boost_min[0]}.{boost_min[1]}+")
+        if boost_source in ("Boost_ROOT", "BOOST_ROOT", "BOOSTROOT"):
+            print(f"             (found via the {boost_source} environment variable)")
+        else:
+            print(f"             (found by searching {boost_source})")
+    else:
+        problems.append(f"Boost {boost_min[0]}.{boost_min[1]}+ not found")
+        print(f"{c('  XX', 'red')} {'boost':<10} not found - need {boost_min[0]}.{boost_min[1]}+")
+        if IS_WINDOWS:
+            print("             Install the prebuilt msvc-14.3 binaries, then set")
+            print("             Boost_ROOT to the install folder and reopen PowerShell.")
+        else:
+            print("             sudo apt install libboost-all-dev")
+
     if IS_WINDOWS:
         warn("On Windows the compiler comes from Visual Studio 2022 - see SETUP.md section 3")
+        openssl_roots = [Path(r"C:/Program Files/OpenSSL-Win64"),
+                         Path(r"C:/Program Files/OpenSSL"),
+                         Path(r"C:/OpenSSL-Win64")]
+        found_ssl = next((r for r in openssl_roots if r.is_dir()), None)
+        if found_ssl:
+            ok(f"{'openssl':<10} {found_ssl}")
+        else:
+            warn(f"{'openssl':<10} not found in the usual places - see SETUP.md section 3")
     else:
         check("make", "apt install build-essential", required=False)
         check("ninja", "apt install ninja-build (optional, faster)", required=False)

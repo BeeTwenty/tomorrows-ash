@@ -209,15 +209,32 @@ Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
    **Desktop development with C++**.
 2. **CMake** — during install choose *Add CMake to the system PATH*.
 3. **Git for Windows**, **Python 3** (tick *Add python.exe to PATH*).
-4. **Boost** — download the prebuilt `boost_1_8x_0-msvc-14.3-64.exe` from
+4. **Boost — 1.78 or newer.** This is the most common cause of a failed
+   Windows configure, and the version matters: AzerothCore requires **1.78+ on
+   Windows** (`deps/boost/CMakeLists.txt`). An older Boost that happens to be
+   installed will be found and rejected.
+
+   Download the prebuilt `boost_1_8x_0-msvc-14.3-64.exe` from
    [Boost binaries](https://sourceforge.net/projects/boost/files/boost-binaries/)
-   and install to e.g. `C:\local\boost_1_86_0`. Then set a system environment
-   variable:
+   — pick a **1.8x** build, matching **msvc-14.3** (Visual Studio 2022) and
+   **-64**. Install to e.g. `C:\local\boost_1_86_0`, then set a system
+   environment variable:
    ```
-   BOOST_ROOT = C:\local\boost_1_86_0
+   Boost_ROOT = C:\local\boost_1_86_0
    ```
+   **That exact spelling.** `deps/boost/CMakeLists.txt` reads `Boost_ROOT`
+   specifically; CMake also accepts `BOOST_ROOT` and `BOOSTROOT`, but
+   `Boost_ROOT` is the one the project itself honours.
+
    (Windows Search → "Edit the system environment variables" → Environment
    Variables → New, under *System variables*. **Reopen PowerShell afterwards.**)
+
+   `python tools\ta.py doctor` reports the version it finds and where it came
+   from, so check that before starting a build.
+
+   > **If you already have an older Boost** — say `C:\local\boost_1_66_0` —
+   > installing a newer one is not enough on its own: point `Boost_ROOT` at the
+   > new folder, or the old one may still be found first.
 5. **OpenSSL** — Win64 OpenSSL **v3.x** (not Light, not v1.x) from
    [slproweb](https://slproweb.com/products/Win32OpenSSL.html).
 6. **MySQL Server 8.x** — the MySQL Installer. Remember the root password; its
@@ -959,7 +976,9 @@ never touches `~/.wine` or any prefix belonging to another game.
 | Symptom | Cause / fix |
 |---|---|
 | `no C++ compiler` from `doctor` | Linux: `apt install build-essential`. Windows: VS 2022 with the C++ workload |
-| CMake can't find Boost | `BOOST_ROOT` not set, or PowerShell not reopened after setting it |
+| CMake can't find Boost | `Boost_ROOT` not set, or PowerShell not reopened after setting it |
+| `Could NOT find Boost: Found unsuitable version "1.66.0", but required is at least "1.78"` | an older Boost is installed and being found. Install 1.8x and point `Boost_ROOT` at **that** folder |
+| `Policy CMP0167 is not set: The FindBoost module is removed` | harmless warning from CMake 4.x; the build is unaffected |
 | `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
 | `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | `install.ps1` : `NativeCommandError` naming Python | interpreter detection tripped over your Python. Point at it directly: `.\install.ps1 -PythonPath 'C:\Path\To\python.exe'` |
