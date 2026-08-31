@@ -107,6 +107,9 @@ jobs:
           print(f"SETUP.md documents all {len(flags)} flags and {len(params)} PowerShell parameters")
           PY
 
+      - name: Character creation is limited to the three body types
+        run: python tools/tests/test_body_types.py
+
       - name: Installer choice logic
         run: |
           # The installer's answers become the realm's configuration, so a bug

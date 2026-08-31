@@ -835,6 +835,50 @@ VALUES
 # server configuration
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# body types
+#
+# Three body types, each built on a stock class (docs/BODY-TYPES.md 2). Every
+# other class is refused at character creation.
+#
+# The lever is CharacterCreating.Disabled.ClassMask in worldserver.conf, NOT
+# deleting playercreateinfo rows. Both stop creation, but they fail at
+# different points and only one of them fails politely:
+#
+#   classmask       -> WorldSession::HandleCharCreateOpcode (CharacterHandler.cpp:346)
+#                      returns CHAR_CREATE_DISABLED, which the client shows as a
+#                      real message. Config, so it is reversible without a
+#                      migration and survives a world database re-import.
+#   delete the rows -> Player::Create finds no PlayerInfo, returns false, and
+#                      logs "Possible hacking-attempt" for every honest player
+#                      who picked a hidden class. The client just says failed.
+#
+# Neither one removes anything from the creation SCREEN. In 3.3.5a that list is
+# drawn from the client's own CharBaseInfo.dbc and ChrClasses.dbc; there is no
+# opcode for it (Opcodes.h has only CMSG/SMSG_CHAR_CREATE, a request and its
+# answer). Hiding or renaming needs a client patch - the launcher's job.
+# --------------------------------------------------------------------------
+
+# Body type -> the class id it is built on.
+BODY_TYPE_CLASSES = {"Vanguard": 2, "Skirmisher": 7, "Adept": 8}
+
+# Bit 512 is unused in 3.3.5, which is why "all classes" is 1535 and not 2047.
+CLASSMASK_ALL_PLAYABLE = 1535
+
+
+def body_type_classmask():
+    """Bits for the classes a body type is built on."""
+    mask = 0
+    for class_id in BODY_TYPE_CLASSES.values():
+        mask |= 1 << (class_id - 1)
+    return mask
+
+
+def disabled_classmask():
+    """Value for CharacterCreating.Disabled.ClassMask: everything else."""
+    return CLASSMASK_ALL_PLAYABLE & ~body_type_classmask()
+
+
 CONF_TEMPLATES = ["authserver", "worldserver"]
 
 
@@ -854,6 +898,9 @@ def cmd_conf(args):
         "CharacterDatabaseInfo": conn_char,
         "DataDir": str((REPO / "data" / "client").as_posix()),
         "SourceDirectory": str(acore_dir().as_posix()),
+        # Quoting is fine for a number: Config.cpp:327 strips every '"' from a
+        # value before parsing it.
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
     }
 
     # AzerothCore's built-in SQL updater shells out to the `mysql` client to
@@ -903,6 +950,13 @@ def cmd_conf(args):
                 shutil.copy2(src, target)
             ok(f"module config {src.name} -> etc/modules/")
 
+    print()
+    print(f"     Character creation is limited to the three body types:")
+    for name, class_id in BODY_TYPE_CLASSES.items():
+        print(f"       {name:<11} = class {class_id}")
+    print(f"     CharacterCreating.Disabled.ClassMask = {disabled_classmask()} refuses the rest.")
+    print(f"     The client still SHOWS all ten - that list is in its own DBCs,")
+    print(f"     not something the server sends. See docs/BODY-TYPES.md section 4.")
     print()
     print(f"     Realm name lives in the DATABASE, not these files.")
     print(f"     Run `python3 tools/ta.py db realm` to set it to '{cfg['realm_name']}'.")

@@ -400,6 +400,12 @@ nothing about the gear ladder.
 
 ## 9. Playtest checklist
 
+**Create a Draenei.** Body types are built on real classes, and Draenei is the
+only race that can be all three — see [BODY-TYPES.md §4](BODY-TYPES.md). Any
+other race gives you one or two of them, and Night Elf gives you none. The
+client will still list all ten classes; the seven that are not body types are
+refused on submit.
+
 Once there is a client, in this order:
 
 1. A **Skirmisher** at 40 visits a Paladin trainer → should not be offered

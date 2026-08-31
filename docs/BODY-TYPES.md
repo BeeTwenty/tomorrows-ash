@@ -157,13 +157,101 @@ be checked against this rule before authoring.
 
 ## 4. Character creation
 
-Three options. The other seven classes are removed from `playercreateinfo`.
+**Corrected 2026-08-31.** This section previously said "the other seven classes
+are removed from `playercreateinfo`". That was wrong twice over: it names the
+worse of the two server-side levers, and it implies something the server cannot
+do at all. Neither had been implemented. What follows is what the core actually
+supports, verified against it.
 
-Three keeps the menu comprehensible and the balance surface small enough for one
-person to actually tune. A fourth later is a data change, not a rework.
+### What stops the other seven classes
+
+```ini
+# worldserver.conf
+CharacterCreating.Disabled.ClassMask = 1341
+```
+
+1341 is every playable class except Paladin (2), Shaman (64) and Mage (128):
+1535 − 194. `ta.py conf` computes and writes it from `BODY_TYPE_CLASSES` in
+`tools/ta.py`, so the number has one source, and
+`tools/tests/test_body_types.py` re-runs the core's own expression over all ten
+classes rather than restating the number.
+
+The check is `WorldSession::HandleCharCreateOpcode`
+(`CharacterHandler.cpp:346`):
+
+```cpp
+uint32 classMaskDisabled = sWorld->getIntConfig(CONFIG_CHARACTER_CREATING_DISABLED_CLASSMASK);
+if ((1 << (createInfo->Class - 1)) & classMaskDisabled)
+    SendCharCreate(CHAR_CREATE_DISABLED);
+```
+
+**Deleting `playercreateinfo` rows would also stop creation, and is the wrong
+way to do it.** `Player::Create` would find no `PlayerInfo`, return false, and
+log `Possible hacking-attempt: Account N tried creating a character ... with an
+invalid race/class pair` — for every honest player who picked a class the menu
+still offers them. The config path returns a real "disabled" response instead,
+is reversible without a migration, and survives a world database re-import.
+The rows stay.
+
+### What the server cannot do: the menu
+
+**The creation screen still lists all ten classes, and nothing server-side
+changes that.** In 3.3.5a the class list, the race/class combinations and the
+class *names* are all read from the client's own `CharBaseInfo.dbc` and
+`ChrClasses.dbc`. There is no opcode that sends them — `Opcodes.h` has only
+`CMSG_CHAR_CREATE` and `SMSG_CHAR_CREATE`, a request and its answer.
+
+So on a stock client the experience is: pick Warrior, get told character
+creation is disabled for that class. That is honest but poor, and there is
+exactly one fix:
+
+| Want | Needs |
+|---|---|
+| Refuse the seven classes | server config — **done** |
+| Hide them from the menu | client patch: `CharBaseInfo.dbc` |
+| Show "Vanguard" instead of "Paladin" | client patch: `ChrClasses.dbc` |
+| New race/body-type combinations (below) | client patch: `CharBaseInfo.dbc` |
+
+That patch is the launcher's job — our own content, distributed by us, which is
+[ADR 0005](decisions/0005-client-distribution.md) rule 1 territory rather than
+anything reconstructed from Blizzard files. Until it exists the realm is
+playable but the menu lies about what it will accept.
+
+### The race problem, which nobody had noticed
+
+Body types are built on real classes, and real classes are not available to
+every race. Measured on the world database:
+
+| Races | Body types available |
+|---|---|
+| Draenei | **all three** |
+| Human, Troll, Blood Elf | two |
+| Orc, Dwarf, Undead, Tauren, Gnome | one |
+| **Night Elf** | **none** |
+
+A Night Elf can be neither Paladin, Shaman nor Mage, so on this realm a Night
+Elf cannot be created at all. Most other races are locked to one body type,
+which quietly makes race the real character choice and body type a consequence
+of it — the opposite of the design.
+
+**Only Draenei can currently make all three**, which is what the Phase 3
+playtest should use.
+
+Two ways out, both open questions rather than decisions:
+
+1. **Add the missing rows to `playercreateinfo`** so every race can be every
+   body type — data-only on the server, but invisible until the client patch
+   above ships, since the menu will not offer combinations `CharBaseInfo.dbc`
+   does not list. Also needs a starting position and starting kit per new
+   pair.
+2. **Accept it**, and treat race as part of the body-type choice. Cheap, but
+   Night Elf has to go, and the spread stays lopsided.
+
+Three body types keeps the menu comprehensible and the balance surface small
+enough for one person to tune. A fourth later is a data change, not a rework.
 
 Names — Vanguard / Skirmisher / Adept — are placeholders; say the word if you
-want different ones.
+want different ones. Note that changing them is a client patch too.
 
 ---
 

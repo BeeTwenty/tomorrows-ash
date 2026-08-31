@@ -59,6 +59,20 @@ while those await sign-off.
 - [x] Blizzard talent suppression wired (still defaulted off)
 - [x] **Body-type stat deltas approved** — three body types, armor proficiency
       locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
+- [ ] **…but not applied.** `player_class_stats` on the realm is still stock:
+      class 8 at level 80 reads Str 36 / Sta 59 / Int 181, not the approved
+      Adept 55 / 110 / 190. Approving the numbers and writing the migration
+      were treated as one step and only the first happened. The three body
+      types are currently numerically identical to stock Paladin / Shaman /
+      Mage. **Does not block the Phase 3 playtest** — none of its checks depend
+      on base stats — but it does block any judgement about how a body type
+      *feels*.
+- [x] **Character creation limited to the three body types** —
+      `CharacterCreating.Disabled.ClassMask = 1341`, written by `ta.py conf`
+      and checked by `tools/tests/test_body_types.py`. The seven other classes
+      are refused. They are still **listed** by the client, which reads that
+      menu from its own DBCs; hiding or renaming them needs a client patch.
+      See [BODY-TYPES.md §4](BODY-TYPES.md).
 - [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
       level 80, inside the approved 30–50% band). Every spell verified against
       the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
