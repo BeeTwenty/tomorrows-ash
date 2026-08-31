@@ -477,6 +477,46 @@ def cmd_sync(args):
 # configure / build
 # --------------------------------------------------------------------------
 
+def stale_cache_entries(bdir):
+    """Cached PATH/FILEPATH entries that point at something no longer on disk.
+
+    CMake's cache wins over the environment: once a failed configure has stored
+    Boost_INCLUDE_DIR=C:/local/boost_1_66_0, uninstalling that Boost and setting
+    Boost_ROOT at a newer one changes nothing - the next configure re-reads the
+    dead path, fails to parse a version out of the missing headers and reports
+    the nonsense 'Found unsuitable version "0.0.0"'. Detect that and say so
+    instead of letting an operator chase an environment variable that was
+    already correct.
+
+    Returns a list of (variable, value) pairs.
+    """
+    cache = bdir / "CMakeCache.txt"
+    if not cache.exists():
+        return []
+    stale = []
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"^([A-Za-z0-9_\-\.]+):(PATH|FILEPATH)=(.*)$", line.strip())
+        if not m:
+            continue
+        var, value = m.group(1), m.group(3).strip()
+        if not value or value.endswith("NOTFOUND"):
+            continue
+        if not Path(value).is_absolute():
+            continue
+        if not Path(value).exists():
+            stale.append((var, value))
+    return stale
+
+
+def clear_cmake_cache(bdir, why):
+    """Remove the cache so the next configure re-discovers everything."""
+    cache = bdir / "CMakeCache.txt"
+    if cache.exists():
+        cache.unlink()
+    shutil.rmtree(bdir / "CMakeFiles", ignore_errors=True)
+    warn(f"cleared the CMake cache in {bdir} - {why}")
+
+
 def cmd_configure(args):
     cfg = load_local()
     need("cmake", "install CMake 3.16+")
@@ -487,6 +527,17 @@ def cmd_configure(args):
 
     bdir = build_dir()
     bdir.mkdir(parents=True, exist_ok=True)
+
+    if args.clean:
+        clear_cmake_cache(bdir, "--clean was given")
+    else:
+        stale = stale_cache_entries(bdir)
+        if stale:
+            for var, value in stale[:6]:
+                warn(f"  cached {var} points at {value}, which no longer exists")
+            if len(stale) > 6:
+                warn(f"  ...and {len(stale) - 6} more")
+            clear_cmake_cache(bdir, "it referenced paths that are gone")
 
     cmake = [
         "cmake", str(core),
@@ -1227,7 +1278,8 @@ def cmd_install(args):
             cmd_configure(argparse.Namespace(
                 build_type=build_type,
                 tools="all" if want_tools else "none",
-                generator=args.generator))
+                generator=args.generator,
+                clean=False))
             cmd_build(argparse.Namespace(jobs=args.jobs))
 
     # 5 -----------------------------------------------------------------
@@ -2474,6 +2526,8 @@ def main():
     p.add_argument("--build-type", help="Release (default) / RelWithDebInfo / Debug")
     p.add_argument("--tools", help="TOOLS_BUILD: all (default) / none / maps-only / db-only")
     p.add_argument("--generator", help="explicit CMake generator, e.g. \"Visual Studio 17 2022\"")
+    p.add_argument("--clean", action="store_true",
+                   help="discard the CMake cache before configuring")
     p.set_defaults(func=cmd_configure)
 
     p = sub.add_parser("build", help="compile the server")

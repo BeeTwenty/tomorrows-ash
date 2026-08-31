@@ -222,9 +222,10 @@ Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
    ```
    Boost_ROOT = C:\local\boost_1_86_0
    ```
-   **That exact spelling.** `deps/boost/CMakeLists.txt` reads `Boost_ROOT`
-   specifically; CMake also accepts `BOOST_ROOT` and `BOOSTROOT`, but
-   `Boost_ROOT` is the one the project itself honours.
+   `deps/boost/CMakeLists.txt` reads `Boost_ROOT`; CMake itself also accepts
+   `BOOST_ROOT` and `BOOSTROOT`. Windows environment variable names are
+   case-insensitive, so `BOOST_ROOT` works there too — on Linux and macOS the
+   capitalisation matters, so prefer `Boost_ROOT` everywhere.
 
    (Windows Search → "Edit the system environment variables" → Environment
    Variables → New, under *System variables*. **Reopen PowerShell afterwards.**)
@@ -234,7 +235,11 @@ Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
 
    > **If you already have an older Boost** — say `C:\local\boost_1_66_0` —
    > installing a newer one is not enough on its own: point `Boost_ROOT` at the
-   > new folder, or the old one may still be found first.
+   > new folder, or the old one may still be found first. And if a configure
+   > already failed against the old Boost, the answer is cached: CMake stores
+   > the include directory it found and re-reads it next time, ignoring the
+   > environment. `ta.py configure` now detects a cache whose paths have
+   > vanished and clears it for you; `--clean` forces it.
 5. **OpenSSL** — Win64 OpenSSL **v3.x** (not Light, not v1.x) from
    [slproweb](https://slproweb.com/products/Win32OpenSSL.html).
 6. **MySQL Server 8.x** — the MySQL Installer. Remember the root password; its
@@ -978,6 +983,7 @@ never touches `~/.wine` or any prefix belonging to another game.
 | `no C++ compiler` from `doctor` | Linux: `apt install build-essential`. Windows: VS 2022 with the C++ workload |
 | CMake can't find Boost | `Boost_ROOT` not set, or PowerShell not reopened after setting it |
 | `Could NOT find Boost: Found unsuitable version "1.66.0", but required is at least "1.78"` | an older Boost is installed and being found. Install 1.8x and point `Boost_ROOT` at **that** folder |
+| `Could NOT find Boost: Found unsuitable version "0.0.0" ... (found C:/local/boost_1_66_0, )` | a stale `build/CMakeCache.txt` from an earlier failed configure — it still points at a Boost you removed, so no version can be read out of it. Re-run `ta.py configure` (it clears a cache with dead paths), or force it with `python tools\ta.py configure --clean` |
 | `Policy CMP0167 is not set: The FindBoost module is removed` | harmless warning from CMake 4.x; the build is unaffected |
 | `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
 | `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |

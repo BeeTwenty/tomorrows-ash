@@ -113,6 +113,49 @@ except ta.Fail as exc:
 except StopIteration:
     fails.append("dead Docker daemon: asked more questions than expected")
 
+# --- 8. a CMake cache pointing at an uninstalled dependency is spotted ---
+# This is the Boost 1.66 -> 1.86 failure: the operator uninstalls the old Boost
+# and repoints Boost_ROOT, but the cache still holds the dead include dir, so
+# cmake re-reads it and reports `Found unsuitable version "0.0.0"` about a
+# directory that is not there any more. The environment was never the problem.
+import tempfile
+from pathlib import Path
+
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp)
+    bdir = base / "build"
+    (bdir / "CMakeFiles").mkdir(parents=True)
+    (bdir / "CMakeCache.txt").write_text(
+        f"CMAKE_INSTALL_PREFIX:PATH={base}\n"
+        f"Boost_INCLUDE_DIR:PATH={base / 'boost_1_66_0'}\n"
+        "Boost_LIBRARY_DIR_RELEASE:PATH=Boost_LIBRARY_DIR_RELEASE-NOTFOUND\n"
+        "SOME_RELATIVE:PATH=subdir\n"
+        "CMAKE_BUILD_TYPE:STRING=Release\n", encoding="utf-8")
+
+    names = [v for v, _ in ta.stale_cache_entries(bdir)]
+    if names != ["Boost_INCLUDE_DIR"]:
+        fails.append(f"stale cache detection returned {names}, expected only Boost_INCLUDE_DIR")
+    else:
+        print("8. stale cmake cache    -> the dead Boost path found, NOTFOUND/relative ignored")
+
+    ta.clear_cmake_cache(bdir, "test")
+    if (bdir / "CMakeCache.txt").exists() or (bdir / "CMakeFiles").exists():
+        fails.append("clear_cmake_cache left the cache behind")
+    else:
+        print("9. clearing the cache   -> CMakeCache.txt and CMakeFiles/ removed")
+
+# --- 10. a healthy cache is never touched ---
+with tempfile.TemporaryDirectory() as tmp:
+    base = Path(tmp)
+    bdir = base / "build"
+    bdir.mkdir()
+    (bdir / "CMakeCache.txt").write_text(
+        f"Boost_INCLUDE_DIR:PATH={base}\n", encoding="utf-8")
+    if ta.stale_cache_entries(bdir):
+        fails.append("a cache whose paths all exist was reported stale")
+    else:
+        print("10. healthy cache       -> left alone")
+
 print()
 print("FAILURES:" if fails else "all choice tests passed")
 for f in fails: print("  -", f)
