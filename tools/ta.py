@@ -1932,6 +1932,8 @@ def cmd_play(args):
 
     if args.action == "doctor":
         return play_doctor(args, cfg)
+    if args.action == "provision":
+        return play_provision(args, cfg)
     if args.action == "verify":
         return play_verify(args, cfg)
     if args.action == "config":
@@ -1965,11 +1967,24 @@ def play_doctor(args, cfg):
         ok("Windows - the client runs natively")
     else:
         runtimes = find_runtimes()
-        if runtimes:
+        if not runtimes:
+            warn("no Wine or Proton found. `sudo apt install wine64`, or install Proton via Steam.")
+            warn("Everything after that, `play provision` does for you.")
+        else:
             for runtime in runtimes:
                 ok(f"{runtime['name']} - {runtime['program']}")
-        else:
-            warn("no Wine or Proton found. `sudo apt install wine64`, or install Proton via Steam.")
+
+            prefix = Path(cfg.get("wine_prefix") or (Path.home() / ".local/share/ashmorrow/prefix"))
+            windows_dir = prefix / "drive_c" / "windows"
+            # A prefix with no DXVK starts the game and shows a black window,
+            # which is a worse outcome than not starting it.
+            ready = ((windows_dir / "syswow64" / "d3d9.dll").is_file()
+                     or (windows_dir / "system32" / "d3d9.dll").is_file())
+            if ready:
+                ok(f"prefix provisioned: {prefix}")
+            else:
+                warn(f"prefix not set up yet: {prefix}")
+                warn("  python3 tools/ta.py play provision")
 
     info("Realm")
     ok(f"realmlist would be set to: {cfg['realm_address']}")
@@ -2025,6 +2040,139 @@ def play_verify(args, cfg):
         warn("some files differ from the build we measured. That does not mean your client "
              "is broken - it means it is not the copy we hashed.")
     return 0
+
+
+def play_provision(args, cfg):
+    """
+    Create the Wine prefix and install what the game needs to run in it.
+
+    Mirrors launcher_core::app::provision_runtime. Wine itself still belongs to
+    your package manager - a tool that installs system packages behind your
+    back has overstepped - but everything after that is ours to do.
+    """
+    if IS_WINDOWS:
+        ok("Windows runs the client natively - nothing to set up.")
+        return 0
+
+    runtimes = find_runtimes()
+    if not runtimes:
+        die("no Wine or Proton found. Install Wine from your distribution, or Proton "
+            "through Steam. Everything after that, this does for you.")
+
+    wanted = args.runtime or cfg.get("runtime_name")
+    runtime = next((r for r in runtimes if r["name"] == wanted), runtimes[0])
+    prefix = Path(cfg.get("wine_prefix") or (Path.home() / ".local/share/ashmorrow/prefix"))
+    info(f"{runtime['name']} -> {prefix}")
+
+    env = {"WINEDEBUG": "-all"}
+    if runtime["kind"] == "proton":
+        if not runtime["steam_root"]:
+            die("Proton needs to know where Steam is installed")
+        env["STEAM_COMPAT_DATA_PATH"] = str(prefix)
+        env["STEAM_COMPAT_CLIENT_INSTALL_PATH"] = str(runtime["steam_root"])
+        boot = [runtime["program"], "run", "wineboot", "-u"]
+    else:
+        env["WINEPREFIX"] = str(prefix)
+        boot = [runtime["program"], "wineboot", "-u"]
+
+    prefix.mkdir(parents=True, exist_ok=True)
+
+    # `wineboot -u` is safe against a prefix that already exists, so this is
+    # also the repair path.
+    info("creating the Wine prefix")
+    if not args.dry_run:
+        run(boot, env=env)
+    ok(f"prefix at {prefix}")
+
+    manifest_path = REPO / "launcher" / "manifests" / "ashmorrow.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        die(f"{manifest_path}: {exc}")
+
+    components = manifest.get("runtime", [])
+    if not components:
+        ok("nothing else to install")
+        return 0
+
+    system32 = prefix / "drive_c" / "windows" / "system32"
+    syswow64 = prefix / "drive_c" / "windows" / "syswow64"
+    # Where a 32-bit DLL belongs depends on the prefix architecture, and getting
+    # it wrong is the classic "DXVK did nothing" bug.
+    target = syswow64 if syswow64.is_dir() else system32
+
+    installed_any = False
+    for component in components:
+        if component.get("kind") != "dxvk":
+            warn(f"{component.get('id')}: unknown kind {component.get('kind')!r}, skipped")
+            continue
+        if (target / "d3d9.dll").is_file():
+            ok(f"{component['id']} already installed")
+            continue
+        if args.dry_run:
+            info(f"would download {component['id']} {component['version']} from {component['url']}")
+            continue
+        install_dxvk(component, target)
+        installed_any = True
+
+    if installed_any and not args.dry_run:
+        reg = prefix / "ashmorrow-overrides.reg"
+        reg.write_text('REGEDIT4\n\n[HKEY_CURRENT_USER\\Software\\Wine\\DllOverrides]\n'
+                       '"d3d9"="native,builtin"\n', encoding="ascii")
+        info("telling Wine to prefer the installed DLLs")
+        regedit = [runtime["program"]] + (["run"] if runtime["kind"] == "proton" else []) + \
+                  ["regedit", str(reg)]
+        run(regedit, env=env)
+        ok("DLL override set")
+
+    return 0
+
+
+def install_dxvk(component, target):
+    """Fetch a DXVK release, check it against the manifest, unpack the 32-bit DLL."""
+    import hashlib
+    import io
+    import tarfile
+    import urllib.request
+
+    url = component["url"]
+    if not url.startswith("https://"):
+        die(f"{component['id']}: refusing to fetch {url} over plain HTTP")
+
+    info(f"downloading {component['id']} {component['version']} ({component['size']:,} bytes)")
+    with urllib.request.urlopen(url, timeout=120) as response:
+        blob = response.read()
+
+    if len(blob) != component["size"]:
+        die(f"{component['id']} is {len(blob)} bytes, the manifest says {component['size']}. "
+            "Nothing was written.")
+
+    # BLAKE3 is not in the standard library, so the CLI verifies size and the
+    # SHA-256 of what it got is printed for a human to compare. The GUI
+    # launcher checks the manifest's BLAKE3 properly.
+    digest = hashlib.sha256(blob).hexdigest()
+    info(f"sha256 {digest}")
+
+    target.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz") as archive:
+        for member in archive.getmembers():
+            parts = Path(member.name).parts
+            if len(parts) < 2 or parts[-2] != "x32" or parts[-1] != "d3d9.dll":
+                continue
+            source = archive.extractfile(member)
+            if source is None:
+                continue
+            # Write beside and rename: an interrupted install must not leave a
+            # half-written DLL that Wine will happily try to load.
+            temporary = target / "d3d9.dll.ashmorrow-part"
+            temporary.write_bytes(source.read())
+            temporary.replace(target / "d3d9.dll")
+            written += 1
+
+    if not written:
+        die(f"{component['id']}: no 32-bit d3d9.dll in the archive - is it a DXVK release?")
+    ok(f"{component['id']} -> {target / 'd3d9.dll'}")
 
 
 def play_config(args, cfg):
@@ -2197,14 +2345,14 @@ def main():
     p.set_defaults(func=cmd_web)
 
     p = sub.add_parser("play", help="point your own 3.3.5a client at the realm and start it")
-    p.add_argument("action", choices=["doctor", "verify", "config", "run"])
+    p.add_argument("action", choices=["doctor", "verify", "provision", "config", "run"])
     p.add_argument("--client", help="path to your WoW 3.3.5a client "
                                     "(or set client_path in tools/local.json)")
     p.add_argument("--address", help="realm address to write, overriding realm_address")
     p.add_argument("--account", help="pre-fill this account name on the login screen")
     p.add_argument("--runtime", help="run: name of the Wine or Proton runtime to use")
     p.add_argument("--dry-run", action="store_true",
-                   help="run: print the command without starting the game")
+                   help="run / provision: say what would happen, change nothing")
     p.set_defaults(func=cmd_play)
 
     args = parser.parse_args()

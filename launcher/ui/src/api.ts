@@ -28,6 +28,13 @@ export async function onProgress(handler: (p: Progress) => void): Promise<void> 
   await listen<Progress>("verify:progress", (event) => handler(event.payload));
 }
 
+/** Provisioning has no percentage worth showing, so it narrates instead. */
+export async function onStep(handler: (step: string) => void): Promise<void> {
+  if (!inTauri) return;
+  const { listen } = await import("@tauri-apps/api/event");
+  await listen<string>("provision:step", (event) => handler(event.payload));
+}
+
 export const api = {
   status: () => (inTauri ? call<Status>("status") : demo.status()),
   refresh: () => (inTauri ? call<Status>("refresh") : demo.status()),
@@ -37,6 +44,8 @@ export const api = {
   ledger: () => (inTauri ? call<Report | null>("ledger") : demo.ledger()),
   applyConfig: () => (inTauri ? call<string[]>("apply_config") : demo.written()),
   installPatches: () => (inTauri ? call<string[]>("install_patches") : demo.written()),
+  provisionRuntime: () =>
+    inTauri ? call<string[]>("provision_runtime") : demo.provisionRuntime(),
   login: (username: string, password: string) =>
     inTauri ? call<Account>("login", { username, password }) : demo.login(username),
   runtimes: () => (inTauri ? call<Runtime[]>("runtimes") : demo.runtimes()),
@@ -54,6 +63,7 @@ export const api = {
 
 let chosen = true;
 let verified = true;
+let provisioned = false;
 
 const demoReport: Report = {
   files: [
@@ -129,9 +139,17 @@ const demo = {
         { key: "REALMLIST", value: "set realmlist play.ashmorrow.example", state: "ok", detail: "" },
         { key: "PATCH", value: "none required", state: "ok", detail: "" },
         { key: "ACCOUNT", value: "sindre · 2 characters", state: "ok", detail: "" },
+        {
+          key: "RUNTIME",
+          value: provisioned ? "Wine (system) · ready" : "Wine (system) · not set up yet",
+          state: provisioned ? "ok" : "warn",
+          detail: provisioned
+            ? ""
+            : "the launcher will create a Wine prefix and install DXVK into it",
+        },
       ],
-      action: verified ? "LAUNCH" : "VERIFY",
-      can_launch: true,
+      action: !verified ? "VERIFY" : !provisioned ? "SET UP RUNTIME" : "LAUNCH",
+      can_launch: provisioned,
       blocked_because: "",
     };
   },
@@ -146,6 +164,10 @@ const demo = {
   },
   async ledger(): Promise<Report | null> {
     return verified ? demoReport : null;
+  },
+  async provisionRuntime(): Promise<string[]> {
+    provisioned = true;
+    return ["prefix at /home/player/.local/share/ashmorrow/prefix", "dxvk 2.4.1 (1 files)"];
   },
   async written(): Promise<string[]> {
     return ["/home/player/games/wow-335a/Data/enUS/realmlist.wtf"];

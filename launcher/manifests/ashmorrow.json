@@ -34,6 +34,29 @@
     "files": []
   },
   "patches": [],
+  "$comment_runtime": [
+    "Free software the launcher installs into its own Wine prefix so a Linux",
+    "player does not have to assemble a runtime by hand. Not ours and not",
+    "Blizzard's - DXVK is zlib-licensed and freely redistributable, which is",
+    "what separates this from a client file.",
+    "",
+    "The size and hash below were measured from the release itself and the",
+    "archive was installed into both a 32- and a 64-bit prefix by",
+    "launcher/core/tests/real_dxvk.rs. To move to a new DXVK version, run that",
+    "test against the new tarball; it prints the size and hash to paste here."
+  ],
+  "runtime": [
+    {
+      "id": "dxvk",
+      "kind": "dxvk",
+      "version": "2.7.1",
+      "size": 10310666,
+      "hash": "5b03e26c028ae0d3494beeba85314a3613cdb416834e053d37ebbd7dad8f5fe1",
+      "url": "https://github.com/doitsujin/dxvk/releases/download/v2.7.1/dxvk-2.7.1.tar.gz",
+      "licence": "Zlib",
+      "summary": "Direct3D 9 over Vulkan. Without it a 2010 D3D9 game under Wine is slow, or a black window."
+    }
+  ],
   "launcher": {
     "minimum_version": "0.1.0",
     "latest_version": "0.1.0"

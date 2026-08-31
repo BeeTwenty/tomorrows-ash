@@ -26,6 +26,10 @@ pub struct Manifest {
     pub client: ClientSpec,
     #[serde(default)]
     pub patches: Vec<Patch>,
+    /// Free software the launcher installs into its own Wine prefix so that
+    /// a Linux player does not have to assemble a runtime by hand.
+    #[serde(default)]
+    pub runtime: Vec<RuntimeComponent>,
     #[serde(default)]
     pub launcher: LauncherSpec,
 }
@@ -91,6 +95,40 @@ pub struct Patch {
     pub summary: String,
 }
 
+/// A piece of free software the launcher installs so the game will run.
+///
+/// Wine and DXVK are not ours and not Blizzard's — they are third-party free
+/// software we are entitled to fetch and redistribute, which is what separates
+/// this from a [`ClientFile`]. The same two invariants as [`Patch`] hold: an
+/// `https` URL and a hash checked before anything is written.
+///
+/// The launcher installs these into **its own** Wine prefix, never a system
+/// one. Nothing here is ever placed in the game directory.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeComponent {
+    pub id: String,
+    /// What it is, so the installer knows how to unpack it.
+    pub kind: ComponentKind,
+    pub version: String,
+    pub size: u64,
+    pub hash: String,
+    /// Must be `https://`.
+    pub url: String,
+    /// The licence it is distributed under. Recorded so a release can state it.
+    #[serde(default)]
+    pub licence: String,
+    #[serde(default)]
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComponentKind {
+    /// A DXVK release tarball: Direct3D over Vulkan, which is what makes a
+    /// 2010 D3D9 game behave under Wine.
+    Dxvk,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LauncherSpec {
     #[serde(default)]
@@ -147,6 +185,19 @@ impl Manifest {
                     "patch {} must be served over https, got {}",
                     patch.id, patch.url
                 ));
+            }
+        }
+
+        for component in &self.runtime {
+            check_hash(&component.hash, &component.id)?;
+            if !component.url.starts_with("https://") {
+                return bad(format!(
+                    "runtime component {} must be served over https, got {}",
+                    component.id, component.url
+                ));
+            }
+            if component.size == 0 {
+                return bad(format!("runtime component {} has no size", component.id));
             }
         }
 
@@ -283,6 +334,28 @@ mod tests {
     fn rejects_a_realm_address_that_is_really_a_url() {
         let json = minimal().replace("play.ashmorrow.example", "https://play.ashmorrow.example");
         assert!(Manifest::parse(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn a_runtime_component_needs_https_and_a_hash() {
+        let good = minimal().replace(
+            r#""client":"#,
+            &format!(
+                r#""runtime": [{{ "id": "dxvk", "kind": "dxvk", "version": "2.4.1",
+                    "size": 1, "hash": "{HASH}",
+                    "url": "https://github.com/doitsujin/dxvk/releases/download/v2.4.1/dxvk-2.4.1.tar.gz" }}],
+                   "client":"#
+            ),
+        );
+        let manifest = Manifest::parse(good.as_bytes()).unwrap();
+        assert_eq!(manifest.runtime.len(), 1);
+        assert_eq!(manifest.runtime[0].kind, ComponentKind::Dxvk);
+
+        let plaintext = good.replace("https://github.com", "http://github.com");
+        assert!(Manifest::parse(plaintext.as_bytes()).is_err());
+
+        let unsized_component = good.replace(r#""size": 1"#, r#""size": 0"#);
+        assert!(Manifest::parse(unsized_component.as_bytes()).is_err());
     }
 
     #[test]
