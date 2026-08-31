@@ -826,7 +826,7 @@ CONF_TEMPLATES = ["authserver", "worldserver"]
 
 def cmd_conf(args):
     cfg = load_local()
-    etc = dist_dir() / "configs"
+    etc = dist_dir() / ("configs" if IS_WINDOWS else "etc")
     if not etc.is_dir():
         die(f"{etc} not found - build and install first (`ta.py build`)")
 
@@ -1585,7 +1585,7 @@ def cmd_extract(args):
 
 def cmd_run(args):
     binary = "authserver" if args.target == "auth" else "worldserver"
-    exe = dist_dir() / (binary + (".exe" if IS_WINDOWS else ""))
+    exe = (dist_dir() if IS_WINDOWS else dist_dir() / "bin") / (binary + (".exe" if IS_WINDOWS else ""))
     if not exe.exists():
         die(f"{exe} not found - run `ta.py build` first")
     info(f"starting {binary} (Ctrl+C to stop)")
