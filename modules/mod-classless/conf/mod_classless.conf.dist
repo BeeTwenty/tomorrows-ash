@@ -93,3 +93,27 @@ Classless.Points.Bonus = 0
 #        Default:     0
 
 Classless.Respec.Cost = 0
+
+#
+#    Classless.OpenRelicSlot
+#        Description: Let any body type equip librams, idols, totems and
+#                     sigils.
+#
+#                     Relics are the one gear category the Phase 3 SQL pass
+#                     cannot open. Their equip slot is chosen by a hardcoded
+#                     class check in Player::FindEquipSlot, so clearing
+#                     AllowableClass on them does nothing. This setting turns
+#                     on a module hook (OnPlayerIsClass, scoped to
+#                     CLASS_CONTEXT_EQUIP_RELIC only) that answers that one
+#                     check.
+#
+#                     It does NOT touch armor proficiency, talents, stats,
+#                     pets, class trainers or anything else class-dependent -
+#                     the hook returns "no opinion" for every other context.
+#
+#                     A character still has only one relic slot, and a relic
+#                     that buffs a spell they have not learned does nothing.
+#        Default:     0 - (Disabled, stock behaviour)
+#                     1 - (Enabled)
+
+Classless.OpenRelicSlot = 0

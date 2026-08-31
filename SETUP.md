@@ -529,7 +529,14 @@ data. Some of what Phase 2 needs can only be measured in-game.
 Classless.Enable = 0                      # master switch
 Classless.Announce = 1                    # login notice
 Classless.SuppressBlizzardTalents = 0     # Phase 2 - do not enable yet
+Classless.OpenRelicSlot = 0               # Phase 3 - librams/idols/totems/sigils
 ```
+
+`OpenRelicSlot` is the only gear restriction that is not a database row. Relic
+slots are chosen by a hardcoded class check in the core, so the Phase 3 SQL
+pass cannot reach them; this setting turns on a module hook that answers that
+one check and nothing else. See
+[docs/PHASE3-ITEMIZATION.md §4](docs/PHASE3-ITEMIZATION.md).
 
 **Do not set `SuppressBlizzardTalents = 1` before the replacement system
 exists**, or characters will have no way to spend points at all.

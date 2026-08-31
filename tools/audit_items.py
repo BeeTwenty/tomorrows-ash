@@ -287,7 +287,11 @@ def report(cfg, args):
     print(f"       ...mask already admits all 10 classes  {n['nominal']:>6}   (a no-op mask)")
     print(f"       ...genuinely restrictive               {n['real']:>6}")
     print()
-    print(f"     weapons + armor with any mask            {n['user_8489']:>6}   <- the 8,489 figure")
+    # Before the pass this is the widely-quoted 8,489. Afterwards it is much
+    # smaller, and labelling it "the 8,489 figure" would be a lie the tool
+    # tells about a realm it just changed.
+    tag = "   <- the 8,489 figure" if n["pass"] else "   (pass already applied)"
+    print(f"     weapons + armor with any mask            {n['user_8489']:>6}{tag}")
     print()
 
     print(c("  2. What that costs this realm", "blue"))

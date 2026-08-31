@@ -82,32 +82,37 @@ and will switch from "bought" to ranked pips on its own.
 
 ---
 
-## Phase 3 — Itemization ⏳ measured, pass staged, awaiting sign-off
+## Phase 3 — Itemization ✅ shipped, one setting held for playtest
 
 Full report: [PHASE3-ITEMIZATION.md](PHASE3-ITEMIZATION.md). Reproduce any
 number with `python3 tools/audit_items.py`.
 
 - [x] Measured what the class mask actually costs. The headline is not 8,489:
       of the 10,936 masked rows, **4,608 carry a mask that already admits all
-      ten classes** and restrict nothing. The real problem is **3,678 items
-      (2,849 of them gear) that no body type can equip at all**, because they
-      are locked to classes this realm removed. Dead loot that still drops.
+      ten classes** and restrict nothing. The real problem was **3,678 items
+      (2,849 of them gear) that no body type could equip at all** — dead loot
+      that still dropped.
 - [x] Established that the class mask is **not** the gate implementing the
       body-type design. Armor proficiency is, and it is a skill granted by a
       spell: plate is sold only by Warrior and Paladin class trainers, and
       `Trainer::IsTrainerValidForPlayer` compares `getClass()` with no hook.
-      So the fix is *removal*, not re-tagging by body type.
-- [x] Generated the pass — **4,746 rows**, reversible via a backup table,
-      idempotent, verified against a byte-copy of the live `item_template`
-      (4,746 changed, 0 left restricted, rollback restores exactly).
-      Staged in `sql-staged/`, **not** applied.
+      So the fix was *removal*, not re-tagging by body type.
 - [x] Audited stat budgets rather than assuming: totals are a function of
       (armor class, item level), spread 1.3–16% within a cell. Unlocking
       changes *which* distribution a character can pick, not *how much* they
-      get. **No rebalance proposed.**
-- [ ] **Sign-off needed** — apply the 4,746-row pass; relics (250 rows, needs
-      an `OnPlayerIsClass` hook, the one hook that can grant); glyphs (246
-      dead rows, uninvestigated).
+      get. **No rebalance was needed.**
+- [x] **Applied** the pass — 4,746 rows, reversible via
+      `classless_item_class_backup`, run through AzerothCore's own updater and
+      idempotent when it ran a second time. Dead gear: 2,849 → **5**.
+- [x] **Relics opened** behind `Classless.OpenRelicSlot` (default 0), via a
+      module `OnPlayerIsClass` hook scoped to `CLASS_CONTEXT_EQUIP_RELIC`
+      alone — the one hook in the core that can grant rather than veto. Still
+      zero core modifications. Compiles, links, loads.
+- [ ] **Playtest, then flip `OpenRelicSlot`.** The server offers the slot; only
+      a real 3.3.5a client can say whether it will draw a relic in a
+      ranged-weapon slot. [Checklist §9](PHASE3-ITEMIZATION.md).
+- [ ] Glyphs — 246 dead rows, **out of scope by decision**; revisit at content
+      scoping before launch.
 
 ---
 

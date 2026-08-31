@@ -52,6 +52,12 @@ namespace TomorrowsAsh
         // Cost in copper to respec. 0 = free.
         uint32 RespecCost = 0;
 
+        // Let any body type equip librams, idols, totems and sigils.
+        // Relics are the one gear category a data change cannot open: the
+        // equip slot is chosen by a hardcoded class check in
+        // Player::FindEquipSlot. See ClasslessRelics.cpp.
+        bool OpenRelicSlot = false;
+
         // Points a character of this level is entitled to in total.
         [[nodiscard]] uint32 BudgetForLevel(uint8 level) const;
 
