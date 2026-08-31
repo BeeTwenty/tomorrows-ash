@@ -121,7 +121,7 @@ Three workstreams run in parallel on their own branches, each owning a slice:
 | Branch | Owns | Don't touch it from elsewhere |
 |---|---|---|
 | `claude/tomorrows-ash-classless-setup-*` | the server: `modules/`, `tools/`, `realm/`, core docs | — |
-| `claude/tomorrows-ash-website-ksj53j` | `web/` — the Next.js site | server module code |
+| `claude/tomorrows-ash-website-ksj53j` | `web/` — the Next.js site, and `web-admin/` — the operator panel | server module code |
 | `claude/ashmorrow-custom-launcher-*` | the launcher — `docs/LAUNCHER-DESIGN.md`, ADRs 0005–0006 | server and website code |
 
 `main` lags well behind all three; the branches are the live lines. Merge in
@@ -144,8 +144,17 @@ Coordinate, do not collide:
 - Website spend is computed by joining `classless_character_node.cost_paid` —
   the price *paid*, not `classless_node.cost`, which can change.
 - **`docs/decisions/` is shared.** Numbering is sequential across all sessions
-  (0001–0003 server, 0004 website, 0005–0006 launcher). Check the directory
-  before claiming a number, and never renumber someone else's ADR.
+  (0001–0003 server, 0004 website, 0005–0006 launcher, 0007 licence, 0008 admin
+  panel). Check the directory before claiming a number, and never renumber
+  someone else's ADR.
+- **The admin panel needs one thing from the server branch.** `classless_config`
+  in the world database, holding `Points.FirstLevel`, `Points.PerLevel` and
+  `Points.Bonus`, read by the module at load with `mod_classless.conf` as the
+  seed. Without it the panel cannot show a character's *available* points — only
+  what they spent — because mirroring the conf values into the panel's own
+  environment would be a second source of truth. The ask, with the reasoning, is
+  in `docs/decisions/0008-admin-panel.md`; the grant is written and commented out
+  in `web-admin/sql/admin-grants.sql`.
 
 ---
 
@@ -165,6 +174,8 @@ Coordinate, do not collide:
 | `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
+| `web/` | the public site (§9) |
+| `web-admin/` | the operator panel (§10) |
 
 Module SQL goes in `modules/mod-classless/data/sql/db-{world,characters,auth}/`
 and is applied automatically by AzerothCore's updater. The directory name must
@@ -253,3 +264,86 @@ fallback giving a dishonest answer.
 **Own your tables applies here too.** Everything the site owns lives in its own
 `ashmorrow_web` schema (sessions, reset tokens, rate limits, audit log). It never
 adds a column to an AzerothCore table.
+
+---
+
+## 10. The admin panel (`web-admin/`)
+
+Owned by the same branch as `web/` per §6, and a **third service**: its own
+process, its own deployment, its own MySQL user. Read
+`docs/decisions/0008-admin-panel.md` before changing anything about how access is
+decided.
+
+```bash
+cd web-admin
+npm install
+npm run check      # typecheck + lint + unit tests. Run before pushing.
+npm run dev        # http://localhost:3010 — needs a database; there is no demo mode
+
+python3 tools/ta.py admin dev-db --yes    # database, schema, grants, fixture, .env.local
+python3 tools/ta.py admin doctor
+```
+
+### The separation is the point
+
+Two Next.js apps buys little on its own. **Two database users** is the boundary:
+`ash_web` cannot ban an account or write to `account_access` and never will;
+`ash_admin` can, and is not reachable from the public site's process. Folding
+the panel into `web/` would put `account_access` inside the blast radius of every
+marketing page.
+
+So: **only pure modules are shared** — `srp6`, `limits`, `wow`, through the
+`@shared/*` alias. `db.ts`, `env.ts` and `session.ts` are duplicated on purpose.
+Merging them is how the two processes end up with one set of privileges.
+
+### Traps specific to this third
+
+**The audit log is append-only by grant, not by code.** `ash_admin` holds INSERT
+on `admin_audit` and not UPDATE or DELETE. CI asserts it (`.github/workflows/ci.yml`,
+the "append-only" step) and `ta.py admin doctor` checks the live grant, because
+widening it breaks nothing visible — the panel would keep working perfectly.
+
+**A failed audit write fails the action.** The opposite of the public site's
+audit helper, which swallows errors so bookkeeping never breaks a login. Here the
+bookkeeping is the point.
+
+**`requirePermission()` produces the actor.** You cannot obtain an actor without
+passing the gate, so there is no shape of code where a page forgets the check and
+still renders. Layout guards and navigation filtering are presentation only.
+Middleware is explicitly *not* the boundary — it has been bypassable at the
+framework level (CVE-2025-29927) and cannot reach the database.
+
+**gmlevel is re-read on every request.** Never from the cookie. That is what
+makes a demotion take effect on the next click rather than at the next login.
+
+**The ban predicate is copied from the core, not invented.** `active = 1` alone
+is wrong: expired ban rows keep `active = 1` until the worldserver's sweep clears
+them, so the panel must also test
+`(unbandate > UNIX_TIMESTAMP() OR unbandate = bandate)` — LoginDatabase.cpp,
+`LOGIN_SEL_LOGONCHALLENGE`. The dev fixture deliberately contains an expired-but-
+active row so a regression here shows up.
+
+**A character who is online cannot be written to.** The worldserver holds their
+row in memory and writes it back on logout, so a direct UPDATE is silently
+discarded — not a race that usually works. Every direct write re-checks `online`
+inside the write path and refuses.
+
+**Never build a console command from unvalidated input.** `soap.ts` exports
+validators (`characterName`, `accountName`, `integerArg`, `textArg`) and every
+caller uses them. Newlines are stripped rather than escaped, because the console
+reads one command per line and there is no escape for a newline.
+
+**A success message that its own re-render destroys is a bug, not a nit.** Two
+were found by testing rather than reading: lifting a ban swaps the unban form for
+the ban form, and promoting an item change removes the row holding the button.
+Both now keep the message — the first by rendering results outside the swap, the
+second by redirecting with a notice in the URL.
+
+**Enrolment resumes; it does not reissue.** `beginEnrolment` returns the existing
+unconfirmed secret. Generating a new one per render looks harmless until a second
+tab or a guard redirect silently invalidates the secret someone is part-way
+through scanning, and the only symptom is "that code is not right" for a code
+that was right.
+
+**The panel cannot read `mod_classless.conf`.** So it does not pretend to know
+the budget — see the `classless_config` request in §6.

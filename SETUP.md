@@ -983,7 +983,176 @@ never touches `~/.wine` or any prefix belonging to another game.
 
 ---
 
-## 12. Troubleshooting
+## 12. The admin panel
+
+**`web-admin/`** is the operator surface: accounts, characters, ability trees,
+itemization, realm configuration, and a record of everything anyone did. Like
+the website and the launcher it is a **separate service** — and here the
+separation is not just deployment convenience, it is the security boundary. It
+runs as its own MySQL user with privileges the website must never have.
+
+Read [ADR 0008](docs/decisions/0008-admin-panel.md) before changing anything
+about how access is decided; [web-admin/README.md](web-admin/README.md) is the
+code map.
+
+### 12.1 What you need
+
+Node.js 20+, npm, and a realm database. Nothing from the C++ toolchain. It does
+**not** need the worldserver running — but a few actions do, and it says so
+rather than pretending otherwise (see 12.5).
+
+There is no demo mode. Without a database the panel refuses to start.
+
+### 12.2 A development instance
+
+```bash
+python3 tools/ta.py admin dev-db --yes    # database, schema, grants, fixture, .env.local
+python3 tools/ta.py admin build
+python3 tools/ta.py admin start           # http://127.0.0.1:3010
+```
+
+`admin dev-db` layers on top of `web dev-db` rather than repeating it, and adds
+one staff account per tier so the permission model can be exercised rather than
+reasoned about:
+
+| Account | Password | Tier |
+|---|---|---|
+| `ASHOWNER` | `ownerpass` | owner — staff levels, promoting item changes |
+| `ASHSTAFF` | (the website fixture's) | administrator — realm and trees |
+| `ASHGM` | `gmpass` | game master — bans, character edits |
+| `ASHSUPPORT` | `supportpass` | support — read only |
+| `ASHCULPRIT` | `culpritpass` | a level-0 player to act on |
+
+Development passwords, obviously. `admin dev-db` refuses to run without `--yes`
+and prints what it is about to write to first.
+
+Every account is asked to enrol an authenticator on first sign-in. There is no
+way to skip it.
+
+### 12.3 Production
+
+```bash
+mysql -u root -p < web-admin/sql/admin-schema.sql
+$EDITOR web-admin/sql/admin-grants.sql          # replace CHANGE_ME with a password
+mysql -u root -p < web-admin/sql/admin-grants.sql
+
+cd web-admin
+npm ci
+npm run gen-secret                              # prints the two keys
+cp .env.example .env.local && $EDITOR .env.local
+npm run build
+npm start                                       # 127.0.0.1:3010
+```
+
+Or, from the repository root, `python3 tools/ta.py admin setup`.
+
+Windows is the same, with `.\install.ps1`-style paths:
+
+```powershell
+mysql -u root -p < web-admin\sql\admin-schema.sql
+notepad web-admin\sql\admin-grants.sql
+mysql -u root -p < web-admin\sql\admin-grants.sql
+
+cd web-admin
+npm ci
+npm run gen-secret
+copy .env.example .env.local
+notepad .env.local
+npm run build
+npm start
+```
+
+Serve it behind a reverse proxy that terminates TLS, and then tell the panel
+that it is public:
+
+```
+ADMIN_PUBLIC=1
+ADMIN_SITE_URL=https://admin.example.com
+ADMIN_IP_ALLOWLIST=203.0.113.7,198.51.100.0/24
+ADMIN_TRUSTED_PROXY_HOPS=1
+```
+
+With `ADMIN_PUBLIC=1` the panel **refuses to start** unless the allowlist is
+non-empty, a trusted proxy is configured, and the site URL is https. That is
+deliberate. Those three are the controls; starting without them and logging a
+warning is how an open admin panel ends up on the internet for a week.
+
+`ADMIN_TRUSTED_PROXY_HOPS` is the number of proxies **you** operate.
+`X-Forwarded-For` is written by the client, so hops are counted from the right
+and only that many are peeled off. Get it too high and a client can claim any
+address it likes.
+
+### 12.4 The two keys are not interchangeable
+
+| Key | Rotating it |
+|---|---|
+| `ADMIN_SESSION_SECRET` | signs every staff member out. Safe, occasionally useful. |
+| `ADMIN_TOTP_KEY` | makes every enrolled authenticator unreadable. **Back it up.** |
+
+They are separate for exactly that reason. `npm run gen-secret` prints both.
+
+### 12.5 What needs the worldserver, and what does not
+
+Everything that changes a database row works without it: bans, unbans, mutes,
+password resets, staff levels, offline character edits, tree edits, itemization,
+MOTD, maintenance mode.
+
+These need SOAP, and are refused with a reason when it is not configured: kicks,
+revives, teleports, pushing a MOTD to the running server, and reloading the
+trees. Enable it in `worldserver.conf`:
+
+```
+SOAP.Enabled = 1
+SOAP.IP      = "127.0.0.1"
+SOAP.Port    = 7878
+```
+
+then in `web-admin/.env.local`:
+
+```
+SOAP_ENABLED=1
+SOAP_USER=<a GM account>
+SOAP_PASSWORD=<its password>
+```
+
+**Never expose 7878.** Bind it to localhost and give the account the lowest GM
+level that covers the commands the panel actually sends — the panel's own tiers
+do not constrain the worldserver.
+
+### 12.6 The one thing that is deliberately missing
+
+There is no budget editor. `Classless.Points.PerLevel` and friends live in
+`mod_classless.conf` on the worldserver, which the panel cannot read; mirroring
+them into the panel's environment would create a second source of truth that
+silently disagrees with the first. Character pages show points **spent** and say
+plainly that the total available is unknown until the module publishes those
+values to a `classless_config` table. ADR 0008 carries the request.
+
+Two others, for the same reason — the panel would be lying:
+
+- **Population cap.** `PlayerLimit` is a config file value with no database
+  representation. Use maintenance mode, which does take effect immediately.
+- **Anything needing a running server, without one.** See 12.5.
+
+### 12.7 Admin panel troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Refuses to start, "misconfigured and will refuse every request" | it lists what is missing. `ADMIN_PUBLIC=1` requires an allowlist, a trusted proxy and https |
+| Every request bounces to the sign-in page | the allowlist. Check `ADMIN_TRUSTED_PROXY_HOPS` matches how many proxies you actually run — with it at 0 behind a proxy, no address is trusted and everything is refused |
+| Correct password, "those credentials are not valid" | the account has no `account_access` row for this realm, or its `gmlevel` is 0. The message is deliberately vague; the audit log says which |
+| "That code is not right" for a code that is right | clock drift on the authenticator's device, or the code was already used — a code lives once, not for its whole window |
+| Locked out: lost device, no recovery codes left | an owner clears the enrolment. There is no self-service path, by design |
+| Every administrator locked out at once | `ADMIN_TOTP_KEY` changed. Restore it from your backup — the sealed secrets cannot be read without it |
+| Signed out mid-session | your GM level changed, your password changed, the idle window passed, or your network address changed. The sign-in page says which |
+| Kick / revive / teleport unavailable | SOAP is not configured — 12.5 |
+| Tree edits do not take effect in game | the module caches trees at load. Use "Reload trees on the server", which needs SOAP; otherwise they apply at the next restart |
+| A character edit is refused | they are online. The worldserver owns their row and would overwrite the change |
+| `admin doctor` says the audit log is not append-only | `ash_admin` has `UPDATE` on `admin_audit` and must not. Re-run `ta.py admin sql --grants` |
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -1010,7 +1179,10 @@ never touches `~/.wine` or any prefix belonging to another game.
 | `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 2) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
-Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.6](#106-launcher-troubleshooting).
+Website problems have their own table in [section 9.8](#98-website-troubleshooting), the launcher's are in
+[section 10.6](#106-launcher-troubleshooting), and the admin panel's are in
+[section 12.7](#127-admin-panel-troubleshooting).
 
 Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
-or `python3 tools/ta.py web doctor` for the website.
+or `python3 tools/ta.py web doctor` for the website, `python3 tools/ta.py admin doctor`
+for the panel.

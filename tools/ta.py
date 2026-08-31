@@ -62,6 +62,11 @@ DEFAULTS = {
     "web_db_user": "ash_web",
     "web_db_pass": "",
     "site_url": "http://localhost:3000",
+    "db_admin": "ashmorrow_admin",
+    "admin_port": 3010,
+    "admin_db_user": "ash_admin",
+    "admin_db_pass": "",
+    "admin_url": "http://127.0.0.1:3010",
 }
 
 
@@ -2061,6 +2066,322 @@ def web_setup(args):
 
 
 # --------------------------------------------------------------------------
+# the admin panel
+#
+# A THIRD service, separate again from the website. It runs as its own MySQL
+# user with privileges the website must never have, so the two are never
+# collapsed into one process - see docs/decisions/0008-admin-panel.md.
+#
+# Same reasoning as the web subcommands above: these exist so ta.py stays the
+# single entry point on both platforms, not because the panel is coupled to the
+# game server.
+# --------------------------------------------------------------------------
+
+ADMIN_DIR = REPO / "web-admin"
+
+
+def admin_env_path():
+    return ADMIN_DIR / ".env.local"
+
+
+def cmd_admin(args):
+    if not ADMIN_DIR.is_dir():
+        die(f"{ADMIN_DIR} not found")
+    return {
+        "env": admin_env,
+        "install": admin_install,
+        "build": admin_build,
+        "dev": admin_dev,
+        "start": admin_start,
+        "sql": admin_sql,
+        "dev-db": admin_dev_db,
+        "doctor": admin_doctor,
+        "setup": admin_setup,
+    }[args.action](args)
+
+
+def admin_env(args):
+    """Write web-admin/.env.local from tools/local.json plus fresh keys."""
+    import secrets
+
+    target = admin_env_path()
+    if target.exists() and not args.force:
+        warn(f"{target.relative_to(REPO)} already exists (use --force to regenerate)")
+        return 0
+
+    cfg = load_local()
+    example = ADMIN_DIR / ".env.example"
+    if not example.exists():
+        die(f"{example} is missing")
+
+    # Two separate keys, and they must stay separate: rotating the session
+    # secret signs everyone out (fine), rotating the TOTP key makes every
+    # enrolled authenticator unreadable (not fine).
+    values = {
+        "ADMIN_SITE_URL": cfg["admin_url"],
+        "ADMIN_PUBLIC": "0",
+        "ADMIN_SESSION_SECRET": secrets.token_urlsafe(48),
+        "ADMIN_TOTP_KEY": secrets.token_urlsafe(48),
+        "REALM_ID": "1",
+        "REALM_NAME": cfg["realm_name"],
+        "DB_HOST": cfg["mysql_host"],
+        "DB_PORT": str(cfg["mysql_port"]),
+        "DB_USER": cfg["admin_db_user"],
+        "DB_PASSWORD": cfg["admin_db_pass"],
+        "DB_AUTH": cfg["db_auth"],
+        "DB_CHARACTERS": cfg["db_characters"],
+        "DB_WORLD": cfg["db_world"],
+        "DB_ADMIN": cfg["db_admin"],
+    }
+
+    out, seen = [], set()
+    for line in example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in values:
+                out.append(f"{key}={values[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+
+    missing = [f"{k}={v}" for k, v in values.items() if k not in seen]
+    if missing:
+        out.extend(["", "# Added by `ta.py admin env`"] + missing)
+
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass  # Windows without POSIX permissions - the file is still gitignored.
+
+    ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+    warn("ADMIN_TOTP_KEY is in that file. Back it up: losing it makes every")
+    warn("enrolled authenticator unreadable.")
+    if not cfg["admin_db_pass"]:
+        warn("DB_PASSWORD is empty. Create the panel's database user first:")
+        warn("  1. python3 tools/ta.py admin sql --grants")
+        warn("  2. re-run `ta.py admin env --force`")
+    return 0
+
+
+def admin_install(args):
+    info("installing admin panel dependencies")
+    lock = ADMIN_DIR / "package-lock.json"
+    run(npm_cmd() + (["ci"] if lock.exists() else ["install"]), cwd=ADMIN_DIR)
+    ok("dependencies installed")
+    return 0
+
+
+def admin_build(args):
+    info("building the admin panel")
+    run(npm_cmd() + ["run", "build"], cwd=ADMIN_DIR)
+    ok("built - start it with `ta.py admin start`")
+    return 0
+
+
+def admin_dev(args):
+    if not (ADMIN_DIR / "node_modules").is_dir():
+        die("dependencies are not installed - run `ta.py admin install` first")
+    cfg = load_local()
+    info(f"starting the admin panel in development on port {cfg['admin_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["run", "dev", "--", "--port", str(cfg["admin_port"])], cwd=ADMIN_DIR, check=False)
+    return 0
+
+
+def admin_start(args):
+    if not (ADMIN_DIR / ".next" / "standalone").is_dir():
+        die("the admin panel is not built - run `ta.py admin build` first")
+    cfg = load_local()
+    info(f"starting the admin panel on port {cfg['admin_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["start"], cwd=ADMIN_DIR, check=False, env={"PORT": str(cfg["admin_port"])})
+    return 0
+
+
+def _remember_local(values):
+    """Record generated credentials in tools/local.json, which is gitignored."""
+    import json as _json
+
+    local_file = REPO / "tools" / "local.json"
+    local = {}
+    if local_file.exists():
+        try:
+            local = _json.loads(local_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn("tools/local.json is not valid JSON - not updating it")
+            return
+    if all(local.get(key) == value for key, value in values.items()):
+        return
+    local.update(values)
+    local_file.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+    ok(f"recorded credentials in {local_file.relative_to(REPO)}")
+
+
+def admin_sql(args):
+    """Create the panel's own schema, and optionally its database user."""
+    cfg = load_local()
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "admin-schema.sql", "web-admin/sql/admin-schema.sql")
+
+    if not args.grants:
+        info("skipping the database user (pass --grants to create it)")
+        return 0
+
+    import secrets
+
+    password = cfg["admin_db_pass"] or secrets.token_urlsafe(18)
+    template = (ADMIN_DIR / "sql" / "admin-grants.sql").read_text(encoding="utf-8")
+    if "CHANGE_ME" not in template:
+        die("admin-grants.sql has no CHANGE_ME placeholder - has it been edited?")
+
+    user = cfg["admin_db_user"]
+    info(f"creating the panel's database user '{user}'")
+    # Both hosts, deliberately - same anonymous-''@'localhost' trap documented
+    # in web_dev_db above.
+    for host in ("localhost", "%"):
+        mysql_run(cfg, template.replace("CHANGE_ME", password).replace("'localhost'", f"'{host}'"))
+        mysql_run(cfg, f"ALTER USER IF EXISTS '{user}'@'{host}' IDENTIFIED BY '{password}';")
+
+    _remember_local({"admin_db_user": user, "admin_db_pass": password})
+    ok(f"user '{user}' created, from localhost and from other hosts")
+    return 0
+
+
+def admin_dev_db(args):
+    """
+    One command: a local database the admin panel can actually operate on.
+
+    Layers on top of `web dev-db` rather than repeating it. The website's
+    fixture already owns accounts and characters; this adds the tables only the
+    panel touches - bans, mutes, the MOTD, teleport destinations, the item-class
+    backup - plus one staff account per tier so the permission model can be
+    exercised instead of reasoned about.
+
+    Development only. It creates accounts with known passwords, so it refuses to
+    run without --yes.
+    """
+    import argparse as _argparse
+
+    cfg = load_local()
+
+    if not args.yes:
+        print()
+        warn("`admin dev-db` builds a DEVELOPMENT database and creates staff")
+        warn("accounts WITH KNOWN PASSWORDS.")
+        warn(f"  server  : {cfg['mysql_host']}:{cfg['mysql_port']}")
+        warn(f"  schemas : {cfg['db_auth']}, {cfg['db_world']}, {cfg['db_characters']}, {cfg['db_admin']}")
+        warn("")
+        warn("If that is a real realm's database, DO NOT run this.")
+        warn("")
+        die("re-run with --yes if this is a development database")
+
+    # 1. Everything the website's fixture provides - schemas, the module SQL,
+    #    accounts and characters. Idempotent, so re-running is safe.
+    web_dev_db(_argparse.Namespace(yes=True))
+
+    # 2. The panel's own schema, then the tables and staff accounts it needs.
+    #    Schema before grants: admin-grants.sql names individual tables and
+    #    MySQL refuses a table-level GRANT for a table that does not exist.
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "admin-schema.sql", "web-admin/sql/admin-schema.sql")
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "dev-fixture-admin.sql", "web-admin/sql/dev-fixture-admin.sql")
+
+    # 3. The user.
+    admin_sql(_argparse.Namespace(grants=True))
+
+    cfg = load_local()
+    probe = dict(cfg, mysql_user=cfg["admin_db_user"], mysql_pass=cfg["admin_db_pass"])
+    rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_admin']}`.`admin_audit` LIMIT 0;", check=False)
+    if rc != 0:
+        die(f"user '{cfg['admin_db_user']}' was created but cannot connect - check the MySQL error log")
+    ok(f"user '{cfg['admin_db_user']}' connects")
+
+    admin_env(_argparse.Namespace(force=True))
+
+    print()
+    ok("the admin panel has a database to operate on")
+    print()
+    print("     Start it:")
+    print("       python3 tools/ta.py admin build && python3 tools/ta.py admin start")
+    print()
+    print("     Sign in with any of these (development passwords):")
+    print("       ASHOWNER   / ownerpass     owner")
+    print("       ASHGM      / gmpass        game master")
+    print("       ASHSUPPORT / supportpass   support, read-only")
+    print()
+    print("     Each is asked to enrol an authenticator on first sign-in.")
+    return 0
+
+
+def admin_doctor(args):
+    cfg = load_local()
+    problems = 0
+
+    if not (ADMIN_DIR / "node_modules").is_dir():
+        warn("dependencies are not installed - run `ta.py admin install`")
+        problems += 1
+    else:
+        ok("dependencies installed")
+
+    if not admin_env_path().exists():
+        warn("web-admin/.env.local is missing - run `ta.py admin env`")
+        problems += 1
+    else:
+        ok("web-admin/.env.local exists")
+        text = admin_env_path().read_text(encoding="utf-8")
+        for key in ("ADMIN_SESSION_SECRET", "ADMIN_TOTP_KEY", "DB_PASSWORD"):
+            line = next((l for l in text.splitlines() if l.startswith(f"{key}=")), None)
+            if line is None or not line.split("=", 1)[1].strip():
+                warn(f"{key} is empty - the panel will refuse to start in production")
+                problems += 1
+
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        warn(f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']}")
+        problems += 1
+    else:
+        ok("MySQL reachable")
+        probe = dict(cfg, mysql_user=cfg["admin_db_user"], mysql_pass=cfg["admin_db_pass"])
+        rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_admin']}`.`admin_audit` LIMIT 0;", check=False)
+        if rc != 0:
+            warn(f"user '{cfg['admin_db_user']}' cannot read the audit table"
+                 " - run `ta.py admin sql --grants`")
+            problems += 1
+        else:
+            ok(f"user '{cfg['admin_db_user']}' can read the audit table")
+
+            # The audit log is append-only BY GRANT. If that grant is wrong the
+            # panel still works perfectly, which is exactly why it is worth
+            # checking: nothing else would ever notice.
+            rc, _ = mysql_run(
+                probe,
+                f"UPDATE `{cfg['db_admin']}`.`admin_audit` SET summary = summary WHERE id = 0;",
+                check=False,
+            )
+            if rc == 0:
+                warn(f"'{cfg['admin_db_user']}' can UPDATE the audit log - it must not."
+                     " Re-run `ta.py admin sql --grants`.")
+                problems += 1
+            else:
+                ok("the audit log is append-only (UPDATE is refused)")
+
+    if problems:
+        print()
+        warn(f"{problems} problem(s) found")
+        return 1
+    print()
+    ok("the admin panel looks ready")
+    return 0
+
+
+def admin_setup(args):
+    import argparse as _argparse
+
+    admin_install(args)
+    admin_env(_argparse.Namespace(force=False))
+    admin_build(args)
+    return admin_doctor(args)
+
+
+# --------------------------------------------------------------------------
 # play - point a client at the realm and start it
 # --------------------------------------------------------------------------
 #
@@ -2688,6 +3009,14 @@ def main():
     p.add_argument("--username", help="verify-srp6: an account the realm itself created")
     p.add_argument("--password", help="verify-srp6: that account's password")
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("admin", help="the operator panel in web-admin/ (deploys separately again)")
+    p.add_argument("action", choices=["setup", "env", "install", "build", "dev", "start",
+                                      "sql", "dev-db", "doctor"])
+    p.add_argument("--force", action="store_true", help="env: overwrite an existing .env.local")
+    p.add_argument("--grants", action="store_true", help="sql: also create the panel's MySQL user")
+    p.add_argument("--yes", action="store_true", help="dev-db: confirm writing sample data")
+    p.set_defaults(func=cmd_admin)
 
     p = sub.add_parser("play", help="point your own 3.3.5a client at the realm and start it")
     p.add_argument("action", choices=["doctor", "verify", "provision", "config", "run"])
