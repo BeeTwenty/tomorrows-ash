@@ -16,7 +16,15 @@ export function MotdForm({ motd }: { motd: string }) {
 
   return (
     <form action={action} className="space-y-3">
-      <textarea name="motd" className="field min-h-24" defaultValue={motd} maxLength={500} required />
+      {/*
+        Keyed on the server's value so the field re-syncs after a save.
+        `defaultValue` applies at mount, and this component stays mounted across
+        the revalidation - so without the key the box would keep showing what
+        was typed even if the save changed it, or another operator changed it
+        first. The key is on the field and not the form, because remounting the
+        form would take the result message with it.
+      */}
+      <textarea key={motd} name="motd" className="field min-h-24" defaultValue={motd} maxLength={500} required />
       <p className="muted text-[0.6875rem]">
         Stored in <span className="mono">acore_auth.motd</span>, so it survives a restart, and pushed to the
         running server through the console when one is configured.
@@ -38,7 +46,9 @@ export function MaintenanceForm({ level }: { level: number }) {
         <label className="label" htmlFor="maintenance-level">
           Minimum level allowed to log in
         </label>
-        <select id="maintenance-level" name="level" className="field" defaultValue={String(level)}>
+        {/* Keyed for the same reason as the MOTD box above: after applying,
+            this must show what is in force, not what was last picked. */}
+        <select key={level} id="maintenance-level" name="level" className="field" defaultValue={String(level)}>
           <option value="0">0 — open to everyone</option>
           <option value="1">1 — support and above</option>
           <option value="2">2 — game masters and above</option>

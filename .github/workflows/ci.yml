@@ -527,13 +527,18 @@ jobs:
 
       - name: The panel starts and serves its sign-in page
         run: |
-          # No database. The panel has no demo mode, so this proves only what it
-          # should: the process boots and the pre-auth path - config check,
-          # address resolution, allowlist - renders without touching MySQL.
+          # No database - port 1 answers nothing. The panel has no demo mode, so
+          # this proves only what it should: the process boots and the pre-auth
+          # path (config check, address resolution, allowlist) renders without
+          # touching MySQL.
+          #
+          # DB_PASSWORD is set even though nothing connects: an empty one is a
+          # startup refusal in production, which is correct behaviour and not
+          # what this step is testing. The step below tests the refusals.
           ADMIN_SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
           ADMIN_TOTP_KEY=ci-only-totp-key-that-is-long-enough-to-pass-validation \
           ADMIN_SITE_URL=http://127.0.0.1:3010 \
-          DB_HOST=127.0.0.1 DB_PORT=1 \
+          DB_HOST=127.0.0.1 DB_PORT=1 DB_PASSWORD=ci-only-not-a-real-password \
           PORT=3010 npm start &
           for i in $(seq 1 30); do
             curl -sf http://127.0.0.1:3010/login > /dev/null && break

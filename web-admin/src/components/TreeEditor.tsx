@@ -74,7 +74,17 @@ export function NodeRow({ node }: { node: EditableNode }) {
       {open ? (
         <tr>
           <td colSpan={7} className="bg-[var(--color-void)]">
-            <form action={action} className="space-y-3 p-3">
+            {/*
+              Keyed on the row's current values, so saving a cost re-syncs every
+              field from what is now stored rather than leaving the old numbers
+              on screen. See CharacterActions.EditPanel for why `defaultValue`
+              alone is not enough.
+            */}
+            <form
+              key={`${node.name}|${node.cost}|${node.tier}|${node.requiredLevel}|${node.enabled}`}
+              action={action}
+              className="space-y-3 p-3"
+            >
               <input type="hidden" name="nodeId" value={node.id} />
               <div className="flex flex-wrap gap-3">
                 <div className="min-w-[14rem] flex-1">
@@ -136,8 +146,12 @@ export function NodeRow({ node }: { node: EditableNode }) {
               <button type="submit" className="btn" disabled={pending}>
                 {pending ? "Saving…" : "Save"}
               </button>
-              <Result state={state} />
             </form>
+            {/* Outside the keyed form: the save that re-syncs the fields would
+                otherwise take its own confirmation with it. */}
+            <div className="px-3 pb-3">
+              <Result state={state} />
+            </div>
           </td>
         </tr>
       ) : null}
@@ -169,7 +183,11 @@ export function TreeRowEditor({
       </div>
 
       {open ? (
-        <form action={action} className="mt-4 space-y-3">
+        <form
+          key={`${tree.name}|${tree.enabled}`}
+          action={action}
+          className="mt-4 space-y-3"
+        >
           <input type="hidden" name="treeId" value={tree.id} />
           <div className="flex flex-wrap gap-3">
             <div className="min-w-[14rem] flex-1">
@@ -195,9 +213,9 @@ export function TreeRowEditor({
           <button type="submit" className="btn" disabled={pending}>
             {pending ? "Saving…" : "Save"}
           </button>
-          <Result state={state} />
         </form>
       ) : null}
+      {open ? <Result state={state} /> : null}
     </div>
   );
 }

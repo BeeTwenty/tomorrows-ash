@@ -153,7 +153,8 @@ export function GmLevelPanel({
           <label className="label" htmlFor="gm-level">
             Level
           </label>
-          <select id="gm-level" name="level" className="field" defaultValue={String(currentLevel)}>
+          {/* Keyed on the server value; see CharacterActions.EditPanel. */}
+          <select key={currentLevel} id="gm-level" name="level" className="field" defaultValue={String(currentLevel)}>
             {levels.map((level) => (
               <option key={level} value={level}>
                 {level} — {["Player", "Support", "Game master", "Administrator", "Console"][level]}
@@ -191,7 +192,9 @@ export function MutePanel({ accountId, muted }: { accountId: number; muted: bool
           <label className="label" htmlFor="mute-minutes">
             Minutes
           </label>
+          {/* Keyed on the server value; see CharacterActions.EditPanel. */}
           <input
+            key={String(muted)}
             id="mute-minutes"
             name="minutes"
             type="number"

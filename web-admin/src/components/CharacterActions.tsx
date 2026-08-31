@@ -60,13 +60,34 @@ export function EditPanel({
           <label className="label" htmlFor="edit-level">
             Level
           </label>
-          <input id="edit-level" name="level" type="number" className="field" defaultValue={level} min={1} max={80} />
+          {/*
+            Keyed on the server value.
+
+            `defaultValue` only applies at mount, and these components stay
+            mounted across the revalidation that follows a save - so without a
+            key the field goes on showing what was typed even after the save
+            changed it, or after someone else changed it first. Keying the
+            field rather than the form means the result message survives the
+            re-sync. The same pattern is used wherever a field defaults from
+            something an action can change.
+          */}
+          <input
+            key={level}
+            id="edit-level"
+            name="level"
+            type="number"
+            className="field"
+            defaultValue={level}
+            min={1}
+            max={80}
+          />
         </div>
         <div className="w-40">
           <label className="label" htmlFor="edit-gold">
             Gold
           </label>
           <input
+            key={money}
             id="edit-gold"
             name="gold"
             type="number"
