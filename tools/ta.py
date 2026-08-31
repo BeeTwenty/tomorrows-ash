@@ -600,11 +600,30 @@ def cmd_build(args):
         info("  (AzerothCore globs module sources at configure time; skipping this")
         info("   produces undefined-reference link errors for any new file)")
         run(["cmake", str(bdir)], cwd=bdir)
+
     jobs = args.jobs or os.cpu_count() or 4
-    info(f"building with {jobs} parallel jobs (this takes a while on first run)")
-    run(["cmake", "--build", str(bdir), "--parallel", str(jobs)])
+    build_type = getattr(args, "build_type", None)
+
+    # Visual Studio is a multi-config generator. CMAKE_BUILD_TYPE is ignored
+    # by it, so Release/Debug/RelWithDebInfo must be selected explicitly with
+    # --config at build and install time. Single-config generators (Ninja,
+    # Makefiles) do not need this, but accepting --config there is harmless.
+    if IS_WINDOWS:
+        build_type = build_type or load_local().get("build_type", "Release")
+
+    info(f"building {build_type or 'configured'} with {jobs} parallel jobs "
+         "(this takes a while on first run)")
+
+    build_cmd = ["cmake", "--build", str(bdir), "--parallel", str(jobs)]
+    install_cmd = ["cmake", "--install", str(bdir)]
+
+    if build_type:
+        build_cmd += ["--config", build_type]
+        install_cmd += ["--config", build_type]
+
+    run(build_cmd)
     info("installing into dist/")
-    run(["cmake", "--install", str(bdir)], check=False)
+    run(install_cmd)
     ok("build complete")
     return 0
 
@@ -807,7 +826,7 @@ CONF_TEMPLATES = ["authserver", "worldserver"]
 
 def cmd_conf(args):
     cfg = load_local()
-    etc = dist_dir() / "etc"
+    etc = dist_dir() / "configs"
     if not etc.is_dir():
         die(f"{etc} not found - build and install first (`ta.py build`)")
 
@@ -1270,7 +1289,7 @@ def cmd_install(args):
     if args.skip_build:
         warn("skipped (--skip-build)")
     else:
-        binary = dist_dir() / "bin" / ("worldserver.exe" if IS_WINDOWS else "worldserver")
+        binary = dist_dir() / ("worldserver.exe" if IS_WINDOWS else "worldserver")
         if binary.exists() and not args.rebuild:
             ok("worldserver already built - pass --rebuild to force")
         else:
@@ -1280,7 +1299,9 @@ def cmd_install(args):
                 tools="all" if want_tools else "none",
                 generator=args.generator,
                 clean=False))
-            cmd_build(argparse.Namespace(jobs=args.jobs))
+            cmd_build(argparse.Namespace(
+                jobs=args.jobs,
+                build_type=build_type))
 
     # 5 -----------------------------------------------------------------
     step(5, total, "Database")
@@ -1392,11 +1413,11 @@ def looks_like_wow_client(path):
 
 
 def cmd_extract(args):
-    """Run the client-data extractors and file the results where the server looks.
+    """Run client-data extractors with persistent checkpoints.
 
-    This is the single most tedious part of standing up a realm: four tools, in
-    a specific order, run from the client directory, with the output moved
-    somewhere else afterwards. Getting the order wrong wastes hours.
+    Final outputs under data/client/ are checkpoints. Intermediate Buildings/
+    is never a checkpoint. mmaps_generator requires both maps/ and vmaps/ in
+    the WoW client directory, so those inputs are temporarily restored there.
     """
     client = Path(args.client).expanduser().resolve()
     problem = looks_like_wow_client(client)
@@ -1404,73 +1425,167 @@ def cmd_extract(args):
         die(f"{client}: {problem}\n"
             "  Point --client at your WoW 3.3.5a folder - the one containing Wow.exe and Data/.")
 
-    bindir = dist_dir() / "bin"
+    # Windows CMake installs the tools directly in dist/, Linux uses dist/bin/.
+    bindir = dist_dir() if IS_WINDOWS else dist_dir() / "bin"
     if not bindir.is_dir():
         die("extractors not built - run `ta.py build` first")
 
     target = REPO / "data" / "client"
     target.mkdir(parents=True, exist_ok=True)
 
-    steps = list(EXTRACT_STEPS)
+    # Persistent checkpoints. If these exist, their stages are complete and
+    # will never be unnecessarily repeated.
+    stages = [
+        ("map_extractor", ["dbc", "maps"], "DBC and map data", "~10 min"),
+        ("vmap4_pipeline", ["vmaps"], "line-of-sight geometry", "~20 min"),
+        ("mmaps_generator", ["mmaps"], "NPC pathfinding", "HOURS"),
+    ]
+
     if args.skip_mmaps:
-        steps = [s for s in steps if s[0] != "mmaps_generator"]
+        stages = [s for s in stages if s[0] != "mmaps_generator"]
         warn("skipping mmaps: NPC pathfinding will be poor, but the realm runs.")
 
     info(f"extracting from {client}")
     print(f"     output goes to {target.relative_to(REPO)}/")
     print()
 
-    for index, (tool, tool_args, produces, what, duration) in enumerate(steps, start=1):
-        exe = bindir / (tool + (".exe" if IS_WINDOWS else ""))
-        if not exe.exists():
-            die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
-
-        # Skip anything already sitting in the destination, so an interrupted
-        # extraction resumes instead of starting over.
+    for index, (tool, produces, what, duration) in enumerate(stages, start=1):
         if all((target / produced).exists() for produced in produces):
-            ok(f"[{index}/{len(steps)}] {what} - already extracted, skipping")
+            ok(f"[{index}/{len(stages)}] {what} - already extracted, skipping")
             continue
 
-        info(f"[{index}/{len(steps)}] {what} ({duration})")
-        if tool == "mmaps_generator":
-            jobs = args.jobs or os.cpu_count() or 4
-            tool_args = ["--threads", str(jobs)]
-            warn("this is the long one. It is safe to stop and re-run later.")
+        info(f"[{index}/{len(stages)}] {what} ({duration})")
 
-        for produced in produces:
-            (client / produced).mkdir(exist_ok=True) if produced in ("vmaps", "mmaps") else None
+        if tool == "map_extractor":
+            exe = bindir / ("map_extractor.exe" if IS_WINDOWS else "map_extractor")
+            if not exe.exists():
+                die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
 
-        rc = run([str(exe)] + tool_args, cwd=client, check=False)
-        if rc != 0:
-            die(f"{tool} failed ({rc}). Nothing was moved; fix the cause and re-run.")
+            rc = run([str(exe)], cwd=client, check=False)
+            if rc != 0:
+                die(f"map_extractor failed ({rc}). Nothing was moved; fix the cause and re-run.")
 
-        for produced in produces:
-            src = client / produced
-            if not src.exists():
-                die(f"{tool} reported success but produced no {produced}/")
-            if produced == "Buildings":
-                continue          # intermediate, consumed by vmap4_assembler
-            dest = target / produced
+            for produced in produces:
+                src_dir = client / produced
+                if not src_dir.exists():
+                    die(f"map_extractor reported success but produced no {produced}/")
+                dest = target / produced
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                shutil.move(str(src_dir), str(dest))
+                ok(f"  {produced}/ -> {dest.relative_to(REPO)}/")
+            continue
+
+        if tool == "vmap4_pipeline":
+            # vmap4_extractor refuses to work if Buildings/ contains leftovers.
+            buildings = client / "Buildings"
+            if buildings.exists():
+                info("removing stale Buildings/ from a previous extraction")
+                shutil.rmtree(buildings, ignore_errors=True)
+                if buildings.exists():
+                    die(f"could not remove stale extractor output: {buildings}")
+
+            extractor = bindir / ("vmap4_extractor.exe" if IS_WINDOWS else "vmap4_extractor")
+            assembler = bindir / ("vmap4_assembler.exe" if IS_WINDOWS else "vmap4_assembler")
+            if not extractor.exists():
+                die(f"{extractor} missing - was the build run with TOOLS_BUILD=all?")
+            if not assembler.exists():
+                die(f"{assembler} missing - was the build run with TOOLS_BUILD=all?")
+
+            rc = run([str(extractor)], cwd=client, check=False)
+            if rc != 0:
+                die(f"vmap4_extractor failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            if not buildings.is_dir():
+                die("vmap4_extractor reported success but produced no Buildings/")
+
+            rc = run([str(assembler)], cwd=client, check=False)
+            if rc != 0:
+                die(f"vmap4_assembler failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            vmaps = client / "vmaps"
+            if not vmaps.is_dir():
+                die("vmap4_assembler reported success but produced no vmaps/")
+
+            dest = target / "vmaps"
             if dest.exists():
                 shutil.rmtree(dest, ignore_errors=True)
-            shutil.move(str(src), str(dest))
-            ok(f"  {produced}/ -> {dest.relative_to(REPO)}/")
+            shutil.move(str(vmaps), str(dest))
+            ok(f"  vmaps/ -> {dest.relative_to(REPO)}/")
+
+            shutil.rmtree(buildings, ignore_errors=True)
+            continue
+
+        if tool == "mmaps_generator":
+            jobs = args.jobs or os.cpu_count() or 4
+            warn("this is the long one. It is safe to stop and re-run later.")
+
+            # The generator requires BOTH maps and vmaps in its working directory.
+            restored = []
+            for name in ("maps", "vmaps"):
+                client_data = client / name
+                stored_data = target / name
+                if not client_data.exists() and stored_data.is_dir():
+                    info(f"restoring {name}/ beside the client for mmaps_generator")
+                    shutil.move(str(stored_data), str(client_data))
+                    restored.append(name)
+
+            for name in ("maps", "vmaps"):
+                if not (client / name).is_dir():
+                    die(f"cannot run mmaps_generator: {client / name} is missing")
+
+            exe = bindir / ("mmaps_generator.exe" if IS_WINDOWS else "mmaps_generator")
+            if not exe.exists():
+                die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
+
+            rc = run([str(exe), "--threads", str(jobs)], cwd=client, check=False)
+            if rc != 0:
+                # Restore any inputs even on failure so a retry has the same
+                # persistent checkpoint state.
+                for name in restored:
+                    client_data = client / name
+                    stored_data = target / name
+                    if client_data.is_dir():
+                        if stored_data.exists():
+                            shutil.rmtree(stored_data, ignore_errors=True)
+                        shutil.move(str(client_data), str(stored_data))
+                die(f"mmaps_generator failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            mmaps = client / "mmaps"
+            if not mmaps.is_dir():
+                die("mmaps_generator reported success but produced no mmaps/")
+
+            dest = target / "mmaps"
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(mmaps), str(dest))
+            ok(f"  mmaps/ -> {dest.relative_to(REPO)}/")
+
+            # Return maps/vmaps to their persistent repository location.
+            for name in ("maps", "vmaps"):
+                client_data = client / name
+                dest_data = target / name
+                if client_data.is_dir():
+                    if dest_data.exists():
+                        shutil.rmtree(dest_data, ignore_errors=True)
+                    shutil.move(str(client_data), str(dest_data))
+                    ok(f"  {name}/ -> {dest_data.relative_to(REPO)}/")
+            continue
+
+        die(f"unknown extraction step: {tool}")
 
     leftovers = client / "Buildings"
     if leftovers.exists():
         info("removing the Buildings/ intermediate")
         shutil.rmtree(leftovers, ignore_errors=True)
 
-    print()
-    ok("client data ready")
-    print(f"     {target.relative_to(REPO)}/ now holds: "
-          f"{', '.join(sorted(d.name for d in target.iterdir() if d.is_dir()))}")
+    ok("client extraction complete")
     return 0
 
 
 def cmd_run(args):
     binary = "authserver" if args.target == "auth" else "worldserver"
-    exe = dist_dir() / "bin" / (binary + (".exe" if IS_WINDOWS else ""))
+    exe = dist_dir() / (binary + (".exe" if IS_WINDOWS else ""))
     if not exe.exists():
         die(f"{exe} not found - run `ta.py build` first")
     info(f"starting {binary} (Ctrl+C to stop)")
@@ -2532,6 +2647,8 @@ def main():
 
     p = sub.add_parser("build", help="compile the server")
     p.add_argument("-j", "--jobs", type=int, help="parallel jobs (default: all cores)")
+    p.add_argument("--build-type", choices=["Release", "RelWithDebInfo", "Debug"],
+                   help="build configuration; especially important for Visual Studio")
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("db", help="database lifecycle")

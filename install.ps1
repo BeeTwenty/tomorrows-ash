@@ -55,24 +55,6 @@ $ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 
 function Get-PythonVersion {
-    <#
-        Returns "3.14" for a usable Python 3.8+, or $null. Never throws.
-        Also returns the raw output via [ref] so failures can explain themselves.
-
-        Uses --version rather than `-c <code>`, deliberately. Windows PowerShell
-        5.1 mangles embedded double quotes when handing arguments to a native
-        command, so a probe like
-
-            -c 'import sys; print("MARKER %d" % sys.version_info[0])'
-
-        arrives at Python with the inner quotes stripped, fails to parse, and
-        the interpreter gets reported as unusable. --version takes no argument
-        at all, so there is nothing to mangle.
-
-        Checking the output rather than the exit code also rejects things that
-        exit 0 without being Python - /bin/echo and the Microsoft Store's
-        python.exe stub among them.
-    #>
     param(
         [Parameter(Mandatory)] [string] $Exe,
         [switch] $UsePyLauncher,
@@ -93,8 +75,6 @@ function Get-PythonVersion {
     $text = ($output | Out-String).Trim()
     if ($RawOutput) { $RawOutput.Value = $text }
 
-    # Python 3 prints "Python 3.14.0" on stdout; Python 2 puts it on stderr,
-    # which 2>&1 captures too. Either way the major version rules Python 2 out.
     if ($text -notmatch 'Python\s+(\d+)\.(\d+)') { return $null }
 
     $major = [int] $Matches[1]
@@ -104,8 +84,6 @@ function Get-PythonVersion {
 }
 
 function Find-Python {
-    # -CommandType Application so a PowerShell alias or function named 'python'
-    # cannot shadow the real interpreter.
     $script:PythonAttempts = @()
     foreach ($candidate in @('python', 'python3', 'py')) {
         $cmd = Get-Command $candidate -CommandType Application -ErrorAction SilentlyContinue |
@@ -186,8 +164,8 @@ if ($SkipMmaps)    { $taArgs += '--skip-mmaps' }
 if ($Reconfigure)  { $taArgs += '--reconfigure' }
 if ($Yes)          { $taArgs += '--yes' }
 
-# An array passed to a native command is unrolled into separate arguments, so
-# this needs no splatting - which is what went wrong in the probe above.
+# An array passed to a native command is unrolled into separate arguments.
+# Do not use PowerShell splatting here.
 if ($python.UsePyLauncher) {
     & $python.Exe -3 $taArgs
 } else {
