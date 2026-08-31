@@ -963,6 +963,7 @@ never touches `~/.wine` or any prefix belonging to another game.
 | `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
 | `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
 | `install.ps1` : `NativeCommandError` naming Python | interpreter detection tripped over your Python. Point at it directly: `.\install.ps1 -PythonPath 'C:\Path\To\python.exe'` |
+| "not a usable Python 3.8+" for a Python you know is fine | the message now prints what `--version` returned — send that. Detection needs `Python X.Y` in that output |
 | "Python 3.8+ is required and was not found" but it is installed | `python` may be the Microsoft Store stub. Use `-PythonPath`, or reinstall from python.org ticking *Add python.exe to PATH* |
 | Installer stopped partway | just run it again — it skips whatever already succeeded |
 | `extract` rejects your client path | it wants the folder holding `Wow.exe` and `Data/`, not `Data/` itself |

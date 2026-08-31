@@ -54,43 +54,48 @@ param(
 $ErrorActionPreference = 'Continue'
 Set-Location -Path $PSScriptRoot
 
-function Test-PythonCandidate {
+function Get-PythonVersion {
     <#
-        Is this executable really a Python 3.8+? Returns the version string, or
-        $null. Never throws.
+        Returns "3.14" for a usable Python 3.8+, or $null. Never throws.
+        Also returns the raw output via [ref] so failures can explain themselves.
 
-        Checks the OUTPUT rather than the exit code. Plenty of things exit 0
-        when handed `-c <string>` without being Python at all - /bin/echo does,
-        and so does the Microsoft Store's python.exe stub. Accepting one of
-        those produces a confusing failure much later instead of here.
+        Uses --version rather than `-c <code>`, deliberately. Windows PowerShell
+        5.1 mangles embedded double quotes when handing arguments to a native
+        command, so a probe like
 
-        The marker is assembled from the version numbers at runtime, so an
-        executable that merely echoes its arguments back cannot produce it: the
-        literal source text has no digits where the pattern needs them.
+            -c 'import sys; print("MARKER %d" % sys.version_info[0])'
 
-        Deliberately avoids splatting (@array) and lets nothing reach the error
-        stream: on Windows PowerShell 5.1 a dropped argument makes python start
-        its REPL, whose banner then surfaces as a NativeCommandError rather than
-        as "wrong version". Both look nothing like the real cause.
+        arrives at Python with the inner quotes stripped, fails to parse, and
+        the interpreter gets reported as unusable. --version takes no argument
+        at all, so there is nothing to mangle.
+
+        Checking the output rather than the exit code also rejects things that
+        exit 0 without being Python - /bin/echo and the Microsoft Store's
+        python.exe stub among them.
     #>
     param(
         [Parameter(Mandatory)] [string] $Exe,
-        [switch] $UsePyLauncher
+        [switch] $UsePyLauncher,
+        [ref] $RawOutput
     )
 
-    $code = 'import sys; print("TA_PYTHON %d %d" % sys.version_info[:2])'
     try {
         if ($UsePyLauncher) {
-            $output = & $Exe -3 -c $code 2>&1
+            $output = & $Exe -3 --version 2>&1
         } else {
-            $output = & $Exe -c $code 2>&1
+            $output = & $Exe --version 2>&1
         }
     } catch {
+        if ($RawOutput) { $RawOutput.Value = $_.Exception.Message }
         return $null
     }
 
-    $text = ($output | Out-String)
-    if ($text -notmatch 'TA_PYTHON (\d+) (\d+)') { return $null }
+    $text = ($output | Out-String).Trim()
+    if ($RawOutput) { $RawOutput.Value = $text }
+
+    # Python 3 prints "Python 3.14.0" on stdout; Python 2 puts it on stderr,
+    # which 2>&1 captures too. Either way the major version rules Python 2 out.
+    if ($text -notmatch 'Python\s+(\d+)\.(\d+)') { return $null }
 
     $major = [int] $Matches[1]
     $minor = [int] $Matches[2]
@@ -101,18 +106,25 @@ function Test-PythonCandidate {
 function Find-Python {
     # -CommandType Application so a PowerShell alias or function named 'python'
     # cannot shadow the real interpreter.
+    $script:PythonAttempts = @()
     foreach ($candidate in @('python', 'python3', 'py')) {
         $cmd = Get-Command $candidate -CommandType Application -ErrorAction SilentlyContinue |
                Select-Object -First 1
-        if (-not $cmd) { continue }
+        if (-not $cmd) {
+            $script:PythonAttempts += "  $candidate : not on PATH"
+            continue
+        }
 
         $isPyLauncher = ($candidate -eq 'py')
-        $version = Test-PythonCandidate -Exe $cmd.Source -UsePyLauncher:$isPyLauncher
+        $raw = ''
+        $version = Get-PythonVersion -Exe $cmd.Source -UsePyLauncher:$isPyLauncher -RawOutput ([ref] $raw)
         if ($version) {
             return [pscustomobject]@{
                 Exe = $cmd.Source; UsePyLauncher = $isPyLauncher; Version = $version
             }
         }
+        $shown = if ($raw) { $raw -replace '\r?\n', ' / ' } else { '(no output)' }
+        $script:PythonAttempts += "  $($cmd.Source) -> $shown"
     }
     return $null
 }
@@ -123,9 +135,13 @@ if ($PythonPath) {
         exit 1
     }
     $resolved = (Resolve-Path $PythonPath).Path
-    $version = Test-PythonCandidate -Exe $resolved
+    $raw = ''
+    $version = Get-PythonVersion -Exe $resolved -RawOutput ([ref] $raw)
     if (-not $version) {
         Write-Host "$resolved is not a usable Python 3.8+." -ForegroundColor Red
+        Write-Host "  Running it with --version produced:" -ForegroundColor Yellow
+        Write-Host "    $(if ($raw) { $raw } else { '(no output)' })"
+        Write-Host "  Python 3.8 or newer is required."
         exit 1
     }
     $python = [pscustomobject]@{ Exe = $resolved; UsePyLauncher = $false; Version = $version }
@@ -136,6 +152,11 @@ if ($PythonPath) {
 if (-not $python) {
     Write-Host "Python 3.8+ is required and was not found." -ForegroundColor Red
     Write-Host ""
+    if ($script:PythonAttempts) {
+        Write-Host "  Tried, and what each returned for --version:" -ForegroundColor Yellow
+        $script:PythonAttempts | ForEach-Object { Write-Host $_ }
+        Write-Host ""
+    }
     Write-Host "  Install it from https://www.python.org/downloads/"
     Write-Host "  Tick 'Add python.exe to PATH' during setup, then reopen PowerShell."
     Write-Host ""
