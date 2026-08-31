@@ -21,7 +21,7 @@ This guide covers **Windows** and **Linux**. Everything runs through one helper,
 | Boost | 1.78+ prebuilt, msvc-14.3 | `libboost-all-dev` |
 | OpenSSL | Win64 OpenSSL **3.x** | `libssl-dev` |
 | MySQL | MySQL Server 8.x | Docker **or** `mysql-server` |
-| MySQL **client** | comes with MySQL Server | `mysql-client` ← **needed even with Docker** |
+| MySQL **client** | comes with MySQL Server (usually **not** on PATH — the installer finds it) | `mysql-client` ← **needed even with Docker** |
 
 **Also required, separately:** a **World of Warcraft 3.3.5a (build 12340)**
 client. Not distributed here, not downloadable from this repo. You need your own
@@ -967,7 +967,9 @@ never touches `~/.wine` or any prefix belonging to another game.
 | "Python 3.8+ is required and was not found" but it is installed | `python` may be the Microsoft Store stub. Use `-PythonPath`, or reinstall from python.org ticking *Add python.exe to PATH* |
 | Installer stopped partway | just run it again — it skips whatever already succeeded |
 | `extract` rejects your client path | it wants the folder holding `Wow.exe` and `Data/`, not `Data/` itself |
-| Server starts, database stays empty | no `mysql` client on PATH — see section 0 |
+| Server starts, database stays empty | no `mysql` client found — see section 0 |
+| Installer stops at step 5 saying `mysql` is missing | expected: it's needed to import SQL, not to build. Install MySQL Server and re-run; everything already done is skipped |
+| `mysql` installed on Windows but "not found" | it lives in `C:\Program Files\MySQL\MySQL Server 8.x\bin` and isn't on PATH. The installer now looks there itself — if yours is elsewhere, add that `bin` folder to PATH |
 | `Could not find DBC file` / instant exit | client data missing — section 6 |
 | Client: "unable to connect" | authserver not running, or `realmlist.wtf` wrong |
 | Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 8 step 3 |

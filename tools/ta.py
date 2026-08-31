@@ -159,6 +159,56 @@ def need(tool, hint):
 # doctor
 # --------------------------------------------------------------------------
 
+def find_mysql_client():
+    """Locate the `mysql` client binary, on PATH or in the usual install dirs.
+
+    AzerothCore's SQL updater shells out to this to import .sql files, so a
+    realm cannot be set up without it. On Windows it ships with MySQL Server but
+    lands in Program Files and is almost never added to PATH, which made the
+    installer refuse to run on a machine that had everything it needed.
+    """
+    found = shutil.which("mysql")
+    if found:
+        return found
+
+    candidates = []
+    if IS_WINDOWS:
+        for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                     "C:\\"):   # a raw string cannot end in a backslash
+            base = Path(root)
+            if not base.is_dir():
+                continue
+            # MySQL Server 8.x, MariaDB, and the XAMPP/Laragon bundles.
+            candidates += list(base.glob("MySQL/MySQL Server */bin/mysql.exe"))
+            candidates += list(base.glob("MariaDB */bin/mysql.exe"))
+            candidates += list(base.glob("xampp/mysql/bin/mysql.exe"))
+            candidates += list(base.glob("laragon/bin/mysql/*/bin/mysql.exe"))
+    elif platform.system() == "Darwin":
+        candidates += [Path("/opt/homebrew/opt/mysql-client/bin/mysql"),
+                       Path("/usr/local/opt/mysql-client/bin/mysql"),
+                       Path("/opt/homebrew/bin/mysql"),
+                       Path("/usr/local/mysql/bin/mysql")]
+    else:
+        candidates += [Path("/usr/bin/mysql"), Path("/usr/local/bin/mysql"),
+                       Path("/usr/local/mysql/bin/mysql")]
+
+    for candidate in sorted(candidates, reverse=True):   # prefer newer versions
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def mysql_client_hint():
+    """Platform-correct advice for installing the client."""
+    if IS_WINDOWS:
+        return ("comes with MySQL Server 8.x - https://dev.mysql.com/downloads/installer/ - "
+                "or add its bin\\ folder to PATH if already installed")
+    if platform.system() == "Darwin":
+        return "brew install mysql-client"
+    return "sudo apt install mysql-client (or mariadb-client)"
+
+
 def cmd_doctor(args):
     cfg = load_local()
     up = load_upstream()
@@ -187,12 +237,25 @@ def cmd_doctor(args):
 
     check("git", "install Git")
     check("cmake", "install CMake 3.16+")
-    check("mysql", "mysql CLIENT binary; AzerothCore needs it to apply SQL updates "
-                   "(Linux: apt install mysql-client)")
+
+    # Not fatal here on purpose. It is not needed to fetch or compile anything,
+    # and failing before a 20-60 minute build for something wanted at the end of
+    # it wastes the operator's evening - they can install it while that runs.
+    mysql_client = find_mysql_client()
+    if mysql_client:
+        rc, out, _ = capture([mysql_client, "--version"])
+        first = out.splitlines()[0] if out else ""
+        ok(f"{'mysql':<10} {first[:60]}")
+        if not shutil.which("mysql"):
+            print(f"             found off PATH at {mysql_client}")
+    else:
+        warn(f"{'mysql':<10} not found - {mysql_client_hint()}")
+        print("             Needed before the FIRST SERVER START, not to build.")
+
     check("docker", "needed for `ta.py db up`; skip if you run MySQL natively", required=False)
 
     if IS_WINDOWS:
-        warn("On Windows the compiler comes from Visual Studio - see SETUP.md")
+        warn("On Windows the compiler comes from Visual Studio 2022 - see SETUP.md section 3")
     else:
         check("make", "apt install build-essential", required=False)
         check("ninja", "apt install ninja-build (optional, faster)", required=False)
@@ -627,13 +690,12 @@ def cmd_conf(args):
     # AzerothCore's built-in SQL updater shells out to the `mysql` client to
     # import .sql files. Without it the server starts but silently applies no
     # database updates, so point at it explicitly when we can find one.
-    mysql_bin = shutil.which("mysql")
+    mysql_bin = find_mysql_client()
     if mysql_bin:
         replacements["MySQLExecutable"] = str(Path(mysql_bin).as_posix())
     else:
-        warn("no `mysql` client on PATH - AzerothCore cannot apply SQL updates.")
-        warn("  Linux:   sudo apt install mysql-client")
-        warn("  Windows: install MySQL Server (its bin/ contains mysql.exe)")
+        warn("no `mysql` client found - AzerothCore cannot apply SQL updates.")
+        warn(f"  {mysql_client_hint()}")
 
     for name in CONF_TEMPLATES:
         dist_file = etc / f"{name}.conf.dist"
@@ -1108,6 +1170,19 @@ def cmd_install(args):
         return 1
 
     ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
+
+    # Enforced here rather than at step 1: it is not needed to fetch or compile
+    # anything, so blocking the build on it wastes an evening. But the server
+    # cannot import its ~800 MB of SQL without it, so it must exist by now.
+    if not find_mysql_client():
+        warn("the `mysql` client binary is still missing.")
+        print(f"     {mysql_client_hint()}")
+        print()
+        print("     AzerothCore shells out to it to import its SQL. Without it the")
+        print("     server starts and silently applies no database updates.")
+        print("     Everything above is done; install it and re-run.")
+        return 1
+
     cmd_db(argparse.Namespace(action="init"))
 
     # 6 -----------------------------------------------------------------
