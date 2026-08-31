@@ -2,7 +2,7 @@
 #
 #   .\install.ps1                                  guided setup - asks about the choices
 #   .\install.ps1 -ClientPath 'C:\Games\WoW335'    ...and extract client data too
-#   .\install.ps1 -Db local -DbUser root           answer some questions up front
+#   .\install.ps1 -Database local -DbUser root      answer some questions up front
 #   .\install.ps1 -Yes                             ask nothing, take defaults
 #
 # If PowerShell refuses to run this, it is the execution policy, not the script:
@@ -14,8 +14,11 @@
 [CmdletBinding()]
 param(
     # Leave everything unset to be asked about it interactively.
+    # NOT -Db: 'db' is the built-in alias for the -Debug common parameter that
+    # [CmdletBinding()] adds, and PowerShell rejects the script outright with
+    # "conflicts with the parameter alias of the same name".
     [ValidateSet('docker', 'local', 'remote')]
-    [string] $Db,
+    [string] $Database,
     [string] $DbHost,
     [string] $DbPort,
     [string] $DbUser,
@@ -68,7 +71,7 @@ if (-not $python) {
 # Linux and macOS, where a backslash is not a path separator.
 $taPath = Join-Path -Path 'tools' -ChildPath 'ta.py'
 $taArgs = @($taPath, 'install')
-if ($Db)           { $taArgs += @('--db', $Db) }
+if ($Database)     { $taArgs += @('--db', $Database) }
 if ($DbHost)       { $taArgs += @('--db-host', $DbHost) }
 if ($DbPort)       { $taArgs += @('--db-port', $DbPort) }
 if ($DbUser)       { $taArgs += @('--db-user', $DbUser) }

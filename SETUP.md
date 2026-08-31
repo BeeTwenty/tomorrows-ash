@@ -72,13 +72,13 @@ setup and an unattended rebuild. A question whose flag is supplied is not asked.
              --realm-address 192.168.1.50 --build-type Release
 
 # Windows
-.\install.ps1 -Db remote -DbHost db.homelab.lan -DbUser acore `
+.\install.ps1 -Database remote -DbHost db.homelab.lan -DbUser acore `
               -RealmAddress 192.168.1.50 -BuildType Release
 ```
 
 | `install.sh` | `install.ps1` | Values | What it does |
 |---|---|---|---|
-| `--db` | `-Db` | `docker` `local` `remote` | Where MySQL lives |
+| `--db` | `-Database` | `docker` `local` `remote` | Where MySQL lives (not `-Db`: PowerShell reserves that as an alias for `-Debug`) |
 | `--db-host` | `-DbHost` | hostname or IP | Database host (`local`/`remote`) |
 | `--db-port` | `-DbPort` | port | Database port, default `3306` |
 | `--db-user` | `-DbUser` | username | Needs `CREATE DATABASE`; default `root` |

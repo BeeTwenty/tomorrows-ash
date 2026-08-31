@@ -22,6 +22,40 @@ jobs:
       - name: ta.py --help works
         run: python tools/ta.py --help
 
+      - name: install.ps1 parameters do not collide with PowerShell's own
+        shell: pwsh
+        run: |
+          # A parameter named -Db is rejected outright at binding time, because
+          # 'db' is the built-in alias for -Debug that [CmdletBinding()] adds.
+          # The script then fails for everyone before it runs a single line, and
+          # a parse check does NOT catch it - this was shipped once already.
+          $reserved = @{}
+          foreach ($p in [System.Management.Automation.Internal.CommonParameters].GetProperties()) {
+            $reserved[$p.Name] = $p.Name
+            foreach ($a in $p.GetCustomAttributes([System.Management.Automation.AliasAttribute], $false)) {
+              foreach ($n in $a.AliasNames) { $reserved[$n] = $p.Name }
+            }
+          }
+
+          $text = Get-Content install.ps1 -Raw
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$errors)
+          if ($errors) { $errors | ForEach-Object { $_.Message }; exit 1 }
+
+          $names = $ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }
+          $bad = @()
+          foreach ($n in $names) {
+            $hit = $reserved.Keys | Where-Object { $_ -eq $n }
+            if ($hit) { $bad += "  -$n conflicts with the common parameter -$($reserved[$hit])" }
+          }
+          if ($bad) {
+            Write-Host "install.ps1 declares parameters PowerShell reserves:"
+            $bad | ForEach-Object { Write-Host $_ }
+            Write-Host "Rename them - the script cannot run at all otherwise."
+            exit 1
+          }
+          Write-Host "install.ps1: $($names.Count) parameters, none reserved by PowerShell"
+
       - name: SETUP.md documents every installer flag
         run: |
           python - <<'PY'
