@@ -17,9 +17,37 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../web/src/lib/*"]
+
+      // Shared code from the public site, named ONE MODULE AT A TIME.
+      //
+      // A wildcard here (`"@shared/*": ["../web/src/lib/*"]`) is what this
+      // originally had, and it was wrong in a way that only CI noticed: it made
+      // every file in web/src/lib reachable, including db.ts, env.ts,
+      // session.ts and accounts.ts. Those carry the public site's database
+      // pool and its notion of who is signed in - the two things this app must
+      // never inherit, because the separation between ash_web and ash_admin is
+      // the actual security boundary (docs/decisions/0008-admin-panel.md).
+      //
+      // Listing them individually makes the rule something the compiler
+      // enforces rather than something a reviewer has to remember. Adding a
+      // fourth is a deliberate line in this file, and the only modules
+      // eligible are pure ones: no database, no environment, no session.
+      "@shared/srp6": ["../web/src/lib/srp6.ts"],
+      "@shared/limits": ["../web/src/lib/limits.ts"],
+      "@shared/wow": ["../web/src/lib/wow.ts"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "../web/src/lib/*.ts"],
-  "exclude": ["node_modules", "../web/src/lib/*.test.ts"]
+  // The shared files are listed here too, and just as narrowly. `include`ing
+  // the directory would typecheck the whole of web/src/lib against this app's
+  // dependencies - which is exactly how CI found the wildcard above.
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "../web/src/lib/srp6.ts",
+    "../web/src/lib/limits.ts",
+    "../web/src/lib/wow.ts"
+  ],
+  "exclude": ["node_modules"]
 }

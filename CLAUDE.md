@@ -292,9 +292,13 @@ Two Next.js apps buys little on its own. **Two database users** is the boundary:
 the panel into `web/` would put `account_access` inside the blast radius of every
 marketing page.
 
-So: **only pure modules are shared** — `srp6`, `limits`, `wow`, through the
-`@shared/*` alias. `db.ts`, `env.ts` and `session.ts` are duplicated on purpose.
-Merging them is how the two processes end up with one set of privileges.
+So: **only pure modules are shared** — `srp6`, `limits`, `wow` — and
+`web-admin/tsconfig.json` maps those three *by name*. Not a `@shared/*`
+wildcard: that was the first attempt, it made `db.ts`, `env.ts` and
+`session.ts` reachable, and it typechecked locally purely because
+`web/node_modules` was installed. `@shared/db` is now a compile error. Adding a
+fourth shared module is a deliberate line in that file, and only a pure module
+qualifies — no database, no environment, no session.
 
 ### Traps specific to this third
 

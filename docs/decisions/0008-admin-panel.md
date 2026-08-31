@@ -40,12 +40,17 @@ then sit inside a blast radius that includes `account_access`. The separation is
 not two Next.js apps for tidiness — it is **two database users**, and that is the
 boundary that actually holds when the application layer is wrong.
 
-The costs are real and accepted: two deployments, two sets of environment
-variables, and a shared-code rule that has to be enforced by review. Only pure
-modules are shared (`srp6`, `limits`, `wow` — via a `@shared/*` path alias);
-`db.ts`, `env.ts` and `session.ts` are deliberately duplicated rather than
-imported, because sharing them is exactly how the two processes would end up
-with one set of privileges.
+The costs are real and accepted: two deployments and two sets of environment
+variables. The shared-code rule, though, is not left to review — `tsconfig.json`
+maps exactly three pure modules by name (`srp6`, `limits`, `wow`) rather than
+exposing `web/src/lib` through a wildcard, so importing `db.ts`, `env.ts` or
+`session.ts` from here does not compile. Those three are duplicated on purpose:
+sharing them is exactly how the two processes would end up with one set of
+privileges.
+
+(The wildcard was the first attempt, and it typechecked locally only because
+`web/node_modules` happened to be installed. CI, which installs neither app's
+dependencies for the other, is what caught it.)
 
 ### Identity from the game account, authorization from `account_access`
 

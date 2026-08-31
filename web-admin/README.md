@@ -247,10 +247,12 @@ npx tsx --test src/lib/roles.test.ts   # one file
 
 ### Rules for changing this codebase
 
-- **Only pure modules are shared with `web/`.** `srp6`, `limits` and `wow`, via
-  the `@shared/*` alias. `db.ts`, `env.ts` and `session.ts` are duplicated on
-  purpose: sharing them is how the two processes end up with one set of
-  privileges.
+- **Only pure modules are shared with `web/`**, and `tsconfig.json` enforces it.
+  The three — `srp6`, `limits`, `wow` — are mapped by name, not by a `@shared/*`
+  wildcard. A wildcard is what this had first, and it made `db.ts`, `env.ts` and
+  `session.ts` reachable: the public site's database pool and its notion of who
+  is signed in, the two things this app must never inherit. `import ... from
+  "@shared/db"` is now a compile error, not a code-review question.
 - **Never widen a grant to make something work.** If the panel needs a privilege
   it does not have, that is a design question first.
 - **Never build a console command from unvalidated input.** `soap.ts` exports
