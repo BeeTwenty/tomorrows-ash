@@ -53,5 +53,7 @@ __pycache__/
 node_modules/
 package-lock.json
 # ...except the launcher's, which ships as a binary to players: the exact
-# dependency set has to be reproducible from the tag that built it.
+# dependency set has to be reproducible from the tag that built it, and the
+# release workflow runs `npm ci`, which fails outright without a lockfile.
+!launcher/package-lock.json
 !launcher/ui/package-lock.json
