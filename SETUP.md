@@ -713,30 +713,63 @@ the backup always holds what *you* had.
 
 ### 10.2 Building the desktop launcher
 
-**Prerequisites** on top of Rust 1.77+ and Node 20+:
+Two commands from `launcher/`, once the prerequisites are there:
 
 ```bash
-# Linux (Ubuntu/Debian)
+cd launcher
+npm install      # brings the Tauri CLI and ui/'s dependencies; nothing global
+npm run build
+```
+
+**A platform builds only for itself.** Linux produces an AppImage and a `.deb`;
+Windows produces an `.exe` and an `.msi`. Cross-compiling a Windows launcher
+from Linux is not realistically supported, so the `.exe` needs a Windows machine
+or the release workflow (section 10.6).
+
+**Windows prerequisites:** Rust ([rustup.rs](https://rustup.rs)), Node 20+, and
+the **MSVC build tools** — Visual Studio's "Desktop development with C++"
+workload, which section 2.1 already installs for the server. WebView2 ships with
+Windows 10 21H2 and later. Without the build tools the first `cargo` step fails
+with `link.exe not found`; `rustup` does not install a linker for you.
+
+**Linux prerequisites:**
+
+```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
-                 libayatana-appindicator3-dev librsvg2-dev
+                 libayatana-appindicator3-dev librsvg2-dev file patchelf
 ```
 
-On **Windows**, WebView2 ships with Windows 10 21H2 and later, so the MSVC build
-tools are all you need.
+`file` and `patchelf` are only needed to package the AppImage, and their absence
+fails late in an otherwise successful build — install them up front.
+
+**What you get**, under `launcher/src-tauri/target/release/`:
+
+| Platform | File |
+|---|---|
+| Windows | `bundle\nsis\Ashmorrow_0.1.0_x64-setup.exe` — the installer to hand a player |
+| Windows | `bundle\msi\Ashmorrow_0.1.0_x64_en-US.msi` — for policy deployment |
+| Linux | `bundle/appimage/Ashmorrow_0.1.0_amd64.AppImage` — runs anywhere |
+| Linux | `bundle/deb/Ashmorrow_0.1.0_amd64.deb` |
+
+First build takes 5–15 minutes; it compiles Tauri's dependency tree once.
+
+Run it while working on it, pointed at a local website:
 
 ```bash
-cd launcher/ui && npm install && cd ..
-cargo install tauri-cli --version '^2' --locked
-
-cargo tauri dev      # run it
-cargo tauri build    # bundle it -> src-tauri/target/release/bundle/
+ASHMORROW_BASE_URL=http://127.0.0.1:3000 npm run dev
 ```
 
-Point it at a site other than production with `ASHMORROW_BASE_URL`:
+**When it fails, run `npx tauri info` from `launcher/`** — it prints every
+prerequisite with a tick or a cross beside it, and is the first thing to paste
+into a bug report.
 
-```bash
-ASHMORROW_BASE_URL=http://127.0.0.1:3000 cargo tauri dev
-```
+| Symptom | Cause |
+|---|---|
+| `webkit2gtk-4.1: not installed` from `tauri info` | the Linux list above |
+| `try setting PKG_CONFIG_PATH to the directory containing gdk-3.0.pc` | the same thing, as the compiler phrases it |
+| `link.exe not found` (Windows) | MSVC build tools missing, not Rust |
+| `failed to bundle project` after a clean compile | `patchelf` or `file` missing. The Rust built fine |
+| `beforeBuildCommand ... failed` | the interface did not build — run `npm run build` in `launcher/ui` alone to see why |
 
 ### 10.3 Working on it without a webview
 
@@ -821,7 +854,32 @@ never touches `~/.wine` or any prefix belonging to another game.
 | Proton fails immediately | it needs Steam installed, not just the Proton folder — the launcher reports which of the two is missing |
 | Fonts are boxes | `winetricks corefonts` in the launcher's prefix |
 
-### 10.6 Launcher troubleshooting
+### 10.6 Cutting a release
+
+Tag it; CI builds both platforms:
+
+```bash
+git tag launcher-v0.1.0
+git push origin launcher-v0.1.0
+```
+
+`.github/workflows/release.yml` runs `windows-latest` and `ubuntu-22.04` in
+parallel, tests the launcher core, builds each platform's bundles, writes
+`SHA256SUMS.txt` and opens a **draft** release with everything attached. Draft,
+so you look before anyone downloads.
+
+To check a build without tagging, run the workflow by hand from the Actions tab:
+it builds and leaves the installers as workflow artifacts, publishing nothing.
+
+The binaries are unsigned by choice ([ADR 0005](docs/decisions/0005-client-distribution.md) §6),
+which is why the sums are published alongside them.
+
+> **Never run.** The workflow is written and its structure checked, but nothing
+> in this project has yet built the Tauri shell — the sandbox it was written in
+> has no webview. The first real run will be the first time anyone finds out
+> what it gets wrong.
+
+### 10.7 Launcher troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
@@ -850,7 +908,7 @@ never touches `~/.wine` or any prefix belonging to another game.
 | `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
-Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.6](#106-launcher-troubleshooting).
+Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.7](#107-launcher-troubleshooting).
 
 Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
 or `python3 tools/ta.py web doctor` for the website.

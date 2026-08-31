@@ -111,7 +111,7 @@ jobs:
           python3 - <<'PY'
           import json, pathlib, sys, re
           bad = []
-          for path in ["web/package.json", "launcher/ui/package.json"]:
+          for path in ["web/package.json", "launcher/ui/package.json", "launcher/package.json"]:
               got = json.loads(pathlib.Path(path).read_text()).get("license")
               if got != "GPL-2.0-or-later":
                   bad.append(f"{path}: license is {got!r}")

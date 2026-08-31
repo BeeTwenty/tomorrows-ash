@@ -62,47 +62,177 @@ flag for exactly that reason.
 
 ## Building it
 
-**Prerequisites:** Rust 1.77+, Node 20+, and on Linux the WebKitGTK development
-package.
+**The short version.** You need Rust, Node, and — on Linux only — a handful of
+system libraries. Then two commands from `launcher/`:
 
-```bash
-# Linux
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
-                 libayatana-appindicator3-dev librsvg2-dev
-
-cd launcher/ui && npm install && cd ..
-cargo install tauri-cli --version '^2' --locked
-
-cargo tauri dev     # run it
-cargo tauri build   # bundle it
+```
+npm install
+npm run build
 ```
 
-**On Windows**, WebView2 ships with Windows 10 21H2 and later, so there is
-nothing to install beyond Rust, Node and the MSVC build tools.
+That is the whole build. It compiles the Rust, builds the interface, and
+produces installers. There is no global tool to install: the Tauri CLI is a dev
+dependency of `launcher/package.json`, so `npm install` brings it — and brings
+`ui/`'s dependencies too, through a `postinstall`, so one install covers both.
 
-Bundles land in `src-tauri/target/release/bundle/`.
+**A platform builds only for itself.** `npm run build` on Linux produces an
+AppImage and a `.deb`; on Windows it produces an `.exe` and an `.msi`.
+Cross-compiling a Windows launcher from Linux is not realistically supported by
+Tauri, so **there is no way to produce the `.exe` except on a Windows machine or
+on a Windows CI runner.** If you have no Windows machine, skip to
+[Releases](#releases) — that is what the workflow is for.
+
+### Windows — producing the `.exe`
+
+**Prerequisites**
+
+| | Where |
+|---|---|
+| Rust | [rustup.rs](https://rustup.rs) — the default `stable-msvc` toolchain |
+| Node 20+ | [nodejs.org](https://nodejs.org) |
+| MSVC build tools | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), workload **"Desktop development with C++"**. Full Visual Studio works too — SETUP §2.1 already has it for the server |
+| WebView2 | Already present on Windows 10 21H2 and later. Nothing to do |
+
+`rustup` will not install the MSVC linker for you; that is what the build tools
+are for. Without them the first `cargo` step fails with `link.exe not found`.
+
+**Build**
+
+```powershell
+cd launcher
+npm install
+npm run build
+```
+
+First build is 5–15 minutes — it compiles Tauri and its dependency tree from
+source. Subsequent builds are seconds unless you touch the Rust.
+
+**What you get**, under `launcher\src-tauri\target\release\`:
+
+| File | What it is |
+|---|---|
+| `bundle\nsis\Ashmorrow_0.1.0_x64-setup.exe` | **The installer.** This is the one you hand to a player |
+| `bundle\msi\Ashmorrow_0.1.0_x64_en-US.msi` | Same thing for anyone deploying by group policy |
+| `ashmorrow-launcher.exe` | The bare executable. Runs, but installs no shortcut and cannot self-update |
+
+The version in those names comes from `version` in
+`src-tauri/tauri.conf.json`, so it moves when you bump a release.
+
+### Linux — producing the AppImage and `.deb`
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
+                 libayatana-appindicator3-dev librsvg2-dev file patchelf
+
+cd launcher
+npm install
+npm run build
+```
+
+`patchelf` and `file` are only needed for the AppImage, and their absence
+produces a confusing failure late in an otherwise successful build, so install
+them up front. On Fedora the equivalents are `webkit2gtk4.1-devel`,
+`openssl-devel`, `librsvg2-devel` and `patchelf`.
+
+**What you get**, under `launcher/src-tauri/target/release/`:
+
+| File | What it is |
+|---|---|
+| `bundle/appimage/Ashmorrow_0.1.0_amd64.AppImage` | Runs on any distribution. `chmod +x` and go |
+| `bundle/deb/Ashmorrow_0.1.0_amd64.deb` | For Debian and Ubuntu |
+| `ashmorrow-launcher` | The bare binary |
+
+An AppImage inherits the glibc of the machine that built it, so one built on a
+current Ubuntu will refuse to start on an older distribution. That is why the
+release workflow pins `ubuntu-22.04`.
+
+### Running it while you work on it
+
+```bash
+cd launcher
+npm run dev
+```
+
+Hot-reloads the interface and rebuilds the Rust when it changes. Point it at a
+website other than production with `ASHMORROW_BASE_URL`:
+
+```bash
+ASHMORROW_BASE_URL=http://127.0.0.1:3000 npm run dev
+```
+
+### Only some bundles
+
+```bash
+npm run build -- --bundles nsis        # just the .exe installer
+npm run build -- --bundles appimage    # just the AppImage
+```
+
+### When the build fails
+
+```bash
+cd launcher && npx tauri info
+```
+
+That prints every prerequisite with a tick or a cross beside it, and is the
+first thing to run — and the first thing to paste into a bug report.
+
+| Symptom | Cause |
+|---|---|
+| `webkit2gtk-4.1: not installed` from `tauri info` | the Linux dependency list above |
+| `try setting PKG_CONFIG_PATH to the directory containing gdk-3.0.pc` | the same thing, as the compiler phrases it. Install the Linux list |
+| `link.exe not found` (Windows) | the MSVC build tools are missing, not Rust |
+| `failed to bundle project` after a clean compile | a packaging tool is missing — `patchelf` or `file` on Linux. The Rust built fine |
+| `beforeBuildCommand ... failed` | the interface did not build. Run `npm run build` in `launcher/ui` on its own to see the real error |
+| Slow first build, no output for minutes | normal. Tauri's dependency tree is large and compiles once |
 
 ### Working on the interface without any of that
 
 The UI answers from a demo adapter when Tauri is not present, so it opens in an
-ordinary browser:
+ordinary browser — no Rust, no webview, no client:
 
 ```bash
-cd launcher/ui && npm run dev     # http://localhost:5173
+cd launcher/ui && npm install && npm run dev     # http://localhost:5173
 ```
 
-That is how the design gets reviewed, and how the interface is worked on without
-a Rust toolchain and a 15 GB client on the machine.
+(`ui/` stands on its own, so this works whether or not you have ever run an
+install at `launcher/`.)
+
+That is how the design gets reviewed, and how the interface is worked on
+without a Rust toolchain and a 15 GB client on the machine.
 
 ### Testing the part that matters
 
 ```bash
-cargo test  --manifest-path launcher/core/Cargo.toml
+cargo test   --manifest-path launcher/core/Cargo.toml
 cargo clippy --manifest-path launcher/core/Cargo.toml --all-targets -- -D warnings
 cd launcher/ui && npm run typecheck
 ```
 
-No webview needed for any of it.
+No webview needed for any of it — that is the point of keeping every behaviour
+in `core/`.
+
+### Releases
+
+Tag it and CI builds both platforms:
+
+```bash
+git tag launcher-v0.1.0
+git push origin launcher-v0.1.0
+```
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) runs
+`windows-latest` and `ubuntu-22.04` in parallel, tests the core, builds each
+platform's bundles, writes `SHA256SUMS.txt`, and opens a **draft** release with
+everything attached. Draft, so you look before anyone downloads.
+
+To check a build without tagging, run the workflow manually from the Actions
+tab — it builds and leaves the installers as workflow artifacts without
+publishing anything.
+
+**This workflow has never run.** It is written and its structure is checked,
+but nothing in this project has yet built the Tauri shell — this sandbox has no
+webview, so the first real run of it will be the first time anyone finds out
+what it gets wrong.
 
 ---
 
@@ -224,8 +354,7 @@ Everything *after* Wine, it does do. See below.
 
 ## Shipping it
 
-Releases build on a GitHub Actions matrix: `windows-latest` for `.exe`/`.msi`,
-`ubuntu-22.04` for `.AppImage`/`.deb`.
+How a release is cut is under [Releases](#releases). What has to be true of one:
 
 ### Licence, at the point it matters
 
@@ -238,7 +367,9 @@ upstream's "or any later version" grant covers it. Ship the release with a
 GPL-3.0-or-later notice and the corresponding source, and note that the vendored
 IBM Plex fonts stay under OFL-1.1 (`ui/src/fonts/OFL.txt`).
 
-**Unsigned, with published SHA-256 sums**, per ADR 0005 §6. Signing needs a
+**Unsigned, with published SHA-256 sums**, per ADR 0005 §6 — the release
+workflow writes `SHA256SUMS.txt` and attaches it, so this is not a step anyone
+has to remember. Signing needs a
 certificate bound to a verified legal identity on a hardware token, and putting
 a real name on a certificate attached to a WoW private server is a decision to
 take deliberately rather than by default. Expect SmartScreen warnings and the

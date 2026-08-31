@@ -1,0 +1,176 @@
+name: Launcher release
+
+# Builds the launcher for Windows and Linux and attaches the installers to a
+# GitHub release, with SHA-256 sums.
+#
+# The binaries are deliberately UNSIGNED (docs/decisions/0005-client-distribution.md
+# §6), so the sums are how anyone checks what they downloaded. Publishing them
+# is part of the release, not an extra.
+#
+# Cross-compiling a Windows launcher from Linux is not realistically supported
+# by Tauri, so each platform is built on its own runner. That is the whole
+# reason this workflow exists rather than a line in a README.
+
+on:
+  push:
+    tags:
+      - "launcher-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and publish (e.g. launcher-v0.1.0). Leave empty to build without publishing."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (.exe, .msi)
+            # NSIS produces the .exe installer; msi is the enterprise-friendly one.
+            bundles: nsis,msi
+          # 22.04 rather than latest: an AppImage inherits the glibc of the
+          # machine that built it, so building on the newest Ubuntu produces a
+          # bundle that will not start on a slightly older distribution.
+          - os: ubuntu-22.04
+            label: Linux (.AppImage, .deb)
+            bundles: appimage,deb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            build-essential \
+            curl \
+            file \
+            patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            launcher/package-lock.json
+            launcher/ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher/src-tauri
+
+      # One install: launcher/package.json's postinstall runs `npm ci --prefix ui`,
+      # so both lockfiles are honoured from a single command.
+      - name: Install exactly what the lockfiles say
+        working-directory: launcher
+        run: npm ci
+
+      # The core's tests need no webview, so a release that would ship broken
+      # verification logic fails here rather than on a player's machine.
+      - name: Test the core before bundling it
+        run: cargo test --manifest-path launcher/core/Cargo.toml
+
+      - name: Build
+        working-directory: launcher
+        run: npm run build -- --bundles ${{ matrix.bundles }}
+
+      - name: Collect the bundles and sum them
+        id: collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Copy out of the bundle tree rather than uploading it whole: the
+          # tree also holds intermediate directories nobody wants to download.
+          find launcher/src-tauri/target/release/bundle \
+            -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} dist/ \;
+
+          if [ -z "$(ls -A dist)" ]; then
+            echo "No bundles were produced. The build reported success, so this is a"
+            echo "packaging problem rather than a compile error — check the bundle"
+            echo "targets in launcher/src-tauri/tauri.conf.json."
+            exit 1
+          fi
+
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          echo "--- produced ---"
+          cat SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag publishes. A manual run builds and leaves the artifacts on the
+    # workflow run, which is what you want when checking a build before tagging.
+    if: startsWith(github.ref, 'refs/tags/launcher-v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+
+      - name: Gather everything into one directory
+        run: |
+          mkdir -p dist
+          find incoming -type f -not -name 'SHA256SUMS.txt' -exec cp {} dist/ \;
+          # One combined sums file across both platforms, rather than two that
+          # each cover half of what the release page offers.
+          cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Ashmorrow launcher
+
+            Verifies a World of Warcraft 3.3.5a client **you already own**, points
+            it at the realm, and starts the game. It does not download a game
+            client — see the [distribution decision](https://github.com/BeeTwenty/tomorrows-ash/blob/main/docs/decisions/0005-client-distribution.md).
+
+            ### Which file
+
+            | You are on | Download |
+            |---|---|
+            | Windows | `Ashmorrow_*_x64-setup.exe` — or the `.msi` if you deploy by policy |
+            | Linux | `Ashmorrow_*.AppImage` (any distribution) or the `.deb` |
+
+            ### These binaries are unsigned
+
+            On purpose — signing needs a certificate bound to a verified legal
+            identity, which is a decision to take deliberately rather than by
+            default. Expect a SmartScreen warning on Windows. `SHA256SUMS.txt`
+            is how you check what you downloaded:
+
+            ```
+            sha256sum -c SHA256SUMS.txt          # Linux
+            certutil -hashfile <file> SHA256     # Windows
+            ```
+
+            ### Linux
+
+            Install Wine from your distribution first; the launcher does
+            everything after that, including the Wine prefix and DXVK.

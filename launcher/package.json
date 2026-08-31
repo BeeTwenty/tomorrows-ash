@@ -1,0 +1,16 @@
+{
+  "name": "ashmorrow-launcher",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-2.0-or-later",
+  "description": "Build scripts for the Ashmorrow launcher. The Tauri CLI lives here so that building needs one command and no global install.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "postinstall": "npm ci --prefix ui"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}
