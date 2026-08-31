@@ -633,7 +633,16 @@ def cmd_build(args):
 # --------------------------------------------------------------------------
 
 def mysql_available_native():
-    return shutil.which("mysql") is not None
+    """A usable `mysql` client, on PATH or in a standard install directory.
+
+    PATH alone is not enough: the Windows MySQL installer does not add its bin/
+    to PATH, so `doctor` would find the client at
+    C:/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe and report OK while
+    every actual query fell through to the Docker branch and died with
+    "'docker' not found" - on a machine that had deliberately chosen native
+    MySQL and had no Docker at all.
+    """
+    return find_mysql_client() is not None
 
 
 def mysql_cmd(cfg, database=None):
@@ -647,9 +656,14 @@ def mysql_cmd(cfg, database=None):
     # a script, so the flag is only passed when there is a password to pass.
     password = [f"-p{cfg['mysql_pass']}"] if cfg["mysql_pass"] else []
 
-    if mysql_available_native():
-        cmd = ["mysql", f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
+    client = find_mysql_client()
+    if client:
+        cmd = [client, f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
                f"-u{cfg['mysql_user']}"] + password
+    elif cfg.get("db_mode", "docker") != "docker":
+        # The operator chose a MySQL they run themselves. Telling them to
+        # install Docker at this point is advice for a setup they did not pick.
+        die(f"no `mysql` client found. {mysql_client_hint()}")
     else:
         need("docker", "install Docker, or install a native MySQL client")
         cmd = ["docker", "exec", "-i", cfg["docker_container"],

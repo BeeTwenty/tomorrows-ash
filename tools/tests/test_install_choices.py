@@ -156,6 +156,34 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         print("10. healthy cache       -> left alone")
 
+# --- 11/12. the mysql client is used from wherever it is installed ---
+# The Windows MySQL installer does not put bin/ on PATH. `doctor` searched the
+# standard install directories and said OK; mysql_cmd only checked PATH, so
+# every query fell through to the Docker branch and the install died with
+# "'docker' not found" on a machine that had chosen native MySQL on purpose.
+cfg_local = {"mysql_host": "127.0.0.1", "mysql_port": 3306, "mysql_user": "root",
+             "mysql_pass": "pw", "db_mode": "local", "docker_container": "ta-mysql"}
+
+off_path = r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe"
+with mock.patch.object(ta, "find_mysql_client", lambda: off_path):
+    cmd = ta.mysql_cmd(cfg_local)
+    if cmd[0] != off_path:
+        fails.append(f"mysql_cmd ignored the off-PATH client: {cmd[0]!r}")
+    elif "docker" in cmd:
+        fails.append("mysql_cmd used docker despite a native client being present")
+    else:
+        print("11. mysql off PATH      -> used directly, no docker")
+
+with mock.patch.object(ta, "find_mysql_client", lambda: None):
+    try:
+        ta.mysql_cmd(cfg_local)
+        fails.append("no mysql client and db_mode=local: expected a failure")
+    except (ta.Fail, SystemExit) as exc:
+        if "docker" in str(exc).lower():
+            fails.append(f"local MySQL chosen, but the error talks about Docker: {exc!r}")
+        else:
+            print("12. no client, mode=local -> error names the mysql client, not Docker")
+
 print()
 print("FAILURES:" if fails else "all choice tests passed")
 for f in fails: print("  -", f)
