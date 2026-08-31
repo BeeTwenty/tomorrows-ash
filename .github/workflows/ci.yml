@@ -74,8 +74,20 @@ jobs:
           for m in re.finditer(r'p\.add_argument\((.*?)\)\n', block, re.S):
               flags |= {n for n in re.findall(r'"(--[a-zA-Z][\w-]*)"', m.group(1))}
 
+          # Only the SCRIPT's param block, not parameters of functions defined
+          # inside it - those are internal and have no business in user docs.
           ps = pathlib.Path("install.ps1").read_text()
-          params = set(re.findall(r'^\s*\[\w+(?:\[\])?\]\s*\$(\w+)', ps, re.M))
+          start = ps.index("param(")
+          depth, end = 0, None
+          for i, ch in enumerate(ps[start:], start):
+              if ch == "(":
+                  depth += 1
+              elif ch == ")":
+                  depth -= 1
+                  if depth == 0:
+                      end = i
+                      break
+          params = set(re.findall(r'^\s*\[[\w\[\]]+\]\s*\$(\w+)', ps[start:end], re.M))
 
           # Only markdown table rows count as documentation.
           rows = [l for l in pathlib.Path("SETUP.md").read_text().splitlines()
