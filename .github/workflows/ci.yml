@@ -22,6 +22,45 @@ jobs:
       - name: ta.py --help works
         run: python tools/ta.py --help
 
+      - name: SETUP.md documents every installer flag
+        run: |
+          python - <<'PY'
+          # Three sessions edit tools/ta.py. A flag added without a docs row is
+          # invisible to anyone who did not write it, and the PowerShell name
+          # cannot be guessed from the bash one - so check both directions.
+          #
+          # This looks for a TABLE ROW, not merely the string somewhere in the
+          # file: a flag used in an example further down would otherwise satisfy
+          # a substring check while having no reference entry at all.
+          import re, sys, pathlib
+
+          src = pathlib.Path("tools/ta.py").read_text()
+          block = src[src.index('sub.add_parser("install"'):src.index("p.set_defaults(func=cmd_install)")]
+          flags = set()
+          for m in re.finditer(r'p\.add_argument\((.*?)\)\n', block, re.S):
+              flags |= {n for n in re.findall(r'"(--[a-zA-Z][\w-]*)"', m.group(1))}
+
+          ps = pathlib.Path("install.ps1").read_text()
+          params = set(re.findall(r'^\s*\[\w+(?:\[\])?\]\s*\$(\w+)', ps, re.M))
+
+          # Only markdown table rows count as documentation.
+          rows = [l for l in pathlib.Path("SETUP.md").read_text().splitlines()
+                  if l.lstrip().startswith("|")]
+          table = "\n".join(rows)
+
+          missing_flags = sorted(f for f in flags if f not in table)
+          missing_params = sorted(f"-{p}" for p in params if f"-{p}" not in table)
+
+          if missing_flags or missing_params:
+              if missing_flags:
+                  print("Installer flags with no table row in SETUP.md:", ", ".join(missing_flags))
+              if missing_params:
+                  print("install.ps1 parameters with no table row:", ", ".join(missing_params))
+              print("Add them to the flag table in SETUP.md section 1.")
+              sys.exit(1)
+          print(f"SETUP.md documents all {len(flags)} flags and {len(params)} PowerShell parameters")
+          PY
+
       - name: Installer choice logic
         run: |
           # The installer's answers become the realm's configuration, so a bug

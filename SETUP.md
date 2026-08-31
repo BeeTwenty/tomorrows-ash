@@ -61,17 +61,63 @@ What it asks:
 | Build type | Release / RelWithDebInfo / Debug | Release to play; the others are larger and only for debugging |
 | Build the extractors? | yes | Skipping shortens the build, but you need them unless you already have extracted client data |
 
+### Answering up front instead
+
 **Every question has a matching flag**, so the same script serves a first-time
-setup and an unattended rebuild:
+setup and an unattended rebuild. A question whose flag is supplied is not asked.
 
 ```bash
+# Linux / macOS
 ./install.sh --db remote --db-host db.homelab.lan --db-user acore \
              --realm-address 192.168.1.50 --build-type Release
+
+# Windows
+.\install.ps1 -Db remote -DbHost db.homelab.lan -DbUser acore `
+              -RealmAddress 192.168.1.50 -BuildType Release
 ```
 
-`--yes` answers nothing and takes defaults. `--reconfigure` re-asks and
-overwrites an existing `tools/local.json`. `install.ps1` takes the same options
-in PowerShell style (`-Db remote -DbHost db.homelab.lan`).
+| `install.sh` | `install.ps1` | Values | What it does |
+|---|---|---|---|
+| `--db` | `-Db` | `docker` `local` `remote` | Where MySQL lives |
+| `--db-host` | `-DbHost` | hostname or IP | Database host (`local`/`remote`) |
+| `--db-port` | `-DbPort` | port | Database port, default `3306` |
+| `--db-user` | `-DbUser` | username | Needs `CREATE DATABASE`; default `root` |
+| `--db-password` | `-DbPassword` | password | **Prefer the prompt** — a flag lands in shell history |
+| `--realm-name` | `-RealmName` | text | Realm name in the client, default `Ashmorrow` |
+| `--realm-address` | `-RealmAddress` | IP or hostname | Where clients go **after** login — see the warning above |
+| `--realm-port` | `-RealmPort` | port | World server port, default `8085` |
+| `--build-type` | `-BuildType` | `Release` `RelWithDebInfo` `Debug` | Compiler build type |
+| `--no-tools` | `-NoTools` | flag | Don't build the client-data extractors |
+| `--skip-build` | `-SkipBuild` | flag | Don't compile at all |
+| `--rebuild` | `-Rebuild` | flag | Rebuild even if `worldserver` already exists |
+| `--jobs N` | `-Jobs N` | number | Parallel build/extract jobs, default all cores |
+| `--generator` | `-Generator` | CMake generator | e.g. `"Visual Studio 17 2022"` |
+| `--client PATH` | `-ClientPath PATH` | path | Your WoW 3.3.5a folder; also extracts client data |
+| `--skip-mmaps` | `-SkipMmaps` | flag | Defer the multi-hour pathfinding step |
+| `--reconfigure` | `-Reconfigure` | flag | Re-ask everything, overwrite `tools/local.json` |
+| `--yes` / `-y` | `-Yes` | flag | Ask nothing; take defaults for anything not flagged |
+
+Your answers are written to **`tools/local.json`**, which every other `ta.py`
+command reads. It holds your database password, is gitignored, and is the only
+copy — back it up. Re-running the installer leaves it alone unless you pass
+`--reconfigure`.
+
+### Worked examples
+
+```bash
+# Homelab: realm on this box, database on the NAS, played from other machines
+./install.sh --db remote --db-host 192.168.1.20 --db-user acore \
+             --realm-address 192.168.1.50
+
+# Just me, on this laptop, nothing else installed
+./install.sh --db docker
+
+# Rebuild on a CI box, no questions, no client data
+./install.sh --yes --db local --db-user root --db-password "$MYSQL_PW" --rebuild
+
+# I already have extracted client data; skip the extractors to shorten the build
+./install.sh --no-tools
+```
 
 If you already have your WoW 3.3.5a client, hand it over and the installer does
 the client-data extraction too:
