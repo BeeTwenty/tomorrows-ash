@@ -1,7 +1,13 @@
-name: Launcher release
+name: Launcher build
 
-# Builds the launcher for Windows and Linux and attaches the installers to a
-# GitHub release, with SHA-256 sums.
+# Builds the launcher for Windows and Linux.
+#
+# On a push or PR that touches launcher/, it builds and leaves the installers
+# as downloadable workflow artifacts — so a testable .exe exists without anyone
+# having to own a Windows machine or compile anything.
+#
+# On a `launcher-v*` tag it does the same and additionally opens a draft
+# release with SHA-256 sums.
 #
 # The binaries are deliberately UNSIGNED (docs/decisions/0005-client-distribution.md
 # §6), so the sums are how anyone checks what they downloaded. Publishing them
@@ -15,12 +21,24 @@ on:
   push:
     tags:
       - "launcher-v*"
+    branches:
+      - "**"
+    # Deliberately NO `paths` filter on push. A path filter is ANDed with the
+    # ref filter and is evaluated against the pushed commit range, which for a
+    # tag placed on an already-pushed commit can be empty — so a release tag
+    # would silently build nothing. A wasted build on a docs commit is cheaper
+    # than a release that does not happen. The PR trigger below can filter
+    # safely, because a pull request always has a diff.
+  pull_request:
+    paths:
+      - "launcher/**"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Tag to build and publish (e.g. launcher-v0.1.0). Leave empty to build without publishing."
-        required: false
-        type: string
+
+# A second push to the same branch makes the first build irrelevant.
+concurrency:
+  group: launcher-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -101,6 +119,13 @@ jobs:
             -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' \) \
             -exec cp {} dist/ \;
 
+          # The bare executable too. For testing a change it beats the
+          # installer: no install, no uninstall, no shortcut left behind.
+          for bare in launcher/src-tauri/target/release/ashmorrow-launcher \
+                      launcher/src-tauri/target/release/ashmorrow-launcher.exe; do
+            [ -f "$bare" ] && cp "$bare" dist/
+          done
+
           if [ -z "$(ls -A dist)" ]; then
             echo "No bundles were produced. The build reported success, so this is a"
             echo "packaging problem rather than a compile error — check the bundle"
@@ -113,11 +138,14 @@ jobs:
           echo "--- produced ---"
           cat SHA256SUMS.txt
 
+      # Named with the short SHA so several builds in the Actions list are
+      # tellable apart at a glance.
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-${{ runner.os }}
+          name: launcher-${{ runner.os }}-${{ github.sha }}
           path: dist/*
           if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish the release
@@ -130,6 +158,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: incoming
+          merge-multiple: false
 
       - name: Gather everything into one directory
         run: |
