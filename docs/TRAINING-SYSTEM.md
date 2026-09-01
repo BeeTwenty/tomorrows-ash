@@ -1,153 +1,300 @@
-# Training system — what the first playtest exposed, and what to build
+# Training system — mastery points
 
-**Status:** proposal. Nothing here is implemented. The two *bugs* found
-alongside it are fixed and shipped; this document is about the design gap.
+**Status:** proposal, awaiting sign-off. No migrations written, no code beyond
+the body-type indicator (§7), which is separate and already shipped.
 
-The first playtest reported four things about training. Two were bugs and are
-fixed (`ValidateSkillLearnedBySpells`, and the character-creation config never
-reaching the realm — see the commit and `BODY-TYPES.md §4`). The other two are
-the same design gap seen from two angles, and they need a decision.
+**Decided by the product owner:** ranks are bought with a **second currency**,
+earned by playing rather than by levelling or by paying gold. Skill points buy
+*which* abilities; mastery points buy *how strong* they are. Rank 1 still comes
+with the tree purchase.
+
+Every number below comes from the live world database. Reproduce with
+`tools/gen_trees.py` and the queries quoted inline.
 
 ---
 
-## 1. What is actually wrong
+## 1. What is actually wrong today
 
-`classless_node` has **one spell per node**, and `tools/gen_trees.py` picked the
-rank 1 spell for each. There is no rank column, by design — `CLAUDE.md §9`
-records it as part of the website contract: *"there are no ranks (a node is
-bought once)"*.
-
-So a node is an ability, permanently at rank 1. Fireball stays rank 1 at level
-80. That is not a bug in the code; it is the data model doing exactly what it
-says. It is also unplayable past the low twenties.
-
-Measured on the realm:
+`classless_node` holds one spell per node and `gen_trees.py` picked the rank 1
+spell. Fireball is rank 1 at level 80 — about 30 damage where rank 16 does
+roughly 900. It is not a bug; it is the data model working as documented, and
+it makes every tree unplayable past the low twenties.
 
 | | |
 |---|---:|
 | nodes | 50 |
 | …with a rank chain | **42** |
-| …single-rank abilities (Ice Block, Blast Wave, …) | 8 |
-| mean chain length | 8.1 |
-| longest chains | Fireball, Frostbolt — 16 ranks |
+| rank 2+ purchases available across all chains | **363** |
+| chain length: min / median / max | 3 / 9 / 16 |
+| ranks with no stock level requirement | **0** |
 
-**The data to fix this already exists and needs nothing invented.** Every rank
-of every node's chain appears in `trainer_spell` with both a level requirement
-and a gold cost, which is where a normal class trainer gets them:
+That last row is the important one: **every rank already carries a level gate
+and a price in `trainer_spell`**, so requirement 4 (keep Blizzard's level
+pacing) needs nothing invented.
 
-| ability | ranks | top rank at level | full chain cost |
+---
+
+## 2. The cost curve: price a rank by its level, not its number
+
+The obvious reading of "early ranks cheap, late ranks expensive" is to charge
+by rank ordinal — rank 2 costs 1, rank 14 costs 13. Measured against the real
+chains, that goes wrong:
+
+| curve | cheapest chain | median | dearest chain |
 |---|---:|---:|---:|
-| Fireball | 16 | 78 | ~72g |
-| Frostbolt | 16 | 79 | ~78g |
-| Rejuvenation | 15 | 80 | ~68g |
-| Heroic Strike | 13 | 76 | ~89g |
-| Mind Blast | 13 | 79 | ~64g |
+| `cost = rank − 1` (ordinal) | 3 | 36 | **120** (Fireball) |
+| `cost = 1 + ⌊level/10⌋` (level gate) | 8 | **50** | 79 (Frostbolt) |
+
+The ordinal curve charges **forty times more** for Fireball than for the
+cheapest ability, purely because Fireball has a long chain. But a long chain is
+not a luxury — Fireball, Frostbolt and Heroic Strike have long chains precisely
+because they are the abilities you press constantly. Charging most for the
+workhorse is backwards.
+
+**Price by the rank's stock level requirement instead:**
+
+```
+cost = 1 + floor(required_level / 10)
+```
+
+| rank available at level | mastery cost |
+|---|---:|
+| 1–9 | 1 |
+| 10–19 | 2 |
+| 20–29 | 3 |
+| … | … |
+| 70–79 | 8 |
+| 80 | 9 |
+
+A level-70 rank costs 8 whatever ability it belongs to. That is legible, it
+tracks power rather than an ordinal accident, and it uses Blizzard's own
+progression as the reference — the same move the tree costs already make.
+
+Full Fireball chain: **77**. Median ability: **50**. Cheapest: 8.
+
+**The curve lives in a table**, not in code, so it is retunable on a live realm
+(`docs/ARCHITECTURE.md`, "data over code").
 
 ---
 
-## 2. Three ways to do it
+## 3. Ultrathink: where mastery points come from
 
-### A. Automatic upgrade
+This is the part with no existing data to lean on, so the reasoning matters
+more than the numbers.
 
-Buying the node grants the highest rank the character's level allows, and
-levelling up upgrades it. No gold, no second visit.
+### The trap to avoid
 
-*For:* simplest to build; the budget stays exactly as priced (200 points);
-nothing to forget. *Against:* no gold sink; abilities silently get stronger,
-which is the least legible option for a player; nothing to do at a trainer.
+Ranks are not a power *luxury*. A rank-1 Fireball at level 60 is not a weaker
+build — it is a broken one. So if mastery is scarce and ranks are the only way
+to stay current, players will feel **forced** to grind, and the classless
+promise ("take abilities from anywhere") collapses into "take abilities from
+anywhere and they are all useless".
 
-### B. Ranks are trained, like a real class *(recommended)*
+That gives the governing principle:
 
-Buying the node costs points and grants rank 1. Every later rank is bought from
-the broker for **its own Blizzard gold cost, gated by its own Blizzard level
-requirement**, straight out of `trainer_spell`.
+> **Scarcity must bite on breadth, never on core competence.**
+> A player who quests to 80 and does nothing else must be able to keep their
+> chosen handful of abilities current. Extra content buys *more* abilities kept
+> current — never the difference between working and not working.
 
-*For:* it is what the report asked for — "train higher ranks the same way a
-normal class does, rank-gated by level". Skill points stay the scarce currency
-that chooses *which* abilities; gold and level drive *how strong*. Real gold
-sink, ~65–90g per ability fully ranked. Uses Blizzard's own pacing, so nothing
-is invented and nothing needs balancing. *Against:* more clicks; a returning
-player has a backlog of ranks to buy.
+### What the budget has to hit
 
-### C. Hybrid — automatic, but charged
+The tree budget at level 80 is 71 points, and the cheapest 25 nodes cost 70 —
+so a level-80 character owns **at most 25 of the 50 nodes**. At a median 50
+mastery per fully-ranked ability:
 
-Ranks arrive on level-up and the gold is deducted, or held as a debt.
+| keeping this many abilities fully current | mastery needed |
+|---|---:|
+| 6 | 300 |
+| **8** | **400** |
+| 12 | 600 |
+| 16 | 800 |
+| all 25 owned | 1,250 |
 
-*For:* gold sink without clicks. *Against:* charging a player for something
-they did not ask for is worse than either A or B, and debt is a whole subsystem.
+So the design targets are: **~400 from questing alone** (the floor, guarantees
+a focused build), **~800 for someone who does everything** (breadth is earned),
+and **1,250 out of reach** (nobody maxes everything).
 
----
+### The sources
 
-## 3. What B costs to build
+**1. Quests — the spine. `+1` per non-repeatable quest whose level is within 5
+of the character's.**
 
-**Schema — additive, and deliberately not a change to the existing contract.**
-`classless_character_node` keeps its shape, so the website's `cost_paid` join
-and its "no ranks" assumption keep working untouched:
+Measured: 8,064 quests exist at levels 1–80. A single character sees a
+fraction of that — one faction, a subset of zones — which on a normal 1–80 run
+is roughly 400–700 quests. That lands the questing floor almost exactly on the
+400 target.
+
+Everyone quests, so this is the guarantee. The level window is what stops a
+level 80 farming Elwynn Forest: grey quests pay nothing.
+
+**Repeatables and dailies are excluded** (466 daily quests exist). Include them
+and dailies become an infinite mastery farm, which destroys the ceiling.
+
+**2. First-time dungeon boss kills — `+2` each.**
+
+612 instance encounters are loaded on this realm. A player who runs the
+dungeons of their level range as they go earns a few hundred over 1–80. It is
+one-time per boss per character, so it rewards *seeing content*, not repeating
+it. This is the main breadth lever, and it is the group-play path.
+
+**3. Exploration — `+1` per 10 newly discovered areas.**
+
+Small, solo-friendly, and flavourful. It exists so a player who does not group
+still has a path to breadth that is not "quest more".
+
+**4. A weekly — `+5`, once per week.**
+
+The catch-up and retention lever. Someone who returns after a break, or who got
+unlucky with groups, closes the gap without grinding. Rate-limited by time, so
+it cannot be farmed.
+
+### Why not the alternatives
+
+- **Purchase with gold** — excluded by the owner, and rightly: it would tie
+  ability power to the economy and to whoever farms best.
+- **Derived from level** — that is just automatic upgrade with extra steps, and
+  removes the second axis entirely.
+- **Unbounded repeatables** — the ceiling collapses; everyone converges on
+  maxing everything, and the choice the whole project is built on disappears.
+- **Achievements** — a rich source and a big surface. Worth a later look, not
+  worth the balance risk in v1.
+
+### The honest weak point
+
+**"400–700 quests on a 1–80 run" is an estimate, not a measurement.** It is the
+single biggest assumption in the supply design, and everything else is tuned
+against it. It is also cheaply falsifiable once anyone levels on the realm:
 
 ```sql
+SELECT COUNT(*) FROM character_queststatus_rewarded WHERE guid = <yours>;
+```
+
+Tune the per-quest grant from the real number rather than from my estimate. The
+per-source amounts are rows in a table for exactly this reason.
+
+---
+
+## 4. Schema — additive, and the existing contract is untouched
+
+Nothing about `classless_character_node` or its `cost_paid` column changes, so
+the website's spend join and its documented "no ranks" assumption keep working
+exactly as they do now.
+
+```sql
+-- Earned total. This one MUST be stored: it is a history of events, not a
+-- function of level, so unlike the skill-point budget it cannot be derived.
+CREATE TABLE classless_character_mastery (
+  guid    INT UNSIGNED NOT NULL,
+  earned  INT UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (guid)
+);
+
+-- One row per rank bought. `spent` is DERIVED by summing cost_paid here,
+-- exactly as points spent is derived from classless_character_node.
 CREATE TABLE classless_character_rank (
-  guid      INT UNSIGNED NOT NULL,
-  node_id   INT UNSIGNED NOT NULL,
-  spell_id  INT UNSIGNED NOT NULL,   -- the rank actually granted
-  rank      TINYINT UNSIGNED NOT NULL,
-  gold_paid INT UNSIGNED NOT NULL,
+  guid       INT UNSIGNED     NOT NULL,
+  node_id    INT UNSIGNED     NOT NULL,
+  rank       TINYINT UNSIGNED NOT NULL,
+  spell_id   INT UNSIGNED     NOT NULL,   -- the rank's own spell
+  cost_paid  INT UNSIGNED     NOT NULL,   -- price PAID, never the current price
+  learned_at TIMESTAMP        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (guid, node_id, rank)
+);
+
+-- Where mastery came from. Audit, plus it is how the weekly is rate-limited.
+CREATE TABLE classless_mastery_log (
+  id        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  guid      INT UNSIGNED    NOT NULL,
+  source    VARCHAR(32)     NOT NULL,   -- quest | boss | exploration | weekly
+  amount    INT             NOT NULL,
+  ref_id    INT UNSIGNED    NOT NULL DEFAULT 0,  -- quest/encounter id
+  earned_at TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id), KEY (guid, source), KEY (guid, earned_at)
+);
+
+-- The curve, as rows. Retunable without a recompile.
+CREATE TABLE classless_rank_cost (
+  min_level TINYINT UNSIGNED NOT NULL,
+  cost      INT UNSIGNED     NOT NULL,
+  PRIMARY KEY (min_level)
+);
+
+-- The sources, as rows. Same reason.
+CREATE TABLE classless_mastery_source (
+  source  VARCHAR(32)      NOT NULL,
+  amount  INT              NOT NULL,
+  enabled TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  note    VARCHAR(255)     NOT NULL DEFAULT '',
+  PRIMARY KEY (source)
 );
 ```
 
-Ranks are read from `spell_ranks`, levels and prices from `trainer_spell`. No
-new tree data, no re-pricing, no change to `classless_node`.
+> **Note on the "derived, never stored" invariant** (`CLAUDE.md §2`). It still
+> holds where it was meant to: *spend* is derived, and the level-based skill
+> budget is still computed on every read. Earned mastery is the one thing that
+> genuinely cannot be recomputed, because it is a record of what a player did.
+> Storing it is not an exception being smuggled in — it is a different kind of
+> quantity, and the doc should say so.
 
-> **Cross-session contract.** `CLAUDE.md §6` makes the classless tables a shared
-> contract with the website. This adds a table rather than altering one, so the
-> armory keeps working as-is — but the website session should know the table
-> exists, because "points spent" and "how far ranked" become different
-> questions. Flag before merging.
-
-**Module work:** a rank list in `ClasslessMgr`, a broker menu page per owned
-node, gold deduction, and respec removing granted ranks alongside the node.
-`granted = 0` still means "already knew it, never charged", so respec must keep
-leaving those alone.
+**Cross-session contract:** this adds tables, it does not alter any. The
+website session should still be told, because "points spent" and "how far
+ranked" become different questions and the armory currently answers only the
+first.
 
 ---
 
-## 4. The spellbook category, honestly
+## 5. Rules that fall out of the design
 
-Reported: broker-taught spells land under **General** rather than Affliction,
-Holy, and so on.
-
-The tab a spell appears in is not something the server picks. The 3.3.5a client
-builds the spellbook from `SkillLineAbility.dbc` — spell to skill line — and
-shows a tab per skill line the character *has*. A Vanguard has no Affliction
-skill line, so Corruption has nowhere to go but General.
-
-There is a plausible server-side fix — grant the skill line with the spell, via
-`Player::SetSkill` — and it is **unverified**. Whether the client then draws an
-"Affliction" tab on a Paladin is a client behaviour, and there is no client in
-the build environment to try it in. It is also not free: skill lines feed
-several other systems, so this needs to go behind a config flag and be tried in
-play before it is trusted.
-
-Worth saying plainly: this one is cosmetic. Everything works from General. It
-should be the last of the four to be built, not the first.
-
-**Related and no longer cosmetic:** the reason those spells have no valid skill
-line for the character is the same reason
-`Player::CheckSkillLearnedBySpell` was deleting them at every login. That is
-fixed (`ValidateSkillLearnedBySpells = 0`), and it is worth understanding that
-the "General" tab and the deletion were the same underlying fact.
+- **Rank 1 is free**, granted by the tree purchase, as today.
+- **A rank cannot be bought below its stock level**, even with points in hand.
+  All 363 ranks have that data.
+- **Ranks must be bought in order** — no skipping to rank 12.
+- **Respec refunds mastery** spent on nodes being removed, in full. Mastery is
+  earned by playing, and confiscating it for changing your mind would be
+  punitive. Points spent on `granted = 0` nodes are still left alone.
+- **The broker sells ranks**, on a per-ability page, showing cost, your pool
+  and the level gate.
 
 ---
 
-## 5. What needs your sign-off
+## 6. Open decisions
 
-1. **A, B or C.** Recommendation: **B**, and the report already argues for it.
-2. **Does gold cost come from `trainer_spell` unchanged, or scaled?** Blizzard's
-   numbers assume one class's worth of abilities. A character buying ranks
-   across five trees pays five times what a Mage does. Unchanged is the honest
-   starting point and a real constraint on breadth — which the budget design
-   already wants — but it is a balance call, not a technical one.
-3. **The skill-line experiment for the spellbook tab** — try it behind a flag,
-   or leave everything in General until there is a client addon?
+**a. The native-class asymmetry — the one that could distort everything.**
+A Vanguard *is* a Paladin, and Paladin class trainers will happily sell them
+every Paladin spell rank for gold, because `Trainer::IsTrainerValidForPlayer`
+compares `getClass()`. So a character's native discipline ranks up cheaply with
+gold while everything else costs scarce mastery. That is a standing incentive to
+play your own chassis and ignore the classless system. Options: accept it as
+"your chassis has a home discipline"; suppress class trainers so everything
+routes through mastery; or strip those ranks from `trainer_spell`. **This
+predates mastery but mastery sharpens it, and it deserves a decision before any
+of this is built.**
 
-Nothing here is built. Say which, and it becomes the next phase.
+**b. Does the weekly make the ceiling temporary?** `+5`/week is 260 a year. Over
+a long-lived realm, a veteran eventually affords everything. That may be a fine
+reward for loyalty, or it may be the thing that erases the choice. It is a knob,
+but the intent should be decided now.
+
+**c. Are the per-source amounts right?** They are tuned against an estimated
+quest count (§3). Validate before launch, not after.
+
+---
+
+## 7. Body type shown in game — shipped
+
+Separate from the above, and already built. The client shows the underlying
+class name (Paladin/Shaman/Mage) and nothing server-side can change that
+(`BODY-TYPES.md §4`), so the realm now says it out loud instead:
+
+```
+[Ashmorrow] You are playing as: Vanguard (plate armor). Stands in front. ...
+```
+
+on every login, and in `.classless status`. A character whose class is not one
+of the three — a GM's Warrior, or anything made before the creation restriction
+worked — gets a warning instead, because nothing in the design applies to it.
+
+The names live in `classless_body_type`, one row per body type, because they
+are explicitly placeholders. Renaming Adept is an `UPDATE` and a
+`.classless reload`, not a recompile.

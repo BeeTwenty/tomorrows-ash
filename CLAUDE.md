@@ -179,7 +179,7 @@ Coordinate, do not collide:
 | `docs/BODY-TYPES.md` | the three body types, final |
 | `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
 | `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
-| `docs/TRAINING-SYSTEM.md` | rank progression: what the first playtest exposed, three options, awaiting a decision |
+| `docs/TRAINING-SYSTEM.md` | mastery points: the rank-progression design, awaiting sign-off |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
 | `web/` | the public site (§9) |

@@ -147,6 +147,14 @@ public:
         Player* player = handler->GetSession()->GetPlayer();
         uint32 owned = 0;
 
+        if (ClasslessBodyType const* body = sClasslessMgr.GetBodyType(player))
+            handler->PSendSysMessage("Body type: |cffffcc00%s|r (%s armor, class %u).",
+                                     body->Name.c_str(), body->Armor.c_str(),
+                                     uint32(player->getClass()));
+        else
+            handler->PSendSysMessage("Body type: |cffff2020none|r - class %u is not one of the three.",
+                                     uint32(player->getClass()));
+
         for (ClasslessTree const* tree : sClasslessMgr.GetTrees())
         {
             for (ClasslessNode const* node : tree->Nodes)

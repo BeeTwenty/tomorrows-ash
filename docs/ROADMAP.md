@@ -145,11 +145,18 @@ Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
       file), and `ValidateSkillLearnedBySpells = 1` was deleting every
       broker-taught ability at the player's next login. Both are managed
       settings now, and worldserver audits them at every start.
-- [ ] **Rank progression — needs a decision.** A node is one spell, permanently
-      rank 1: Fireball stays rank 1 at level 80. 42 of 50 nodes have rank
-      chains, mean length 8.1, and every rank already carries a level
-      requirement and a gold cost in `trainer_spell`. Three options in the
-      write-up; recommendation is trained ranks, like a real class.
+- [ ] **Rank progression — mastery points, proposed and awaiting sign-off.**
+      A second currency, earned by playing rather than by levelling or paying
+      gold. Ranks priced by their stock level gate (`1 + ⌊level/10⌋`), not by
+      rank ordinal — measured, the ordinal curve charges 40× more for Fireball
+      than for the cheapest ability purely because its chain is long. Supply
+      targets ~400 mastery from questing alone (a focused 8-ability build) and
+      ~800 for a completionist, against 1,250 to max all 25 nodes a level-80
+      character can own. Schema is additive; the website contract is untouched.
+      Three decisions open, one of them structural (the native-class
+      asymmetry).
+- [x] **Body type is now shown in game** — login message and `.classless
+      status`, names in `classless_body_type` so they stay renameable.
 - [ ] **Spellbook tabs** — broker spells land under General because the client
       builds tabs from skill lines the character has. Possible server-side fix
       is unverified and cosmetic; last of the four.
