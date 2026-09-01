@@ -351,3 +351,18 @@ that was right.
 
 **The panel cannot read `mod_classless.conf`.** So it does not pretend to know
 the budget — see the `classless_config` request in §6.
+
+**One service's setup must never touch another's credentials.** `admin dev-db`
+originally called `web dev-db` to avoid repeating the fixture. That also created
+the *website's* database user — and when `web_db_pass` was absent from
+`tools/local.json` it generated a new password, applied it, and rewrote
+`web/.env.local`. A website already running still held the old one, so setting
+up the admin panel took the public site down with
+`Access denied for user 'ash_web'@'localhost'`. It now calls `db init` and
+`web_fixture` — the shared *data* — and creates only `ash_admin`.
+
+**A doctor that never connects as the service proves nothing.** `web doctor`
+passed cleanly through the outage above, because every check it ran connected as
+the admin user from `local.json`. Both doctors now connect with the credential
+out of the service's own `.env.local`, which is the value that is actually
+wrong when this happens.

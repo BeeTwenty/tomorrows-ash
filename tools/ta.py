@@ -1934,6 +1934,32 @@ def web_dev_db(args):
     return 0
 
 
+def _env_file_values(path, keys):
+    """
+    Read KEY=VALUE pairs out of a .env file.
+
+    Doctors must check the credential the SERVICE actually uses, which is the
+    one in its .env.local - not the one recorded in tools/local.json. When those
+    two disagree the service is down and local.json looks perfectly healthy,
+    which is exactly the failure this exists to catch.
+    """
+    values = {key: "" for key in keys}
+    if not path.exists():
+        return values
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key in values:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key] = value
+    return values
+
+
 def web_doctor(args):
     cfg = load_local()
     problems = 0
@@ -1989,6 +2015,32 @@ def web_doctor(args):
     else:
         warn(f"{cfg['db_web']} schema missing or empty - run `ta.py web sql`")
         problems += 1
+
+    # Can the SITE connect? Everything above this line passes while the website
+    # is completely down, because everything above connects as the admin user
+    # from tools/local.json. The site uses DB_USER/DB_PASSWORD out of
+    # web/.env.local, and when that password and MySQL's disagree every page
+    # logs "Access denied for user 'ash_web'@'localhost'" while the doctor
+    # cheerfully reports the website looks ready. It did exactly that once.
+    site = _env_file_values(web_env_path(), ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"))
+    if not site["DB_USER"]:
+        warn("web/.env.local names no DB_USER - run `ta.py web env --force`")
+        problems += 1
+    else:
+        probe = dict(cfg,
+                     mysql_user=site["DB_USER"],
+                     mysql_pass=site["DB_PASSWORD"],
+                     mysql_host=site["DB_HOST"] or cfg["mysql_host"],
+                     mysql_port=site["DB_PORT"] or cfg["mysql_port"])
+        rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_characters']}`.`characters` LIMIT 0;", check=False)
+        if rc == 0:
+            ok(f"the site's own user '{site['DB_USER']}' connects and can read characters")
+        else:
+            warn(f"the site's own user '{site['DB_USER']}' CANNOT connect with the password in")
+            warn("web/.env.local. Every page will report the database down. Fix with:")
+            warn("  python3 tools/ta.py web dev-db --yes      (development database)")
+            warn("  ...then restart the website so it picks the new password up.")
+            problems += 1
 
     print()
     if problems:
@@ -2250,11 +2302,22 @@ def admin_dev_db(args):
     """
     One command: a local database the admin panel can actually operate on.
 
-    Layers on top of `web dev-db` rather than repeating it. The website's
-    fixture already owns accounts and characters; this adds the tables only the
-    panel touches - bans, mutes, the MOTD, teleport destinations, the item-class
-    backup - plus one staff account per tier so the permission model can be
-    exercised instead of reasoned about.
+    Shares the website's *fixture* - the schemas, the module SQL, the sample
+    characters - and nothing else. It adds the tables only the panel touches
+    (bans, mutes, the MOTD, teleport destinations, the item-class backup) plus
+    one staff account per tier, so the permission model can be exercised rather
+    than reasoned about.
+
+    It deliberately does NOT call `web dev-db`.
+
+    That was the first version and it was wrong. `web dev-db` creates the
+    *website's* database user, and when `web_db_pass` is not already recorded in
+    tools/local.json it generates a new password, applies it to MySQL and
+    rewrites web/.env.local. A website already running still holds the old
+    password in memory, so setting up the admin panel would knock the public
+    site offline with "Access denied for user 'ash_web'@'localhost'" until it
+    was restarted. Two services, two credentials: this one has no business
+    touching the other's.
 
     Development only. It creates accounts with known passwords, so it refuses to
     run without --yes.
@@ -2274,17 +2337,32 @@ def admin_dev_db(args):
         warn("")
         die("re-run with --yes if this is a development database")
 
-    # 1. Everything the website's fixture provides - schemas, the module SQL,
-    #    accounts and characters. Idempotent, so re-running is safe.
-    web_dev_db(_argparse.Namespace(yes=True))
+    # 1. Is anything listening?
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        if not shutil.which("docker"):
+            die(
+                f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} and no docker to start one.\n"
+                "       Install MySQL 8 (or Docker), then put the credentials in tools/local.json."
+            )
+        info("no MySQL reachable - starting one in Docker")
+        cmd_db(_argparse.Namespace(action="up"))
+    else:
+        ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
 
-    # 2. The panel's own schema, then the tables and staff accounts it needs.
+    # 2. The three AzerothCore schemas, then the shared fixture: sample
+    #    accounts and characters, the module's own SQL, and who bought what.
+    #    None of this touches the website's user or its .env.local.
+    cmd_db(_argparse.Namespace(action="init"))
+    web_fixture(_argparse.Namespace(yes=True))
+
+    # 3. The panel's own schema, then the tables and staff accounts it needs.
     #    Schema before grants: admin-grants.sql names individual tables and
     #    MySQL refuses a table-level GRANT for a table that does not exist.
     _apply_sql(cfg, ADMIN_DIR / "sql" / "admin-schema.sql", "web-admin/sql/admin-schema.sql")
     _apply_sql(cfg, ADMIN_DIR / "sql" / "dev-fixture-admin.sql", "web-admin/sql/dev-fixture-admin.sql")
 
-    # 3. The user.
+    # 4. The panel's own user. `ash_admin` only - `ash_web` is untouched.
     admin_sql(_argparse.Namespace(grants=True))
 
     cfg = load_local()
@@ -2339,7 +2417,14 @@ def admin_doctor(args):
         problems += 1
     else:
         ok("MySQL reachable")
-        probe = dict(cfg, mysql_user=cfg["admin_db_user"], mysql_pass=cfg["admin_db_pass"])
+        # The panel's own credential, read from the file the panel actually
+        # boots with rather than from tools/local.json - see _env_file_values.
+        panel = _env_file_values(admin_env_path(), ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"))
+        probe = dict(cfg,
+                     mysql_user=panel["DB_USER"] or cfg["admin_db_user"],
+                     mysql_pass=panel["DB_PASSWORD"] or cfg["admin_db_pass"],
+                     mysql_host=panel["DB_HOST"] or cfg["mysql_host"],
+                     mysql_port=panel["DB_PORT"] or cfg["mysql_port"])
         rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_admin']}`.`admin_audit` LIMIT 0;", check=False)
         if rc != 0:
             warn(f"user '{cfg['admin_db_user']}' cannot read the audit table"
