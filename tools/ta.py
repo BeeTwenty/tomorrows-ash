@@ -368,6 +368,8 @@ def cmd_doctor(args):
     print(f"     mysql        : {cfg['mysql_user']}@{cfg['mysql_host']}:{cfg['mysql_port']}")
     print()
 
+    report_deployed_configs()
+
     if problems:
         print(c("  Missing prerequisites:", "red"))
         for p in problems:
@@ -887,6 +889,77 @@ def disabled_classmask():
 CONF_TEMPLATES = ["authserver", "worldserver"]
 
 
+def find_deployed_configs(name):
+    """Every copy of <name>.conf that a launched server could end up reading.
+
+    On Windows ConfigMgr::GetConfigPath() returns the RELATIVE string
+    "configs/" (Config.cpp:709), so the file a server reads is decided by the
+    directory it was launched from - not by the install prefix. An MSBuild
+    build also drops a second copy under build/bin/<Config>/configs/ on every
+    build (ConfigInstall.cmake), which nothing in this repo used to touch.
+
+    So "the config is correct" is not a property of one file. Find them all.
+    """
+    seen, out = set(), []
+    for root in (dist_dir(), build_dir()):
+        if not root.is_dir():
+            continue
+        for path in root.rglob(f"{name}.conf"):
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                out.append(path)
+    return sorted(out)
+
+
+# The keys whose value decides whether this realm behaves like Ashmorrow or
+# like stock AzerothCore. Checked against every config copy on disk, because
+# editing the wrong copy is indistinguishable from not editing at all.
+AUDITED_CONF_KEYS = {
+    "CharacterCreating.Disabled.ClassMask": "character creation limited to the body types",
+    "ValidateSkillLearnedBySpells":         "off-class spells survive a login",
+}
+
+
+def report_deployed_configs():
+    """Show every worldserver.conf on disk and whether it says what we think.
+
+    A realm ran a whole playtest unrestricted because the value was right in
+    one file and stock in the one the server actually read. On Windows
+    ConfigMgr::GetConfigPath() is the relative "configs/" (Config.cpp:709), so
+    which file that is depends on where the server was launched from.
+    """
+    expected = {
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+        "ValidateSkillLearnedBySpells": "0",
+    }
+    configs = find_deployed_configs("worldserver")
+
+    if not configs:
+        warn("no worldserver.conf found yet - run `ta.py conf` after a build")
+        print()
+        return
+
+    print(f"     worldserver.conf copies found: {len(configs)}")
+    bad = 0
+    for path in configs:
+        launched_from = path.parent.parent
+        print(f"       {path.relative_to(REPO)}")
+        print(f"         read by a server launched from {launched_from.relative_to(REPO) or '.'}/")
+        for key, want in expected.items():
+            got = read_conf_value(path, key)
+            if got == want:
+                print(f"         {c('OK', 'green')}   {key} = {got}")
+            else:
+                bad += 1
+                print(f"         {c('BAD', 'red')}  {key} = {got if got is not None else '(missing)'}"
+                      f"  (expected {want}) - {AUDITED_CONF_KEYS[key]}")
+    if bad:
+        warn(f"{bad} setting(s) wrong. Run `ta.py conf` to fix every copy, then restart.")
+        warn("The server logs which file it read: look for '[Classless] Config in effect:'")
+    print()
+
+
 def apply_conf_keys(lines, replacements):
     """Rewrite the managed keys in a config file, leaving every other line alone.
 
@@ -999,6 +1072,22 @@ def cmd_conf(args):
                 print(f"       {key}: {shown_old or '(empty)'} -> {shown_new}")
         else:
             ok(f"{target.relative_to(REPO)} already correct")
+
+        # Every other copy on disk gets the same keys. Writing only the one
+        # under dist/ is how a realm can be "configured" and still run on
+        # stock settings: on Windows the server resolves "configs/" against
+        # its working directory, and an MSBuild build leaves a second copy in
+        # the build tree that a double-clicked worldserver.exe reads instead.
+        for other in find_deployed_configs(name):
+            if other.resolve() == target.resolve():
+                continue
+            other_lines = other.read_text(encoding="utf-8", errors="replace").splitlines()
+            other_out, other_changed = apply_conf_keys(other_lines, replacements)
+            other.write_text("\n".join(other_out) + "\n", encoding="utf-8")
+            if other_changed:
+                warn(f"also updated {other.relative_to(REPO)} "
+                     f"({len(other_changed)} stale) - a server launched from "
+                     f"{other.parent.parent.relative_to(REPO)} reads THIS file, not dist/")
 
     # Module configs live in etc/modules/, not etc/ - that is where CMake
     # installs the .dist files and where worldserver looks for them.

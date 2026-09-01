@@ -117,6 +117,15 @@ namespace TomorrowsAsh
         if (!Enable)
             return;
 
+        // Always name the file. On Windows ConfigMgr::GetConfigPath() returns
+        // the RELATIVE "configs/" (Config.cpp:709), so the config a server
+        // reads depends on the directory it was launched from - and an MSBuild
+        // build leaves a second copy in build/bin/<Config>/configs/ that
+        // `ta.py conf` never touched. "I edited the config" and "the server
+        // read my edit" are different claims, and only the server can settle
+        // the second one.
+        LOG_INFO("module.classless", "[Classless] Config in effect: {}", sConfigMgr->GetFilename());
+
         if (CreationDisabledClassMask == expected)
         {
             LOG_INFO("module.classless",
@@ -128,9 +137,11 @@ namespace TomorrowsAsh
         LOG_ERROR("module.classless",
                   "[Classless] CHARACTER CREATION IS NOT RESTRICTED. "
                   "CharacterCreating.Disabled.ClassMask is {}, expected {}. "
-                  "Players can create any class, not just the three body types. "
-                  "Fix: run `ta.py conf` and restart. See docs/BODY-TYPES.md section 4.",
+                  "Players can create any class, not just the three body types.",
                   CreationDisabledClassMask, expected);
+        LOG_ERROR("module.classless",
+                  "[Classless] The file above is the one to fix - NOT necessarily the one "
+                  "`ta.py conf` writes. Run `ta.py doctor` to see every copy on disk.");
 
         for (uint32 classId = 1; classId <= 11; ++classId)
         {

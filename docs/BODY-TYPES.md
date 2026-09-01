@@ -204,6 +204,27 @@ still offers them. The config path returns a real "disabled" response instead,
 is reversible without a migration, and survives a world database re-import.
 The rows stay.
 
+### Confirming it is actually in effect
+
+Two files can both be called `worldserver.conf`. On Windows
+`ConfigMgr::GetConfigPath()` returns the *relative* `"configs/"`
+(`Config.cpp:709`), so the one a server reads is chosen by the directory it was
+launched from — and an MSBuild build leaves a second copy under
+`build/bin/<Config>/configs/` on every build. A realm can be configured and
+still run stock.
+
+So do not trust the file. Ask the server:
+
+```
+[Classless] Config in effect: C:\...\dist\configs\worldserver.conf
+[Classless] Character creation is limited to the three body types (CharacterCreating.Disabled.ClassMask = 1341).
+```
+
+Both lines are in `Server.log` next to the binary. The second is replaced by a
+`CHARACTER CREATION IS NOT RESTRICTED` error naming every wrongly-creatable
+class when it is not in effect. `ta.py doctor` lists every copy on disk with
+its values; `ta.py conf` writes all of them.
+
 ### What the server cannot do: the menu
 
 **The creation screen still lists all ten classes, and nothing server-side
