@@ -59,14 +59,16 @@ while those await sign-off.
 - [x] Blizzard talent suppression wired (still defaulted off)
 - [x] **Body-type stat deltas approved** — three body types, armor proficiency
       locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
-- [ ] **…but not applied.** `player_class_stats` on the realm is still stock:
-      class 8 at level 80 reads Str 36 / Sta 59 / Int 181, not the approved
-      Adept 55 / 110 / 190. Approving the numbers and writing the migration
-      were treated as one step and only the first happened. The three body
-      types are currently numerically identical to stock Paladin / Shaman /
-      Mage. **Does not block the Phase 3 playtest** — none of its checks depend
-      on base stats — but it does block any judgement about how a body type
-      *feels*.
+- [x] **…and applied**, five days later than it should have been. Approving the
+      numbers and writing the migration had been treated as one step, so until
+      2026-08-31 the realm was still stock and the three body types were
+      numerically identical to Paladin / Shaman / Mage under new names.
+      `tools/gen_body_types.py` now generates the full 1–80 curve from the
+      approved level 60 and 80 anchors and refuses to emit if it misses either.
+- [x] **Every race reaches every body type** — 16 `playercreateinfo` rows.
+      Only Draenei could be all three before; Night Elf could be none and could
+      not be created at all. Inert on a stock client until `CharBaseInfo.dbc`
+      lists the new pairs.
 - [x] **Character creation limited to the three body types** —
       `CharacterCreating.Disabled.ClassMask = 1341`, written by `ta.py conf`
       and checked by `tools/tests/test_body_types.py`. The seven other classes

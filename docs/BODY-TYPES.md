@@ -113,9 +113,20 @@ on the melee side of the pool, and the Adept should never be expected to melee.
 | Spirit | 75 | 100 | **130** *(+10)* |
 | **Stat total** | **415** | **420** | **420** |
 
-Bold = changed from stock. Vanguard is untouched as the reference point. The
-migration generates the full 1–80 curve; these two levels are the anchors it is
-checked against.
+Bold = changed from stock. Vanguard is untouched as the reference point.
+
+**Applied 2026-08-31** as `2026_08_31_01_body_type_class_stats.sql`, generated
+by `tools/gen_body_types.py`. These two levels are anchors, not the curve: the
+generator interpolates every level from no change at level 1, through the
+level 60 row, to the level 80 row, and **refuses to emit** unless both anchors
+come out exactly and no stat decreases with level. 74 of 80 Skirmisher levels
+and 79 of 80 Adept levels differ from stock; `classless_class_stats_backup`
+holds every original.
+
+Between approval and that date the table was still stock, so the three body
+types were numerically identical to Paladin, Shaman and Mage wearing new
+names. Approving numbers and writing the migration had been treated as one
+step.
 
 ### Why these deltas
 
@@ -237,15 +248,35 @@ of it — the opposite of the design.
 **Only Draenei can currently make all three**, which is what the Phase 3
 playtest should use.
 
-Two ways out, both open questions rather than decisions:
+**Decided 2026-08-31: add the rows.** Race is an independent choice, not a
+body-type gate. `2026_08_31_02_body_type_race_coverage.sql` adds the 16 missing
+pairs, so all ten races now reach all three body types — verified on the realm:
 
-1. **Add the missing rows to `playercreateinfo`** so every race can be every
-   body type — data-only on the server, but invisible until the client patch
-   above ships, since the menu will not offer combinations `CharBaseInfo.dbc`
-   does not list. Also needs a starting position and starting kit per new
-   pair.
-2. **Accept it**, and treat race as part of the body-type choice. Cheap, but
-   Night Elf has to go, and the spread stays lopsided.
+| race | body types |
+|---|---|
+| all ten | Vanguard, Skirmisher, Adept |
+
+Each new pair starts where its own race starts (a Night Elf Vanguard begins in
+Shadowglen), because `playercreateinfo` holds only a position and that position
+is a property of the race — every class of a race shares it except the Death
+Knight, who starts in Ebon Hold. Action bars are copied from a same-faction
+race that already had that class. `classless_createinfo_added` lists every row
+added, so the change can be undone.
+
+**This is inert on a stock client, on purpose.** The creation screen will not
+offer Night Elf Vanguard until `CharBaseInfo.dbc` lists it, so nothing changes
+for a player today. The server accepting a combination the client does not yet
+offer costs nothing and means the client patch is the only remaining step.
+
+> **One thing to finish alongside that patch: starting gear.** The starting
+> outfit comes from `CharStartOutfit.dbc`, keyed on race/class/gender
+> (`Player.cpp:629`). Blizzard's file only has entries for the combinations the
+> stock client offers, so a new pair will most likely be created with nothing
+> equipped. `Player.cpp:665` then adds anything in `playercreateinfo_item` on
+> top, which is the data-only fix — but the item lists have to be read out of
+> the extracted DBC first, and there is no client in the build environment to
+> read it from. Unverified, and it cannot bite until the client patch makes
+> those pairs reachable.
 
 Three body types keeps the menu comprehensible and the balance surface small
 enough for one person to tune. A fourth later is a data change, not a rework.

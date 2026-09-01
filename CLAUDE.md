@@ -160,6 +160,7 @@ Coordinate, do not collide:
 | `tools/gen_trees.py` | generates tree SQL, verifies every spell |
 | `tools/spell_cascade.py` | what does granting this spell drag in? |
 | `tools/audit_items.py` | class restrictions on gear, measured; generates the unlock SQL |
+| `tools/gen_body_types.py` | body-type stat curves and race coverage; refuses to emit if it misses an approved anchor |
 | `docs/CLASS-RESTRICTIONS.md` | how AzerothCore enforces class rules, with file:line |
 | `docs/ARCHITECTURE.md` | repo model, module rules |
 | `docs/BODY-TYPES.md` | the three body types, final |

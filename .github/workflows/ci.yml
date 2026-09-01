@@ -328,6 +328,12 @@ jobs:
           python tools/audit_items.py --help > /dev/null
           echo "audit_items.py OK"
 
+      - name: The generators are runnable
+        run: |
+          python -c "import ast; ast.parse(open('tools/gen_body_types.py').read())"
+          python tools/gen_body_types.py --help > /dev/null
+          echo "gen_body_types.py OK"
+
       - name: Documentation links resolve
         run: |
           python - <<'PY'
