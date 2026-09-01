@@ -854,9 +854,15 @@ never touches `~/.wine` or any prefix belonging to another game.
 | Proton fails immediately | it needs Steam installed, not just the Proton folder — the launcher reports which of the two is missing |
 | Fonts are boxes | `winetricks corefonts` in the launcher's prefix |
 
-### 10.6 Cutting a release
+### 10.6 Getting a build, and cutting a release
 
-Tag it; CI builds both platforms:
+**Every push builds both platforms**, so a testable `.exe` exists without anyone
+owning a Windows machine. Actions tab → your commit's run → *Artifacts*:
+`launcher-Windows-<sha>` holds the installer, the `.msi` and the bare
+`ashmorrow-launcher.exe`. For testing a change the bare executable is the one to
+take — it installs nothing and leaves nothing behind.
+
+To publish, tag it:
 
 ```bash
 git tag launcher-v0.1.0
@@ -874,10 +880,10 @@ it builds and leaves the installers as workflow artifacts, publishing nothing.
 The binaries are unsigned by choice ([ADR 0005](docs/decisions/0005-client-distribution.md) §6),
 which is why the sums are published alongside them.
 
-> **Never run.** The workflow is written and its structure checked, but nothing
-> in this project has yet built the Tauri shell — the sandbox it was written in
-> has no webview. The first real run will be the first time anyone finds out
-> what it gets wrong.
+> **Partly proven.** The workflow's first run caught a real cross-platform test
+> bug on Windows, which is what it is for. Whether the Windows *bundling* step
+> produces an installer has not been observed yet — nothing in this project has
+> a webview to build the shell with locally.
 
 ### 10.7 Launcher troubleshooting
 

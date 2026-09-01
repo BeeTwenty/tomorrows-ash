@@ -211,9 +211,26 @@ cd launcher/ui && npm run typecheck
 No webview needed for any of it — that is the point of keeping every behaviour
 in `core/`.
 
+### Getting a build without building it
+
+**Every push builds both platforms and leaves the binaries on the workflow
+run.** Actions tab → the run for your commit → *Artifacts* at the bottom:
+
+| Artifact | Holds |
+|---|---|
+| `launcher-Windows-<sha>` | `Ashmorrow_*_x64-setup.exe`, the `.msi`, and the bare `ashmorrow-launcher.exe` |
+| `launcher-Linux-<sha>` | the `.AppImage`, the `.deb`, and the bare binary |
+
+For testing a change, take the **bare executable** rather than the installer —
+it runs as-is, installs nothing, and leaves nothing behind when you delete it.
+
+Artifacts are kept 14 days and named with the commit SHA, so several builds in
+the list are tellable apart. GitHub serves them as `.zip` regardless of what is
+inside.
+
 ### Releases
 
-Tag it and CI builds both platforms:
+Tag it and CI builds both platforms *and* publishes:
 
 ```bash
 git tag launcher-v0.1.0
@@ -229,10 +246,12 @@ To check a build without tagging, run the workflow manually from the Actions
 tab — it builds and leaves the installers as workflow artifacts without
 publishing anything.
 
-**This workflow has never run.** It is written and its structure is checked,
-but nothing in this project has yet built the Tauri shell — this sandbox has no
-webview, so the first real run of it will be the first time anyone finds out
-what it gets wrong.
+**The Windows job is proven as far as the tests; the bundling step is not yet.**
+Its first run found a genuine cross-platform bug — a test asserting Unix path
+semantics that Windows disagreed with — which is a fair advertisement for having
+it. Whether `cargo tauri build` completes and produces an installer on the
+Windows runner has not been observed yet at the time of writing; the run after
+the fix is the one that answers it.
 
 ---
 
