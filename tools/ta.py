@@ -882,6 +882,50 @@ def disabled_classmask():
 CONF_TEMPLATES = ["authserver", "worldserver"]
 
 
+def apply_conf_keys(lines, replacements):
+    """Rewrite the managed keys in a config file, leaving every other line alone.
+
+    Returns (new_lines, {key: (old_value, new_value)}) for the keys that
+    actually changed, so callers can say what they did rather than claiming a
+    file is correct without looking.
+    """
+    out, changed = [], {}
+    for line in lines:
+        stripped = line.strip()
+        for key, value in replacements.items():
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                old = stripped.split("=", 1)[1].strip().strip('"') if "=" in stripped else ""
+                new = f'{key} = "{value}"'
+                if old != str(value):
+                    changed[key] = (old, str(value))
+                out.append(new)
+                break
+        else:
+            out.append(line)
+            continue
+    return out, changed
+
+
+def read_conf_value(path, key):
+    """The value a running server would read for one key, or None if absent.
+
+    Mirrors Config.cpp: last-write-wins is NOT how it works - IsDuplicateOption
+    keeps the first - and every '"' is stripped from the value (Config.cpp:327).
+    """
+    if not Path(path).is_file():
+        return None
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        if name.strip() == key:
+            return value.strip().replace('"', "")
+    return None
+
+
 def cmd_conf(args):
     cfg = load_local()
     etc = dist_dir() / ("configs" if IS_WINDOWS else "etc")
@@ -901,6 +945,16 @@ def cmd_conf(args):
         # Quoting is fine for a number: Config.cpp:327 strips every '"' from a
         # value before parsing it.
         "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+
+        # MUST be 0 on a classless realm. Player::_LoadSpells calls
+        # CheckSkillLearnedBySpell on every login (PlayerStorage.cpp:6610), and
+        # that asks GetSkillRaceClassInfo whether the spell's skill line is
+        # valid for the character's race and class. Every off-class ability the
+        # broker sells fails that test, so with this on, purchased spells are
+        # DELETED from character_spell at the next login - silently, apart from
+        # one LOG_ERROR. Off-class spells are the entire point of this realm,
+        # so the guard is wrong here.
+        "ValidateSkillLearnedBySpells": "0",
     }
 
     # AzerothCore's built-in SQL updater shells out to the `mysql` client to
@@ -919,24 +973,27 @@ def cmd_conf(args):
         if not dist_file.exists():
             warn(f"{dist_file.name} missing, skipping")
             continue
-        if target.exists() and not args.force:
-            warn(f"{target.name} already exists (use --force to regenerate)")
-            continue
-        lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        out, seen = [], set()
-        for line in lines:
-            stripped = line.strip()
-            replaced = False
-            for key, value in replacements.items():
-                if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-                    out.append(f'{key} = "{value}"')
-                    seen.add(key)
-                    replaced = True
-                    break
-            if not replaced:
-                out.append(line)
+        # An existing config is NOT skipped. It used to be, and that is how a
+        # realm ended up running with CharacterCreating.Disabled.ClassMask = 0
+        # for a whole playtest: the repo grew a new managed setting, `ta.py
+        # conf` refused to touch the deployed file, and nothing said so. Only
+        # the keys ta.py owns are rewritten; every hand edit elsewhere in the
+        # file survives. --force still regenerates from the .dist.
+        source = dist_file if (args.force or not target.exists()) else target
+        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+        out, changed = apply_conf_keys(lines, replacements)
         target.write_text("\n".join(out) + "\n", encoding="utf-8")
-        ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+
+        if source is dist_file:
+            ok(f"wrote {target.relative_to(REPO)} from {dist_file.name}")
+        elif changed:
+            ok(f"updated {target.relative_to(REPO)} - {len(changed)} setting(s) were stale:")
+            for key, (old_value, new_value) in changed.items():
+                shown_old = old_value if len(old_value) < 40 else old_value[:37] + "..."
+                shown_new = new_value if len(new_value) < 40 else new_value[:37] + "..."
+                print(f"       {key}: {shown_old or '(empty)'} -> {shown_new}")
+        else:
+            ok(f"{target.relative_to(REPO)} already correct")
 
     # Module configs live in etc/modules/, not etc/ - that is where CMake
     # installs the .dist files and where worldserver looks for them.
