@@ -209,7 +209,7 @@ jobs:
           python3 - <<'PY'
           import json, pathlib, sys, re
           bad = []
-          for path in ["web/package.json", "launcher/ui/package.json"]:
+          for path in ["web/package.json", "web-admin/package.json", "launcher/ui/package.json"]:
               got = json.loads(pathlib.Path(path).read_text()).get("license")
               if got != "GPL-2.0-or-later":
                   bad.append(f"{path}: license is {got!r}")
@@ -491,6 +491,132 @@ jobs:
         run: |
           # .env.local holds database credentials and the session secret.
           if git ls-files | grep -E '^web/\.env(\.|$)' | grep -v '\.env\.example'; then
+            echo "An environment file with credentials is tracked in git."
+            exit 1
+          fi
+          echo "clean"
+
+  admin:
+    name: Admin panel
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - name: Install exactly what the lockfile says
+        run: npm ci
+
+      # Build first: it regenerates next-env.d.ts and .next/types, which the
+      # typecheck below needs and which are deliberately not committed.
+      - name: Build
+        run: npm run build
+        env:
+          ADMIN_SITE_URL: https://admin.ashmorrow.example
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # roles.ts, ip.ts, totp.ts and secretbox.ts are pure and carry the
+      # security model, so they are tested exhaustively rather than reasoned
+      # about. totp.test.ts asserts against RFC 6238's own published vectors.
+      - name: Unit tests
+        run: npm test
+
+      - name: The panel starts and serves its sign-in page
+        run: |
+          # No database - port 1 answers nothing. The panel has no demo mode, so
+          # this proves only what it should: the process boots and the pre-auth
+          # path (config check, address resolution, allowlist) renders without
+          # touching MySQL.
+          #
+          # DB_PASSWORD is set even though nothing connects: an empty one is a
+          # startup refusal in production, which is correct behaviour and not
+          # what this step is testing. The step below tests the refusals.
+          ADMIN_SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
+          ADMIN_TOTP_KEY=ci-only-totp-key-that-is-long-enough-to-pass-validation \
+          ADMIN_SITE_URL=http://127.0.0.1:3010 \
+          DB_HOST=127.0.0.1 DB_PORT=1 DB_PASSWORD=ci-only-not-a-real-password \
+          PORT=3010 npm start &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3010/login > /dev/null && break
+            sleep 1
+          done
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3010/login)
+          echo "/login -> $code"
+          [ "$code" = "200" ] || exit 1
+
+          # Anonymous requests must never reach a panel page.
+          for path in / /accounts /characters /trees /items /realm /audit; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3010$path")
+            echo "$path -> $code"
+            [ "$code" = "307" ] || [ "$code" = "302" ] || exit 1
+          done
+
+      - name: A public instance with no allowlist refuses to start
+        run: |
+          # This is the control that keeps the panel off the open internet, so
+          # CI asserts it rather than trusting it. Starting with a warning
+          # instead of failing is exactly the bug this guards against.
+          set +e
+          ADMIN_PUBLIC=1 \
+          ADMIN_SITE_URL=https://admin.ashmorrow.example \
+          ADMIN_SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
+          ADMIN_TOTP_KEY=ci-only-totp-key-that-is-long-enough-to-pass-validation \
+          DB_HOST=127.0.0.1 DB_PASSWORD=x \
+          PORT=3012 timeout 40 npm start > boot.log 2>&1
+          status=$?
+          set -e
+          cat boot.log
+          if [ "$status" = "0" ]; then
+            echo "The panel started as public with an empty allowlist. It must refuse."
+            exit 1
+          fi
+          grep -q "ADMIN_IP_ALLOWLIST" boot.log || {
+            echo "It refused, but not for the allowlist - check the message."
+            exit 1
+          }
+          echo "refused, as it should"
+
+      - name: The audit table is append-only in the grants
+        run: |
+          # ash_admin holds INSERT on admin_audit and must never hold UPDATE or
+          # DELETE. That property is what makes the log worth having, and it
+          # lives in one file where a well-meaning edit could undo it.
+          python3 - <<'PY'
+          import re, sys, pathlib
+          sql = pathlib.Path("sql/admin-grants.sql").read_text()
+          grants = [
+              line for line in sql.splitlines()
+              if "admin_audit" in line and line.strip().upper().startswith("GRANT")
+          ]
+          if not grants:
+              sys.exit("No GRANT on admin_audit found at all.")
+          for line in grants:
+              privileges = re.search(r"GRANT\s+(.*?)\s+ON", line, re.I)
+              names = {p.strip().upper() for p in privileges.group(1).split(",")}
+              forbidden = names & {"UPDATE", "DELETE", "ALL", "ALL PRIVILEGES", "DROP", "ALTER"}
+              if forbidden:
+                  sys.exit(f"admin_audit must stay append-only; found {sorted(forbidden)} in: {line}")
+          print("append-only:", "; ".join(g.strip() for g in grants))
+          PY
+
+      - name: Secrets are not committed
+        run: |
+          # .env.local holds the database password, the session secret and the
+          # TOTP key that every enrolled authenticator depends on.
+          if git ls-files | grep -E '^web-admin/\.env(\.|$)' | grep -v '\.env\.example'; then
             echo "An environment file with credentials is tracked in git."
             exit 1
           fi
