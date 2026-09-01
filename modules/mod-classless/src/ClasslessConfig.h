@@ -81,6 +81,10 @@ namespace TomorrowsAsh
         // Warn if the core is set to delete every off-class ability on login.
         void CheckSpellValidation() const;
 
+        // Warn if a role still grants the permission that skips the class mask
+        // check, which silently exempts every GM account from the restriction.
+        void CheckCreationRbac() const;
+
         static ClasslessConfig& Instance();
 
         void Load();

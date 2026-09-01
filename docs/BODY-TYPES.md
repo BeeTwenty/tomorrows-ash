@@ -204,6 +204,33 @@ still offers them. The config path returns a real "disabled" response instead,
 is reversible without a migration, and survives a world database re-import.
 The rows stay.
 
+### The classmask does not apply to GMs
+
+`HandleCharCreateOpcode` only consults it when the account lacks RBAC
+permission 15 (`CharacterHandler.cpp:344`):
+
+```cpp
+if (!HasPermission(rbac::RBAC_PERM_SKIP_CHECK_CHARACTER_CREATION_CLASSMASK))
+{
+    uint32 classMaskDisabled = sWorld->getIntConfig(CONFIG_CHARACTER_CREATING_DISABLED_CLASSMASK);
+    if ((1 << (createInfo->Class - 1)) & classMaskDisabled)
+        SendCharCreate(CHAR_CREATE_DISABLED);
+}
+```
+
+Stock AzerothCore attaches that permission to `Role: Sec Level Moderator`
+(194), and the roles nest — Administrator (192) → Gamemaster (193) →
+Moderator (194) → Player (195). So **every account at gmlevel 1 or above
+skips the check entirely**, while a gmlevel 0 player is blocked correctly.
+
+On a realm run by its owner that is the worst possible split: the config is
+right, the startup log says restricted, and the one account doing the testing
+is the one the restriction does not apply to.
+
+`data/sql/db-auth/2026_09_01_00_classless_creation_rbac.sql` removes the link,
+so nobody skips it. `classless_rbac_backup` holds the removed row. The module
+re-checks at startup and says so if it ever comes back.
+
 ### Confirming it is actually in effect
 
 Two files can both be called `worldserver.conf`. On Windows

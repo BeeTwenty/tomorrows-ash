@@ -21,7 +21,11 @@
 
 #include "ClasslessConfig.h"
 #include "Config.h"
+#include "DatabaseEnv.h"
+#include "Field.h"
 #include "Log.h"
+#include "QueryResult.h"
+#include "RBAC.h"
 
 namespace TomorrowsAsh
 {
@@ -71,7 +75,50 @@ namespace TomorrowsAsh
         }
 
         CheckCreationClassMask();
+        CheckCreationRbac();
         CheckSpellValidation();
+    }
+
+    void ClasslessConfig::CheckCreationRbac() const
+    {
+        // The classmask can be perfectly configured and still never run.
+        //
+        // HandleCharCreateOpcode only consults it when the account LACKS RBAC
+        // permission 15 (CharacterHandler.cpp:344). Stock AzerothCore attaches
+        // that permission to "Role: Sec Level Moderator", and the roles nest -
+        // Administrator -> Gamemaster -> Moderator -> Player - so every
+        // account at gmlevel 1 or above skips the check while a gmlevel 0
+        // player is blocked correctly.
+        //
+        // On a realm run by its owner, the person doing the testing is the one
+        // account the restriction does not apply to. That is exactly how this
+        // was reported: the config was right, the log said restricted, and a
+        // Warrior still created.
+        if (!Enable)
+            return;
+
+        QueryResult result = LoginDatabase.Query(
+            "SELECT COUNT(*) FROM rbac_linked_permissions WHERE linkedId = {}",
+            uint32(rbac::RBAC_PERM_SKIP_CHECK_CHARACTER_CREATION_CLASSMASK));
+
+        if (!result)
+            return;                             // cannot tell; do not cry wolf
+
+        Field* fields = result->Fetch();
+        if (!fields[0].Get<uint64>())
+            return;                             // nobody can skip the check
+
+        LOG_ERROR("module.classless",
+                  "[Classless] Character creation is restricted, but RBAC permission {} "
+                  "(skip character creation class mask check) is still granted through a role. "
+                  "Any account at gmlevel 1 or above - including yours - bypasses the "
+                  "restriction entirely and can create any class. The classmask above is "
+                  "correct and simply never consulted for those accounts.",
+                  uint32(rbac::RBAC_PERM_SKIP_CHECK_CHARACTER_CREATION_CLASSMASK));
+        LOG_ERROR("module.classless",
+                  "[Classless] Fix: apply the module's db-auth migration "
+                  "(2026_09_01_00_classless_creation_rbac.sql) and restart, or test with a "
+                  "gmlevel 0 account.");
     }
 
     void ClasslessConfig::CheckSpellValidation() const

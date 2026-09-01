@@ -960,6 +960,49 @@ def report_deployed_configs():
     print()
 
 
+def conf_keys(path):
+    """The setting names a config file defines, in order."""
+    keys = []
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("[") or "=" not in stripped:
+            continue
+        keys.append(stripped.split("=", 1)[0].strip())
+    return keys
+
+
+def add_missing_module_keys(dist_file, target):
+    """Append settings the .dist has and the deployed config does not.
+
+    Values are never changed - an operator's tuning is theirs. But a key added
+    to the module after their config was written would otherwise never appear,
+    and the only symptom is one line at startup:
+
+        > Config: Missing property Classless.OpenRelicSlot in config file ...
+
+    which is easy to miss in a thousand lines of boot log, and leaves the
+    setting silently on its compiled-in default.
+    """
+    have = set(conf_keys(target))
+    missing = [k for k in conf_keys(dist_file) if k not in have]
+    if not missing:
+        return []
+
+    dist_lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    block = ["", "#", "# Added by `ta.py conf`: present in the shipped .dist but missing here.",
+             "# Values are the shipped defaults; existing settings above were not touched.",
+             "#"]
+    for key in missing:
+        for line in dist_lines:
+            stripped = line.strip()
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                block.append(stripped)
+                break
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(block) + "\n")
+    return missing
+
+
 def apply_conf_keys(lines, replacements):
     """Rewrite the managed keys in a config file, leaving every other line alone.
 
@@ -1099,7 +1142,18 @@ def cmd_conf(args):
             target = modules_etc / src.name.replace(".conf.dist", ".conf")
             if not target.exists() or args.force:
                 shutil.copy2(src, target)
-            ok(f"module config {src.name} -> etc/modules/")
+                ok(f"module config {src.name} -> etc/modules/")
+                continue
+
+            # The deployed config is the operator's: their tuning stays. Only
+            # settings that did not exist when they configured are appended.
+            added = add_missing_module_keys(src, target)
+            if added:
+                ok(f"module config {target.name}: added {len(added)} new setting(s)")
+                for key in added:
+                    print(f"       {key}")
+            else:
+                ok(f"module config {target.name} has every setting the module defines")
 
     print()
     print(f"     Character creation is limited to the three body types:")
