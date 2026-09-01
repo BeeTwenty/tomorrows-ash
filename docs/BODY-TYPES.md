@@ -231,6 +231,29 @@ is the one the restriction does not apply to.
 so nobody skips it. `classless_rbac_backup` holds the removed row. The module
 re-checks at startup and says so if it ever comes back.
 
+### Verified in play
+
+**2026-09-01, on the live realm, by a person at a client** — not by reading a
+config or a log:
+
+| attempted | result |
+|---|---|
+| Warrior (class 1, disabled) | refused |
+| Paladin (class 2, Vanguard) | created |
+
+Both halves matter. A restriction that refuses everything is not working
+either. This is the first claim in the project confirmed by playing rather
+than by loading.
+
+Getting there took three wrong answers, all of the same shape — verifying a
+thing that was next to the thing that mattered:
+
+1. The value was right in the repo; the deployed config was never rewritten.
+2. The deployed config was then right; **but the check is skipped for any
+   account at gmlevel 1+**, which is every account an owner tests with.
+3. Between those, a claim that RBAC had been ruled out — from a query written
+   against the wrong column, whose empty result was read as proof.
+
 ### Confirming it is actually in effect
 
 Two files can both be called `worldserver.conf`. On Windows

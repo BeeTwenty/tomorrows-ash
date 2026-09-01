@@ -136,6 +136,10 @@ number with `python3 tools/audit_items.py`.
 
 Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
 
+- [x] **Character creation restriction verified in play** (2026-09-01): Warrior
+      refused, Paladin created. Took three attempts — the deployed config was
+      never rewritten, then the check turned out to be skipped for every
+      account at gmlevel 1+, which is the account an owner tests with.
 - [x] **Two bugs fixed.** Character creation was never restricted on the realm
       (the config existed in the repo but `ta.py conf` skipped the deployed
       file), and `ValidateSkillLearnedBySpells = 1` was deleting every
