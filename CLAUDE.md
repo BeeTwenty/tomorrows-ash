@@ -77,6 +77,8 @@ Do not re-derive them from memory; if you doubt one, verify it the same way.
 | Relics are gear like any other | **They are the one category no SQL can reach.** `Player::FindEquipSlot` picks the relic slot with a hardcoded `IsClass`, so `AllowableClass` never gets a say. Opened via the `OnPlayerIsClass` hook in `ClasslessRelics.cpp`, behind `Classless.OpenRelicSlot`, default off until a client confirms the slot draws. |
 | The server controls what the character-creation screen offers | **It controls nothing there.** In 3.3.5a the class list, race/class pairs and class names come from the client's `CharBaseInfo.dbc` and `ChrClasses.dbc`; there is no opcode for any of it. The server can only *refuse* a creation (`CharacterCreating.Disabled.ClassMask`, `CharacterHandler.cpp:346`). Hiding or renaming is a client patch. |
 | Limiting classes means deleting `playercreateinfo` rows | **Use the classmask config instead.** Deleting rows makes `Player::Create` return false and log `Possible hacking-attempt` for every honest player who picked a still-listed class. The config returns a real "disabled" response, needs no migration, and survives a world DB re-import. |
+| A setting being right in the repo means the realm has it | **No.** `ta.py conf` used to skip an existing config entirely, so a key added later never reached a configured realm — a whole playtest ran with character creation unrestricted. It now rewrites its own keys in place. When a config matters, check the deployed file or the startup log, never the generator. |
+| Off-class spells stay learned | **Not with `ValidateSkillLearnedBySpells = 1`.** `Player::_LoadSpells` (`PlayerStorage.cpp:6610`) deletes any spell whose skill line is invalid for the character's race/class, at every login. That is every ability the broker sells. It must be 0 on this realm; `ta.py conf` now forces it and the module warns at startup. |
 | Cloth chest pieces are `INVTYPE_CHEST` | **They are `INVTYPE_ROBE` (20).** Any query comparing armor classes by slot that filters on 5 alone drops cloth entirely and looks like it worked. |
 
 ---
@@ -175,6 +177,7 @@ Coordinate, do not collide:
 | `docs/BODY-TYPES.md` | the three body types, final |
 | `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
 | `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
+| `docs/TRAINING-SYSTEM.md` | rank progression: what the first playtest exposed, three options, awaiting a decision |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
 | `web/` | the public site (§9) |

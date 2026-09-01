@@ -132,6 +132,26 @@ number with `python3 tools/audit_items.py`.
 
 ---
 
+## Training system — reopened by the first playtest
+
+Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
+
+- [x] **Two bugs fixed.** Character creation was never restricted on the realm
+      (the config existed in the repo but `ta.py conf` skipped the deployed
+      file), and `ValidateSkillLearnedBySpells = 1` was deleting every
+      broker-taught ability at the player's next login. Both are managed
+      settings now, and worldserver audits them at every start.
+- [ ] **Rank progression — needs a decision.** A node is one spell, permanently
+      rank 1: Fireball stays rank 1 at level 80. 42 of 50 nodes have rank
+      chains, mean length 8.1, and every rank already carries a level
+      requirement and a gold cost in `trainer_spell`. Three options in the
+      write-up; recommendation is trained ranks, like a real class.
+- [ ] **Spellbook tabs** — broker spells land under General because the client
+      builds tabs from skill lines the character has. Possible server-side fix
+      is unverified and cosmetic; last of the four.
+
+---
+
 ## Phase 4 — The launcher ✅ built, one part declined
 
 A desktop launcher that verifies a player's own 3.3.5a client, writes the
