@@ -188,8 +188,12 @@ cd web-admin
 npm ci
 npm run gen-secret >> .env.local              # then fill in the rest
 npm run build
-npm start                                     # 127.0.0.1:3010
+npm start                                     # 127.0.0.1:3010 only
 ```
+
+It binds localhost, not `0.0.0.0`. Reaching it from elsewhere is a deliberate
+act — an SSH tunnel (`ssh -L 3010:127.0.0.1:3010 you@host`) or a reverse proxy
+that terminates TLS. `ADMIN_BIND=0.0.0.0` opts out.
 
 Put it behind a reverse proxy that terminates TLS, then:
 

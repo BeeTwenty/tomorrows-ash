@@ -1148,6 +1148,7 @@ Two others, for the same reason — the panel would be lying:
 | Kick / revive / teleport unavailable | SOAP is not configured — 12.5 |
 | Tree edits do not take effect in game | the module caches trees at load. Use "Reload trees on the server", which needs SOAP; otherwise they apply at the next restart |
 | A character edit is refused | they are online. The worldserver owns their row and would overwrite the change |
+| Can't reach the panel from another machine | It binds `127.0.0.1` on purpose. Tunnel with `ssh -L 3010:127.0.0.1:3010 you@host`, or put it behind your reverse proxy. `ADMIN_BIND=0.0.0.0` widens it deliberately |
 | `admin doctor` says the audit log is not append-only | `ash_admin` has `UPDATE` on `admin_audit` and must not. Re-run `ta.py admin sql --grants` |
 | The **website** starts logging `Access denied for user 'ash_web'@'localhost'` after setting the panel up | An early version of `admin dev-db` re-ran `web dev-db`, which rotates the website's database password when `web_db_pass` is not recorded in `tools/local.json`. Fixed — it no longer touches the site's user at all. On a machine that already hit it: `python3 tools/ta.py web dev-db --yes`, then restart the website. `ta.py web doctor` now reports this rather than passing. |
 
