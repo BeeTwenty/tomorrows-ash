@@ -1,0 +1,241 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   Ashmorrow admin panel — visual identity
+   --------------------------------------------------------------------------
+   Related to the public site, deliberately not the same. The site is
+   atmospheric: vignettes, drifting ash, serif display type. An operator tool
+   that looks like that is a tool where a destructive button gets lost in the
+   mood lighting.
+
+   So: the same palette, none of the atmosphere. Flat surfaces, dense rows,
+   system fonts, and one rule about colour — warm means "this changes something
+   for a player". Nothing else is allowed to be orange.
+
+   The palette is also shifted a step cooler than the site's, because the fastest
+   way to stop someone banning an account in the window they thought was the
+   armory is to make the two impossible to confuse at a glance.
+
+   No webfonts. The panel's CSP allows no external origins at all (next.config.ts),
+   which means it works on an air-gapped operator box and cannot leak a page view
+   to a font CDN.
+   ========================================================================== */
+
+@theme {
+  --color-void: #07070a;
+  --color-soot: #0d0d11;
+  --color-smoke: #14141a;
+  --color-raised: #1b1b22;
+  --color-edge: #262630;
+  --color-edge-bright: #3a3a48;
+  --color-ash: #6e6a75;
+  --color-ash-bright: #9d99a6;
+  --color-bone: #e6e4e9;
+
+  /* The only warm colour. It means "affects a player". */
+  --color-ember: #ff6a1f;
+  --color-ember-dim: #b3420f;
+
+  /* Status. Kept desaturated so they read as state, not as decoration. */
+  --color-ok: #5fa87b;
+  --color-warn: #c9a227;
+  --color-danger: #d05a54;
+  --color-info: #6f8fbf;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--color-void);
+  color: var(--color-bone);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  min-height: 100dvh;
+}
+
+::selection {
+  background: var(--color-ember-dim);
+  color: var(--color-bone);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ember);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Components
+   -------------------------------------------------------------------------- */
+
+@layer components {
+  .panel {
+    background-color: var(--color-soot);
+    border: 1px solid var(--color-edge);
+    border-radius: 0.375rem;
+  }
+
+  .panel-head {
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0.75rem 1rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--color-ash-bright);
+  }
+
+  .field {
+    width: 100%;
+    background-color: var(--color-void);
+    border: 1px solid var(--color-edge);
+    border-radius: 0.25rem;
+    padding: 0.5rem 0.7rem;
+    color: var(--color-bone);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+  }
+
+  .field:focus {
+    border-color: var(--color-edge-bright);
+    outline: none;
+  }
+
+  .label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ash);
+    margin-bottom: 0.35rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border-radius: 0.25rem;
+    border: 1px solid var(--color-edge-bright);
+    background-color: var(--color-raised);
+    color: var(--color-bone);
+    padding: 0.45rem 0.9rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .btn:hover:not(:disabled) {
+    background-color: var(--color-edge);
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  /* Reserved for actions a player would notice. */
+  .btn-ember {
+    border-color: var(--color-ember-dim);
+    background-color: color-mix(in srgb, var(--color-ember-dim) 22%, transparent);
+    color: #ffd7bd;
+  }
+
+  .btn-ember:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-ember-dim) 34%, transparent);
+  }
+
+  .btn-danger {
+    border-color: color-mix(in srgb, var(--color-danger) 55%, transparent);
+    background-color: color-mix(in srgb, var(--color-danger) 16%, transparent);
+    color: #f2c4c1;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: color-mix(in srgb, var(--color-danger) 28%, transparent);
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+  }
+
+  .muted {
+    color: var(--color-ash);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: 1px solid var(--color-edge);
+    border-radius: 999px;
+    padding: 0.1rem 0.55rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-ash-bright);
+  }
+
+  .notice {
+    border-radius: 0.25rem;
+    border: 1px solid var(--color-edge);
+    padding: 0.7rem 0.9rem;
+    font-size: 0.8125rem;
+  }
+
+  .notice-danger {
+    border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
+    background-color: color-mix(in srgb, var(--color-danger) 10%, transparent);
+    color: #f0c9c6;
+  }
+
+  .notice-warn {
+    border-color: color-mix(in srgb, var(--color-warn) 40%, transparent);
+    background-color: color-mix(in srgb, var(--color-warn) 8%, transparent);
+    color: #e8d9a6;
+  }
+
+  .notice-ok {
+    border-color: color-mix(in srgb, var(--color-ok) 40%, transparent);
+    background-color: color-mix(in srgb, var(--color-ok) 8%, transparent);
+    color: #bfe0cc;
+  }
+
+  /* Dense by default. An operator reading fifty audit rows wants fifty rows. */
+  .grid-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  .grid-table th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-ash);
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-edge);
+    white-space: nowrap;
+  }
+
+  .grid-table td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-edge) 60%, transparent);
+    vertical-align: top;
+  }
+
+  .grid-table tbody tr:hover {
+    background-color: color-mix(in srgb, var(--color-raised) 60%, transparent);
+  }
+}
