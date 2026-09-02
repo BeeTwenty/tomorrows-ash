@@ -86,9 +86,11 @@ Rust is a third language in a repo that already runs Python and C++ and
 TypeScript. Linux needs `libwebkit2gtk-4.1` present, which is a real dependency
 on some distros — mitigated by shipping an AppImage alongside the `.deb`, and by
 the fact that anyone installing Wine to play WoW is not going to be startled by
-one package. Cross-compiling Windows from Linux is unpleasant, so releases build
-on a GitHub Actions matrix (`windows-latest` + `ubuntu-22.04`), which we want
-anyway for reproducibility.
+one package. Cross-compiling Windows from Linux is not realistically supported at all, so
+**the `.exe` can only be produced on Windows** — releases build on a GitHub
+Actions matrix (`windows-latest` + `ubuntu-22.04`), which is
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml) and
+which we want anyway for reproducibility.
 
 ### If you would rather not add Rust
 
@@ -215,7 +217,12 @@ or install Wine ourselves.
 ## 6. Packaging and CI
 
 - Release matrix on GitHub Actions: `windows-latest` → `.exe` + `.msi`;
-  `ubuntu-22.04` → `.AppImage` + `.deb`.
+  `ubuntu-22.04` → `.AppImage` + `.deb`. Ubuntu is pinned rather than `latest`
+  because an AppImage inherits the glibc of the machine that built it.
+- The Tauri CLI is a dev dependency of `launcher/package.json` rather than a
+  global `cargo install`: `npm install && npm run build` is the whole build,
+  and `cargo install tauri-cli` compiles the CLI from source every time a new
+  machine joins.
 - **Unsigned initially**, with published SHA-256 sums, per ADR 0005 §6.
 - CI additions in the spirit of the jobs already in `ci.yml`:
   - `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test`.

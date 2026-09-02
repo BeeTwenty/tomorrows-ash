@@ -48,8 +48,12 @@ core/         the whole of the launcher's behaviour, as a plain Rust library
               game directory is testable in CI without a webview or a game
 core/src/bin/ ashmorrow-manifest: generate and check the hash manifest
 src-tauri/    the window. Thin: every command is marshalling over core
+src-tauri/capabilities/
+              what the window is allowed to ask for. Not boilerplate — see below
 ui/           the interface. TypeScript, no framework, 14 kB
+test/         the headless smoke tests: start the real binary, drive it, assert
 manifests/    the manifest schema, and Ashmorrow's own manifest
+recipes/      the body-type client patch, as edits rather than as a file
 tools/        icon and font generation, both reproducible from source
 ```
 
@@ -58,51 +62,277 @@ that lives in it is outside `cargo test`'s reach. Pushing logic into the shell
 means pushing it out of CI. The HTTP transport lives in `core` behind a feature
 flag for exactly that reason.
 
+### `src-tauri/capabilities/` is load-bearing
+
+Tauri 2 refuses every `plugin:` command that no capability grants — *including
+its own core ones*, and including them at runtime, on the player's machine,
+rather than at build time. With no `capabilities/` directory the interface's
+`listen()` is rejected, `plugin:dialog|open` is rejected, and nothing in
+`cargo fmt`, `clippy`, the tests or the typecheck notices.
+
+That is exactly how the launcher shipped broken: subscribing to progress events
+threw before a single line of state had loaded, so every tab came up empty and
+the window had nothing on it to say why. `default.json` grants `core:default`
+and `dialog:allow-open`, and the interface is now written so that a refusal
+costs the progress bar and nothing else.
+
+Two things keep it that way, and both fail on the pre-fix build:
+
+- CI checks that every plugin the interface imports has a matching permission,
+  and that the capability targets a window label that exists.
+- `launcher/test/smoke-linux.sh` starts the real binary and asserts it got to a
+  launch.
+
 ---
 
 ## Building it
 
-**Prerequisites:** Rust 1.77+, Node 20+, and on Linux the WebKitGTK development
-package.
+**The short version.** You need Rust, Node, and — on Linux only — a handful of
+system libraries. Then two commands from `launcher/`:
 
-```bash
-# Linux
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
-                 libayatana-appindicator3-dev librsvg2-dev
-
-cd launcher/ui && npm install && cd ..
-cargo install tauri-cli --version '^2' --locked
-
-cargo tauri dev     # run it
-cargo tauri build   # bundle it
+```
+npm install
+npm run build
 ```
 
-**On Windows**, WebView2 ships with Windows 10 21H2 and later, so there is
-nothing to install beyond Rust, Node and the MSVC build tools.
+That is the whole build. It compiles the Rust, builds the interface, and
+produces installers. There is no global tool to install: the Tauri CLI is a dev
+dependency of `launcher/package.json`, so `npm install` brings it — and brings
+`ui/`'s dependencies too, through a `postinstall`, so one install covers both.
 
-Bundles land in `src-tauri/target/release/bundle/`.
+**A platform builds only for itself.** `npm run build` on Linux produces an
+AppImage and a `.deb`; on Windows it produces an `.exe` and an `.msi`.
+Cross-compiling a Windows launcher from Linux is not realistically supported by
+Tauri, so **there is no way to produce the `.exe` except on a Windows machine or
+on a Windows CI runner.** If you have no Windows machine, skip to
+[Releases](#releases) — that is what the workflow is for.
+
+### Windows — producing the `.exe`
+
+**Prerequisites**
+
+| | Where |
+|---|---|
+| Rust | [rustup.rs](https://rustup.rs) — the default `stable-msvc` toolchain |
+| Node 20+ | [nodejs.org](https://nodejs.org) |
+| MSVC build tools | [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/), workload **"Desktop development with C++"**. Full Visual Studio works too — SETUP §2.1 already has it for the server |
+| WebView2 | Already present on Windows 10 21H2 and later. Nothing to do |
+
+`rustup` will not install the MSVC linker for you; that is what the build tools
+are for. Without them the first `cargo` step fails with `link.exe not found`.
+
+**Build**
+
+```powershell
+cd launcher
+npm install
+npm run build
+```
+
+First build is 5–15 minutes — it compiles Tauri and its dependency tree from
+source. Subsequent builds are seconds unless you touch the Rust.
+
+**What you get**, under `launcher\src-tauri\target\release\`:
+
+| File | What it is |
+|---|---|
+| `bundle\nsis\Ashmorrow_0.1.0_x64-setup.exe` | **The installer.** This is the one you hand to a player |
+| `bundle\msi\Ashmorrow_0.1.0_x64_en-US.msi` | Same thing for anyone deploying by group policy |
+| `ashmorrow-launcher.exe` | The bare executable. Runs, but installs no shortcut and cannot self-update |
+
+The version in those names comes from `version` in
+`src-tauri/tauri.conf.json`, so it moves when you bump a release.
+
+### Linux — producing the AppImage and `.deb`
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
+                 libayatana-appindicator3-dev librsvg2-dev file patchelf
+
+cd launcher
+npm install
+npm run build
+```
+
+`patchelf` and `file` are only needed for the AppImage, and their absence
+produces a confusing failure late in an otherwise successful build, so install
+them up front. On Fedora the equivalents are `webkit2gtk4.1-devel`,
+`openssl-devel`, `librsvg2-devel` and `patchelf`.
+
+**What you get**, under `launcher/src-tauri/target/release/`:
+
+| File | What it is |
+|---|---|
+| `bundle/appimage/Ashmorrow_0.1.0_amd64.AppImage` | Runs on any distribution. `chmod +x` and go |
+| `bundle/deb/Ashmorrow_0.1.0_amd64.deb` | For Debian and Ubuntu |
+| `ashmorrow-launcher` | The bare binary |
+
+An AppImage inherits the glibc of the machine that built it, so one built on a
+current Ubuntu will refuse to start on an older distribution. That is why the
+release workflow pins `ubuntu-22.04`.
+
+### Running it while you work on it
+
+```bash
+cd launcher
+npm run dev
+```
+
+Hot-reloads the interface and rebuilds the Rust when it changes. Point it at a
+website other than production with `ASHMORROW_BASE_URL`:
+
+```bash
+ASHMORROW_BASE_URL=http://127.0.0.1:3000 npm run dev
+```
+
+### Only some bundles
+
+```bash
+npm run build -- --bundles nsis        # just the .exe installer
+npm run build -- --bundles appimage    # just the AppImage
+```
+
+### When the build fails
+
+```bash
+cd launcher && npx tauri info
+```
+
+That prints every prerequisite with a tick or a cross beside it, and is the
+first thing to run — and the first thing to paste into a bug report.
+
+| Symptom | Cause |
+|---|---|
+| `webkit2gtk-4.1: not installed` from `tauri info` | the Linux dependency list above |
+| `try setting PKG_CONFIG_PATH to the directory containing gdk-3.0.pc` | the same thing, as the compiler phrases it. Install the Linux list |
+| `link.exe not found` (Windows) | the MSVC build tools are missing, not Rust |
+| `failed to bundle project` after a clean compile | a packaging tool is missing — `patchelf` or `file` on Linux. The Rust built fine |
+| `beforeBuildCommand ... failed` | the interface did not build. Run `npm run build` in `launcher/ui` on its own to see the real error |
+| Slow first build, no output for minutes | normal. Tauri's dependency tree is large and compiles once |
 
 ### Working on the interface without any of that
 
 The UI answers from a demo adapter when Tauri is not present, so it opens in an
-ordinary browser:
+ordinary browser — no Rust, no webview, no client:
 
 ```bash
-cd launcher/ui && npm run dev     # http://localhost:5173
+cd launcher/ui && npm install && npm run dev     # http://localhost:5173
 ```
 
-That is how the design gets reviewed, and how the interface is worked on without
-a Rust toolchain and a 15 GB client on the machine.
+(`ui/` stands on its own, so this works whether or not you have ever run an
+install at `launcher/`.)
+
+That is how the design gets reviewed, and how the interface is worked on
+without a Rust toolchain and a 15 GB client on the machine.
 
 ### Testing the part that matters
 
 ```bash
-cargo test  --manifest-path launcher/core/Cargo.toml
+cargo test   --manifest-path launcher/core/Cargo.toml
 cargo clippy --manifest-path launcher/core/Cargo.toml --all-targets -- -D warnings
 cd launcher/ui && npm run typecheck
 ```
 
-No webview needed for any of it.
+No webview needed for any of it — that is the point of keeping every behaviour
+in `core/`.
+
+Two more, which cover the part `core/` cannot:
+
+```bash
+cd launcher/ui && npm run build && npm run test:startup   # the interface, in a real browser
+launcher/test/smoke-linux.sh                              # the real binary, driven to a launch
+```
+
+`test:startup` drives the built bundle in Chromium with the Tauri bridge stubbed
+at `window.__TAURI_INTERNALS__`, once against a reachable realm, once against an
+unreachable one, and once with every `plugin:` command refused. Each of those
+three is a failure that reached a player.
+
+`smoke-linux.sh` is the one that would have caught both. It needs `Xvfb`,
+`xdotool`, ImageMagick and a built launcher; it generates a three-file client
+with a genuine build-12340 version resource, stands a realm up on loopback,
+puts a recording shell script on `PATH` where Wine would be, presses the launch
+bar twice, and then asserts that the launcher wrote `realmlist.wtf` and invoked
+the runtime with the right prefix, working directory and arguments. It runs on
+every push, on the Linux leg of the build workflow.
+
+There is no Windows equivalent yet, so a Windows-only regression is still on
+whoever runs the `.exe` to find.
+
+### Getting a build without building it
+
+**Every push builds both platforms and leaves the binaries on the workflow
+run.** Actions tab → the run for your commit → *Artifacts* at the bottom:
+
+| Artifact | Holds |
+|---|---|
+| `launcher-Windows-<sha>` | `Ashmorrow_*_x64-setup.exe`, the `.msi`, and the bare `ashmorrow-launcher.exe` |
+| `launcher-Linux-<sha>` | the `.AppImage`, the `.deb`, and the bare binary |
+
+For testing a change, take the **bare executable** rather than the installer —
+it runs as-is, installs nothing, and leaves nothing behind when you delete it.
+
+Artifacts are kept 14 days and named with the commit SHA, so several builds in
+the list are tellable apart. GitHub serves them as `.zip` regardless of what is
+inside.
+
+### Releases
+
+Tag it and CI builds both platforms *and* publishes:
+
+```bash
+git tag launcher-v0.1.0
+git push origin launcher-v0.1.0
+```
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) runs
+`windows-latest` and `ubuntu-22.04` in parallel, tests the core, builds each
+platform's bundles, writes `SHA256SUMS.txt`, and opens a **draft** release with
+everything attached. Draft, so you look before anyone downloads.
+
+To check a build without tagging, run the workflow manually from the Actions
+tab — it builds and leaves the installers as workflow artifacts without
+publishing anything.
+
+**Both jobs now build and bundle.** The Windows runner produces the NSIS
+installer, the `.msi` and the bare `.exe`; the Linux one produces the AppImage,
+the `.deb` and the bare binary, and then runs the smoke test against it. The
+Windows job's very first run found a genuine cross-platform bug — a test
+asserting Unix path semantics that Windows disagreed with — which is a fair
+advertisement for having it.
+
+What is still unobserved is anyone *starting* the Windows `.exe`. There is no
+Windows smoke test, and no Windows machine here; the Linux one is the only leg
+that proves the binary runs.
+
+---
+
+## The body-type client patch
+
+`ashmorrow-manifest inspect-dbc <client-dir>` reads a client's `ChrClasses` and
+`CharBaseInfo` out of its own archives and prints what is in them: the archives
+in load order, which one each table was actually read from, every class and its
+name, and the race × class matrix the client will offer. Read-only, and nothing
+leaves the machine.
+
+Run it before trusting anything in `launcher/recipes/`. The field the class
+names live in is not recorded anywhere in the file format, so the recipe carries
+it as a number and the tool finds it independently — if the two disagree, the
+recipe is wrong for that client and applying it would corrupt the table rather
+than rename it.
+
+The patch itself is *instructions*, not a table: rename these classes, keep
+these three, add these race rows. The launcher reads the player's own DBCs,
+applies the edits and builds the archive locally, so no Blizzard bytes ever
+reach our infrastructure and one recipe serves every locale. See
+[ADR 0008](../docs/decisions/0008-body-type-client-patch.md) for why, and
+[ADR 0009](../docs/decisions/0009-recipe-versioning.md) for how it is versioned
+and checked.
+
+**Nothing is published yet.** `launcher/patch-manifest.json` lists no recipes, so
+no launcher applies one. That waits on the server accepting the combinations the
+screen would offer — a patch that hides classes the realm still refuses is worse
+than no patch.
 
 ---
 
@@ -224,8 +454,7 @@ Everything *after* Wine, it does do. See below.
 
 ## Shipping it
 
-Releases build on a GitHub Actions matrix: `windows-latest` for `.exe`/`.msi`,
-`ubuntu-22.04` for `.AppImage`/`.deb`.
+How a release is cut is under [Releases](#releases). What has to be true of one:
 
 ### Licence, at the point it matters
 
@@ -238,7 +467,9 @@ upstream's "or any later version" grant covers it. Ship the release with a
 GPL-3.0-or-later notice and the corresponding source, and note that the vendored
 IBM Plex fonts stay under OFL-1.1 (`ui/src/fonts/OFL.txt`).
 
-**Unsigned, with published SHA-256 sums**, per ADR 0005 §6. Signing needs a
+**Unsigned, with published SHA-256 sums**, per ADR 0005 §6 — the release
+workflow writes `SHA256SUMS.txt` and attaches it, so this is not a step anyone
+has to remember. Signing needs a
 certificate bound to a verified legal identity on a hardware token, and putting
 a real name on a certificate attached to a WoW private server is a decision to
 take deliberately rather than by default. Expect SmartScreen warnings and the

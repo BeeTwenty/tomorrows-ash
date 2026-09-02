@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the launcher's own window is allowed to ask the Rust side for. Tauri 2 denies every plugin command that is not granted here, including the core ones, and a missing grant is a runtime rejection rather than a build error — so this file is load-bearing, not boilerplate.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open"
+  ]
+}

@@ -41,6 +41,8 @@ next-env.d.ts
 # --- Launcher (launcher/) ---
 launcher/core/target/
 launcher/src-tauri/target/
+# tauri-build regenerates the ACL schemas from capabilities/ on every build.
+launcher/src-tauri/gen/
 launcher/ui/dist/
 # Cargo.lock IS committed for the launcher: it ships as a signed binary to
 # players, so the exact dependency set has to be reproducible from the tag.
@@ -53,7 +55,9 @@ __pycache__/
 node_modules/
 package-lock.json
 # ...except the launcher's, which ships as a binary to players: the exact
-# dependency set has to be reproducible from the tag that built it.
+# dependency set has to be reproducible from the tag that built it, and the
+# release workflow runs `npm ci`, which fails outright without a lockfile.
+!launcher/package-lock.json
 !launcher/ui/package-lock.json
 # ...and the admin panel's, because CI installs it with `npm ci`, which refuses
 # to run without one. The public site's is tracked already for the same reason.

@@ -1,0 +1,20 @@
+{
+  "$comment": [
+    "Which recipes are published, and at what version. The launcher compares the",
+    "version here against the one it recorded when it last built; higher means",
+    "rebuild. See docs/decisions/0009-recipe-versioning.md.",
+    "",
+    "The website serves this into /api/launcher/manifest as a `recipes` array,",
+    "the same way it already serves `patches` and `runtime` — one channel, one",
+    "truth. `revision` is stamped by CI from the commit that last touched",
+    "launcher/recipes/, never written by hand: a hand-maintained revision can be",
+    "wrong and a computed one cannot.",
+    "",
+    "EMPTY ON PURPOSE. launcher/recipes/body-types.json exists and is reviewable,",
+    "and is not listed here, so nothing applies it. Listing it is the last step of",
+    "ADR 0009 §6 and comes after the server-side race data lands — publishing it",
+    "sooner would offer players combinations the realm then refuses."
+  ],
+  "schema": 1,
+  "recipes": []
+}

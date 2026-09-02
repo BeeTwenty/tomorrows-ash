@@ -18,6 +18,13 @@ pub struct Settings {
     pub client_path: Option<PathBuf>,
     /// Overrides the manifest's realm address. For testing against a LAN realm.
     pub realm_address: Option<String>,
+    /// The website the manifest is fetched from.
+    ///
+    /// A setting rather than a compile-time constant because a player running
+    /// their own realm has their own site, and because the built-in default
+    /// points at a deployment that may not exist yet — which must be a thing
+    /// you can fix from the interface, not a reason the launcher is useless.
+    pub realm_site: Option<String>,
     /// Name of the Wine or Proton runtime last used, matched against discovery.
     pub runtime_name: Option<String>,
     pub prefix: Option<PathBuf>,

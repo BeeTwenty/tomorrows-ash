@@ -861,30 +861,63 @@ the backup always holds what *you* had.
 
 ### 10.2 Building the desktop launcher
 
-**Prerequisites** on top of Rust 1.77+ and Node 20+:
+Two commands from `launcher/`, once the prerequisites are there:
 
 ```bash
-# Linux (Ubuntu/Debian)
+cd launcher
+npm install      # brings the Tauri CLI and ui/'s dependencies; nothing global
+npm run build
+```
+
+**A platform builds only for itself.** Linux produces an AppImage and a `.deb`;
+Windows produces an `.exe` and an `.msi`. Cross-compiling a Windows launcher
+from Linux is not realistically supported, so the `.exe` needs a Windows machine
+or the release workflow (section 10.6).
+
+**Windows prerequisites:** Rust ([rustup.rs](https://rustup.rs)), Node 20+, and
+the **MSVC build tools** — Visual Studio's "Desktop development with C++"
+workload, which section 2.1 already installs for the server. WebView2 ships with
+Windows 10 21H2 and later. Without the build tools the first `cargo` step fails
+with `link.exe not found`; `rustup` does not install a linker for you.
+
+**Linux prerequisites:**
+
+```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl libssl-dev \
-                 libayatana-appindicator3-dev librsvg2-dev
+                 libayatana-appindicator3-dev librsvg2-dev file patchelf
 ```
 
-On **Windows**, WebView2 ships with Windows 10 21H2 and later, so the MSVC build
-tools are all you need.
+`file` and `patchelf` are only needed to package the AppImage, and their absence
+fails late in an otherwise successful build — install them up front.
+
+**What you get**, under `launcher/src-tauri/target/release/`:
+
+| Platform | File |
+|---|---|
+| Windows | `bundle\nsis\Ashmorrow_0.1.0_x64-setup.exe` — the installer to hand a player |
+| Windows | `bundle\msi\Ashmorrow_0.1.0_x64_en-US.msi` — for policy deployment |
+| Linux | `bundle/appimage/Ashmorrow_0.1.0_amd64.AppImage` — runs anywhere |
+| Linux | `bundle/deb/Ashmorrow_0.1.0_amd64.deb` |
+
+First build takes 5–15 minutes; it compiles Tauri's dependency tree once.
+
+Run it while working on it, pointed at a local website:
 
 ```bash
-cd launcher/ui && npm install && cd ..
-cargo install tauri-cli --version '^2' --locked
-
-cargo tauri dev      # run it
-cargo tauri build    # bundle it -> src-tauri/target/release/bundle/
+ASHMORROW_BASE_URL=http://127.0.0.1:3000 npm run dev
 ```
 
-Point it at a site other than production with `ASHMORROW_BASE_URL`:
+**When it fails, run `npx tauri info` from `launcher/`** — it prints every
+prerequisite with a tick or a cross beside it, and is the first thing to paste
+into a bug report.
 
-```bash
-ASHMORROW_BASE_URL=http://127.0.0.1:3000 cargo tauri dev
-```
+| Symptom | Cause |
+|---|---|
+| `webkit2gtk-4.1: not installed` from `tauri info` | the Linux list above |
+| `try setting PKG_CONFIG_PATH to the directory containing gdk-3.0.pc` | the same thing, as the compiler phrases it |
+| `link.exe not found` (Windows) | MSVC build tools missing, not Rust |
+| `failed to bundle project` after a clean compile | `patchelf` or `file` missing. The Rust built fine |
+| `beforeBuildCommand ... failed` | the interface did not build — run `npm run build` in `launcher/ui` alone to see why |
 
 ### 10.3 Working on it without a webview
 
@@ -969,7 +1002,41 @@ never touches `~/.wine` or any prefix belonging to another game.
 | Proton fails immediately | it needs Steam installed, not just the Proton folder — the launcher reports which of the two is missing |
 | Fonts are boxes | `winetricks corefonts` in the launcher's prefix |
 
-### 10.6 Launcher troubleshooting
+### 10.6 Getting a build, and cutting a release
+
+**Every push builds both platforms**, so a testable `.exe` exists without anyone
+owning a Windows machine. Actions tab → your commit's run → *Artifacts*:
+`launcher-Windows-<sha>` holds the installer, the `.msi` and the bare
+`ashmorrow-launcher.exe`. For testing a change the bare executable is the one to
+take — it installs nothing and leaves nothing behind.
+
+To publish, tag it:
+
+```bash
+git tag launcher-v0.1.0
+git push origin launcher-v0.1.0
+```
+
+`.github/workflows/release.yml` runs `windows-latest` and `ubuntu-22.04` in
+parallel, tests the launcher core, builds each platform's bundles, writes
+`SHA256SUMS.txt` and opens a **draft** release with everything attached. Draft,
+so you look before anyone downloads.
+
+To check a build without tagging, run the workflow by hand from the Actions tab:
+it builds and leaves the installers as workflow artifacts, publishing nothing.
+
+The binaries are unsigned by choice ([ADR 0005](docs/decisions/0005-client-distribution.md) §6),
+which is why the sums are published alongside them.
+
+> **What the workflow proves, and what it does not.** Both platforms build and
+> bundle: Windows produces the installer, the `.msi` and the bare `.exe`, Linux
+> the AppImage, the `.deb` and the bare binary. The Linux leg then *starts* the
+> binary it just built and drives it to a launch
+> (`launcher/test/smoke-linux.sh`), so a build that comes up broken fails there
+> rather than on your machine. There is no Windows equivalent, so whether the
+> `.exe` runs is still something only a person with Windows can tell you.
+
+### 10.7 Launcher troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
