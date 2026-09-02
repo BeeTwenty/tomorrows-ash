@@ -106,6 +106,10 @@ jobs:
 
       - name: Build
         working-directory: launcher
+        env:
+          # Stamped into the interface so a screenshot says which commit it is.
+          # Two bug reports have now been impossible to place against a build.
+          ASHMORROW_BUILD: ${{ github.sha }}
         run: npm run build -- --bundles ${{ matrix.bundles }}
 
       # Actually run it. The launcher has shipped broken twice with every other
@@ -122,6 +126,15 @@ jobs:
         run: |
           sudo apt-get install -y xvfb xdotool imagemagick
           launcher/test/smoke-linux.sh
+
+      # The two failures players reported were both on Windows, and both times
+      # nothing here had ever started the .exe. Now something does. It cannot
+      # prove a game launch — that needs a real Wow.exe — but the interface
+      # reports on its own startup, which is where both bugs actually were.
+      - name: The .exe starts and its interface comes up
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: launcher/test/smoke-windows.ps1
 
       # What the window looked like when it gave up, which is the one thing a
       # log of a GUI failure never tells you.

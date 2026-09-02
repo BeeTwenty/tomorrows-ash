@@ -154,6 +154,13 @@ button {
   color: var(--text);
 }
 
+/* Quieter than everything else on the strip: needed when something is wrong,
+   never worth reading when nothing is. */
+.strip .build {
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
+
 .strip .live {
   color: var(--realm);
 }

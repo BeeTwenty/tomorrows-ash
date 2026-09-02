@@ -145,6 +145,20 @@ pids+=($!)
 export DISPLAY="$DISPLAY_NUM"
 pause 2
 
+# Phase one: ask the binary itself. `--self-check` waits for the report the
+# interface files at the end of startup and exits on it, so this answers "does
+# this build come up" with no clicking and no screenshot. Windows runs the same
+# check and can run nothing else; keeping it here keeps the two symmetric.
+say "self-check"
+if ! env -i PATH="$WORK/bin:/usr/local/bin:/usr/bin:/bin" HOME="$WORK/home" \
+     DISPLAY="$DISPLAY_NUM" WINE_LOG="$WORK/wine.log" \
+     ASHMORROW_BASE_URL="http://127.0.0.1:$PORT" \
+     GDK_BACKEND=x11 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+     "$BIN" --self-check; then
+  echo "the interface did not come up complete - see the line above"
+  exit 1
+fi
+
 say "starting the launcher"
 env -i PATH="$WORK/bin:/usr/local/bin:/usr/bin:/bin" HOME="$WORK/home" \
   DISPLAY="$DISPLAY_NUM" WINE_LOG="$WORK/wine.log" \

@@ -61,6 +61,31 @@ export function onStep(handler: (step: string) => void): Promise<boolean> {
   return subscribe<string>("provision:step", handler);
 }
 
+/**
+ * Tell the Rust side how startup went.
+ *
+ * One call, always, at the end of `start()`. Nothing in the interface depends
+ * on it — it exists so that a machine can answer "did this binary come up",
+ * which is the question no check in this repository could answer while the
+ * launcher was shipping broken. `--self-check` exits on it.
+ */
+export async function reportStartup(report: {
+  status: boolean;
+  settings: boolean;
+  runtimes: boolean;
+  ledger: boolean;
+  events: boolean;
+  problems: string[];
+}): Promise<void> {
+  if (!inTauri) return;
+  try {
+    await call<void>("report_startup", { report });
+  } catch {
+    // A launcher that fails to file its own report is still a working
+    // launcher. Never let the diagnostics break the thing being diagnosed.
+  }
+}
+
 export const api = {
   status: () => (inTauri ? call<Status>("status") : demo.status()),
   refresh: () => (inTauri ? call<Status>("refresh") : demo.status()),

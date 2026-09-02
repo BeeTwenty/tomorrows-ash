@@ -5,7 +5,7 @@
  * that needs a virtual DOM to draw four status rows has been over-thought, and
  * every kilobyte here is one the player downloads before deciding to care.
  */
-import { api, onProgress, onStep, pickFolder } from "./api";
+import { api, onProgress, onStep, pickFolder, reportStartup } from "./api";
 import type { FileReport, Progress, Report, Runtime, Settings, Status } from "./types";
 
 type View = "status" | "ledger" | "settings";
@@ -75,6 +75,9 @@ function strip(): HTMLElement {
   const s = state.status;
   const bar = el("div", { class: "strip" });
   bar.append(el("span", { class: "mark" }, "ASHMORROW"));
+  // Which build this is, on every screen, whether or not anything else loaded.
+  // A screenshot of a broken launcher is only actionable if it says what it is.
+  bar.append(el("span", { class: "build", title: "the commit this launcher was built from" }, __BUILD__));
 
   if (s) {
     // Ember, and only here: the realm is alive. Same meaning as on the site —
@@ -609,15 +612,17 @@ async function start(): Promise<void> {
   // it — every tab empty, and no message, because nothing had run yet that
   // could record one.
   const failures: string[] = [];
-  const local = async (what: string, load: () => Promise<void>) => {
+  const local = async (what: string, load: () => Promise<void>): Promise<boolean> => {
     try {
       await load();
+      return true;
     } catch (error) {
       failures.push(`${what}: ${reason(error)}`);
+      return false;
     }
   };
 
-  await Promise.all([
+  const [settings, runtimes, ledger, status] = await Promise.all([
     local("settings", async () => {
       state.settings = await api.settings();
     }),
@@ -638,18 +643,29 @@ async function start(): Promise<void> {
   // Then the narration. Neither of these can reject — see `subscribe` in
   // api.ts — and the launcher is fully usable if both come back false; all
   // that is lost is the progress bar moving while a long job runs.
-  await onStep((step) => {
+  const steps = await onStep((step) => {
     // The busy label is the narration: one line, replaced, never a log.
     if (state.busy) {
       state.busy = step;
       render();
     }
   });
-  await onProgress((progress) => {
-    state.progress = progress;
+  const progress = await onProgress((p) => {
+    state.progress = p;
     // Only the bar changed; a full re-render at hashing speed would be the one
     // place this UI could feel slow.
     render();
+  });
+
+  // Before the network, so that the one thing a machine reads to decide whether
+  // this build works is not contingent on a realm being deployed.
+  await reportStartup({
+    status,
+    settings,
+    runtimes,
+    ledger,
+    events: steps && progress,
+    problems: failures,
   });
 
   // Only now the network.
