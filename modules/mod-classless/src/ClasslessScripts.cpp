@@ -86,8 +86,8 @@ public:
             if (ClasslessBodyType const* body = sClasslessMgr.GetBodyType(player))
             {
                 handler.PSendSysMessage(
-                    "|cff00ff00[Ashmorrow]|r You are playing as: |cffffcc00%s|r (%s armor). %s",
-                    body->Name.c_str(), body->Armor.c_str(), body->Description.c_str());
+                    "|cff00ff00[Ashmorrow]|r You are playing as: |cffffcc00{}|r ({} armor). {}",
+                    body->Name, body->Armor, body->Description);
             }
             else
             {

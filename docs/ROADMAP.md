@@ -65,10 +65,13 @@ while those await sign-off.
       numerically identical to Paladin / Shaman / Mage under new names.
       `tools/gen_body_types.py` now generates the full 1–80 curve from the
       approved level 60 and 80 anchors and refuses to emit if it misses either.
-- [x] **Every race reaches every body type** — 16 `playercreateinfo` rows.
-      Only Draenei could be all three before; Night Elf could be none and could
-      not be created at all. Inert on a stock client until `CharBaseInfo.dbc`
-      lists the new pairs.
+- [x] **The server accepts every race/body-type pair** — 16 `playercreateinfo`
+      rows. Only Draenei could be all three before; Night Elf could be none.
+- [ ] **…but the client still refuses them**, and that was reported as done
+      once already. The creation screen reads `CharBaseInfo.dbc` and validates
+      locally, so a Human selecting Skirmisher never reaches the server. Needs
+      the client patch; `tools/check_client_combos.py` reports the gap per race
+      from extracted client data.
 - [x] **Character creation limited to the three body types** —
       `CharacterCreating.Disabled.ClassMask = 1341`, written by `ta.py conf`
       and checked by `tools/tests/test_body_types.py`. The seven other classes

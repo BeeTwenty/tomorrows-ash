@@ -110,6 +110,12 @@ jobs:
       - name: Character creation is limited to the three body types
         run: python tools/tests/test_body_types.py
 
+      - name: Module format strings use fmt, not printf
+        run: python tools/tests/test_format_strings.py
+
+      - name: CharBaseInfo.dbc reader
+        run: python tools/tests/test_charbaseinfo.py
+
       - name: Installer choice logic
         run: |
           # The installer's answers become the realm's configuration, so a bug

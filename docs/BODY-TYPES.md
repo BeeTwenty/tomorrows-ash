@@ -321,11 +321,24 @@ playtest should use.
 
 **Decided 2026-08-31: add the rows.** Race is an independent choice, not a
 body-type gate. `2026_08_31_02_body_type_race_coverage.sql` adds the 16 missing
-pairs, so all ten races now reach all three body types — verified on the realm:
+pairs, so **the server** accepts all thirty race/body-type combinations.
 
-| race | body types |
-|---|---|
-| all ten | Vanguard, Skirmisher, Adept |
+> **Corrected 2026-09-01.** This section previously said "all ten races now
+> reach all three body types — verified on the realm", with a table of ten
+> races. That was a server-side fact written as a player-facing claim, and a
+> playtest found it immediately: a Human still cannot select Skirmisher, and
+> the client says *"You must choose a different race to be this class"*.
+>
+> **The client refuses before the server is ever contacted.** The creation
+> screen is built from `CharBaseInfo.dbc` and the 3.3.5a client validates
+> locally, so no `CMSG_CHAR_CREATE` is sent and no server-side change — these
+> rows included — can affect it. The migration is correct and currently
+> invisible.
+>
+> `tools/check_client_combos.py` reads the extracted DBC and prints, per race,
+> which pairs the client will offer against which the server accepts. That is
+> the only honest way to check this claim, and it needs extracted client data
+> to run.
 
 Each new pair starts where its own race starts (a Night Elf Vanguard begins in
 Shadowglen), because `playercreateinfo` holds only a position and that position

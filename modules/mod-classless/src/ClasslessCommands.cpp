@@ -79,7 +79,7 @@ public:
 
         for (ClasslessTree const* tree : sClasslessMgr.GetTrees())
         {
-            handler->PSendSysMessage("|cffffcc00%u|r - %s (%u abilities)",
+            handler->PSendSysMessage("|cffffcc00{}|r - {} ({} abilities)",
                                      tree->Id, tree->Name.c_str(), uint32(tree->Nodes.size()));
         }
         return true;
@@ -93,17 +93,17 @@ public:
         ClasslessTree const* tree = sClasslessMgr.GetTree(treeId);
         if (!tree)
         {
-            handler->PSendSysMessage("No such tree: %u. Use .classless trees", treeId);
+            handler->PSendSysMessage("No such tree: {}. Use .classless trees", treeId);
             handler->SetSentErrorMessage(true);
             return false;
         }
 
         Player* player = handler->GetSession()->GetPlayer();
-        handler->PSendSysMessage("|cffffcc00%s|r", tree->Name.c_str());
+        handler->PSendSysMessage("|cffffcc00{}|r", tree->Name);
         for (ClasslessNode const* node : tree->Nodes)
         {
             LearnCheck check = sClasslessMgr.CanLearn(player, *node);
-            handler->PSendSysMessage("  |cffffcc00%u|r %s (spell %u, tier %u, cost %u) - %s",
+            handler->PSendSysMessage("  |cffffcc00{}|r {} (spell {}, tier {}, cost {}) - {}",
                                      node->Id, node->Name.c_str(), node->SpellId,
                                      uint32(node->Tier), node->Cost,
                                      check == LearnCheck::Ok ? "available" : ClasslessMgr::Explain(check));
@@ -119,7 +119,7 @@ public:
         ClasslessNode const* node = sClasslessMgr.GetNode(nodeId);
         if (!node)
         {
-            handler->PSendSysMessage("No such ability node: %u", nodeId);
+            handler->PSendSysMessage("No such ability node: {}", nodeId);
             handler->SetSentErrorMessage(true);
             return false;
         }
@@ -129,12 +129,12 @@ public:
 
         if (result == LearnCheck::Ok)
         {
-            handler->PSendSysMessage("Learned |cffffcc00%s|r (spell %u).",
+            handler->PSendSysMessage("Learned |cffffcc00{}|r (spell {}).",
                                      node->Name.c_str(), node->SpellId);
             return true;
         }
 
-        handler->PSendSysMessage("%s", ClasslessMgr::Explain(result));
+        handler->PSendSysMessage("{}", ClasslessMgr::Explain(result));
         handler->SetSentErrorMessage(true);
         return false;
     }
@@ -148,11 +148,11 @@ public:
         uint32 owned = 0;
 
         if (ClasslessBodyType const* body = sClasslessMgr.GetBodyType(player))
-            handler->PSendSysMessage("Body type: |cffffcc00%s|r (%s armor, class %u).",
+            handler->PSendSysMessage("Body type: |cffffcc00{}|r ({} armor, class {}).",
                                      body->Name.c_str(), body->Armor.c_str(),
                                      uint32(player->getClass()));
         else
-            handler->PSendSysMessage("Body type: |cffff2020none|r - class %u is not one of the three.",
+            handler->PSendSysMessage("Body type: |cffff2020none|r - class {} is not one of the three.",
                                      uint32(player->getClass()));
 
         for (ClasslessTree const* tree : sClasslessMgr.GetTrees())
@@ -165,7 +165,7 @@ public:
                 // HasSpell is the ground truth - if these ever disagree, the
                 // spell was lost (spec switch is the suspected cause; see
                 // docs/PHASE1-FINDINGS.md).
-                handler->PSendSysMessage("  %s [%s] - spell %u %s",
+                handler->PSendSysMessage("  {} [{}] - spell {} {}",
                                          tree->Name.c_str(), node->Name.c_str(), node->SpellId,
                                          player->HasSpell(node->SpellId)
                                              ? "|cff00ff00(in spellbook)|r"
@@ -176,7 +176,7 @@ public:
         if (!owned)
             handler->SendSysMessage("No classless abilities learned.");
         else
-            handler->PSendSysMessage("%u classless abilities learned, %u of %u points unspent.",
+            handler->PSendSysMessage("{} classless abilities learned, {} of {} points unspent.",
                                      owned, sClasslessMgr.GetAvailablePoints(player),
                                      sClasslessMgr.GetTotalPoints(player));
 
@@ -192,8 +192,8 @@ public:
         uint32 total = sClasslessMgr.GetTotalPoints(player);
         uint32 spent = sClasslessMgr.GetSpentPoints(player);
 
-        handler->PSendSysMessage("Level %u: |cffffcc00%u|r of %u points unspent (%u committed).",
-                                 player->GetLevel(), sClasslessMgr.GetAvailablePoints(player),
+        handler->PSendSysMessage("Level {}: |cffffcc00{}|r of {} points unspent ({} committed).",
+                                 uint32(player->GetLevel()), sClasslessMgr.GetAvailablePoints(player),
                                  total, spent);
 
         if (spent > total)
@@ -220,7 +220,7 @@ public:
             return true;
         }
 
-        handler->PSendSysMessage("Cleared %u node(s). %u points available.",
+        handler->PSendSysMessage("Cleared {} node(s). {} points available.",
                                  cleared, sClasslessMgr.GetAvailablePoints(player));
         return true;
     }
