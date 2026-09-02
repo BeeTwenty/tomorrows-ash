@@ -59,6 +59,25 @@ while those await sign-off.
 - [x] Blizzard talent suppression wired (still defaulted off)
 - [x] **Body-type stat deltas approved** — three body types, armor proficiency
       locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
+- [x] **…and applied**, five days later than it should have been. Approving the
+      numbers and writing the migration had been treated as one step, so until
+      2026-08-31 the realm was still stock and the three body types were
+      numerically identical to Paladin / Shaman / Mage under new names.
+      `tools/gen_body_types.py` now generates the full 1–80 curve from the
+      approved level 60 and 80 anchors and refuses to emit if it misses either.
+- [x] **The server accepts every race/body-type pair** — 16 `playercreateinfo`
+      rows. Only Draenei could be all three before; Night Elf could be none.
+- [ ] **…but the client still refuses them**, and that was reported as done
+      once already. The creation screen reads `CharBaseInfo.dbc` and validates
+      locally, so a Human selecting Skirmisher never reaches the server. Needs
+      the client patch; `tools/check_client_combos.py` reports the gap per race
+      from extracted client data.
+- [x] **Character creation limited to the three body types** —
+      `CharacterCreating.Disabled.ClassMask = 1341`, written by `ta.py conf`
+      and checked by `tools/tests/test_body_types.py`. The seven other classes
+      are refused. They are still **listed** by the client, which reads that
+      menu from its own DBCs; hiding or renaming them needs a client patch.
+      See [BODY-TYPES.md §4](BODY-TYPES.md).
 - [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
       level 80, inside the approved 30–50% band). Every spell verified against
       the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
@@ -82,20 +101,66 @@ and will switch from "bought" to ranked pips on its own.
 
 ---
 
-## Phase 3 — Itemization
+## Phase 3 — Itemization ✅ shipped, one setting held for playtest
 
-Removing class restrictions breaks gear assumptions.
+Full report: [PHASE3-ITEMIZATION.md](PHASE3-ITEMIZATION.md). Reproduce any
+number with `python3 tools/audit_items.py`.
 
-- Rewrite `item_template.AllowableClass` as a **generated, reversible**
-  migration — never hand-edited. Measured scope on the current world DB:
-  **10,936 class-restricted items**, of which **8,489 are armor or weapons**
-  (the rest are consumables and quest items). 35,160 items are already
-  unrestricted (`-1`).
-  Note `AllowableClass` is signed and `-1` means "all classes".
-- Armor and weapon proficiency: which are bought with skill points, which are
-  free.
-- Audit stat budgets: plate with spell power, cloth with strength, and the
-  class-specific set bonuses that assume a class.
+- [x] Measured what the class mask actually costs. The headline is not 8,489:
+      of the 10,936 masked rows, **4,608 carry a mask that already admits all
+      ten classes** and restrict nothing. The real problem was **3,678 items
+      (2,849 of them gear) that no body type could equip at all** — dead loot
+      that still dropped.
+- [x] Established that the class mask is **not** the gate implementing the
+      body-type design. Armor proficiency is, and it is a skill granted by a
+      spell: plate is sold only by Warrior and Paladin class trainers, and
+      `Trainer::IsTrainerValidForPlayer` compares `getClass()` with no hook.
+      So the fix was *removal*, not re-tagging by body type.
+- [x] Audited stat budgets rather than assuming: totals are a function of
+      (armor class, item level), spread 1.3–16% within a cell. Unlocking
+      changes *which* distribution a character can pick, not *how much* they
+      get. **No rebalance was needed.**
+- [x] **Applied** the pass — 4,746 rows, reversible via
+      `classless_item_class_backup`, run through AzerothCore's own updater and
+      idempotent when it ran a second time. Dead gear: 2,849 → **5**.
+- [x] **Relics opened** behind `Classless.OpenRelicSlot` (default 0), via a
+      module `OnPlayerIsClass` hook scoped to `CLASS_CONTEXT_EQUIP_RELIC`
+      alone — the one hook in the core that can grant rather than veto. Still
+      zero core modifications. Compiles, links, loads.
+- [ ] **Playtest, then flip `OpenRelicSlot`.** The server offers the slot; only
+      a real 3.3.5a client can say whether it will draw a relic in a
+      ranged-weapon slot. [Checklist §9](PHASE3-ITEMIZATION.md).
+- [ ] Glyphs — 246 dead rows, **out of scope by decision**; revisit at content
+      scoping before launch.
+
+---
+
+## Training system — reopened by the first playtest
+
+Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
+
+- [x] **Character creation restriction verified in play** (2026-09-01): Warrior
+      refused, Paladin created. Took three attempts — the deployed config was
+      never rewritten, then the check turned out to be skipped for every
+      account at gmlevel 1+, which is the account an owner tests with.
+- [x] **Two bugs fixed.** Character creation was never restricted on the realm
+      (the config existed in the repo but `ta.py conf` skipped the deployed
+      file), and `ValidateSkillLearnedBySpells = 1` was deleting every
+      broker-taught ability at the player's next login. Both are managed
+      settings now, and worldserver audits them at every start.
+- [x] **Mastery points signed off; schema and trainer strip applied.** Ranks
+      priced by their stock level gate. The quest grant is capped per character
+      level — validation measured 5,786 reachable quests against 1,250 to max
+      everything, so an uncapped grant would have overshot the ceiling by more
+      than double. 419 trainer rows stripped so ranks cannot be bought with
+      gold; Plate Mail survives, so the armor ladder is untouched.
+- [ ] **The mastery runtime is not written** — earning hooks, broker rank
+      pages, respec integration, `.classless mastery`. Schema is settled.
+- [x] **Body type is now shown in game** — login message and `.classless
+      status`, names in `classless_body_type` so they stay renameable.
+- [ ] **Spellbook tabs** — broker spells land under General because the client
+      builds tabs from skill lines the character has. Possible server-side fix
+      is unverified and cosmetic; last of the four.
 
 ---
 

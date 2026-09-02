@@ -2,21 +2,23 @@
 """
 ta.py - Tomorrow's Ash developer CLI.
 
-One entry point for setting up, building and running the Ashmorrow realm on
-both Windows and Linux. Standard library only, Python 3.8+.
+One entry point for setting up, building and running the Ashmorrow realm on both
+Windows and Linux. Standard library only, Python 3.8+.
 
-    python3 tools/ta.py doctor       # check your machine has what it needs
-    python3 tools/ta.py bootstrap    # fetch pinned AzerothCore + overlay our module
-    python3 tools/ta.py configure    # run cmake configure
-    python3 tools/ta.py build        # compile
-    python3 tools/ta.py db up        # start MySQL (docker)
-    python3 tools/ta.py db init      # create the three databases
-    python3 tools/ta.py conf         # render server configs for realm Ashmorrow
-    python3 tools/ta.py db realm     # register the Ashmorrow realm row
-    python3 tools/ta.py run world    # start worldserver
-    python3 tools/ta.py web setup    # configure and build the website
-    python3 tools/ta.py web dev-db   # give it a local database with sample data
-    python3 tools/ta.py play run     # start your own client against the realm
+    python3 tools/ta.py install          # everything: deps, core, build, db, configs
+    python3 tools/ta.py install --client /path/to/WoW-3.3.5a   # ...and client data
+
+That is the whole setup. The individual steps below still exist for when
+something needs doing on its own:
+
+    doctor                 check this machine has what it needs
+    bootstrap              fetch pinned AzerothCore, overlay our modules
+    configure / build      cmake, then compile
+    extract --client PATH  map/vmap/mmap/DBC data from your own WoW client
+    db up|init|realm       database lifecycle and realm registration
+    conf                   render server configs
+    run auth|world         start a server
+    web / play             the website, and pointing a client at the realm
 
 See SETUP.md for the full walkthrough.
 """
@@ -25,6 +27,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -59,6 +62,11 @@ DEFAULTS = {
     "web_db_user": "ash_web",
     "web_db_pass": "",
     "site_url": "http://localhost:3000",
+    "db_admin": "ashmorrow_admin",
+    "admin_port": 3010,
+    "admin_db_user": "ash_admin",
+    "admin_db_pass": "",
+    "admin_url": "http://127.0.0.1:3010",
 }
 
 
@@ -157,6 +165,106 @@ def need(tool, hint):
 # doctor
 # --------------------------------------------------------------------------
 
+def find_mysql_client():
+    """Locate the `mysql` client binary, on PATH or in the usual install dirs.
+
+    AzerothCore's SQL updater shells out to this to import .sql files, so a
+    realm cannot be set up without it. On Windows it ships with MySQL Server but
+    lands in Program Files and is almost never added to PATH, which made the
+    installer refuse to run on a machine that had everything it needed.
+    """
+    found = shutil.which("mysql")
+    if found:
+        return found
+
+    candidates = []
+    if IS_WINDOWS:
+        for root in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                     os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                     "C:\\"):   # a raw string cannot end in a backslash
+            base = Path(root)
+            if not base.is_dir():
+                continue
+            # MySQL Server 8.x, MariaDB, and the XAMPP/Laragon bundles.
+            candidates += list(base.glob("MySQL/MySQL Server */bin/mysql.exe"))
+            candidates += list(base.glob("MariaDB */bin/mysql.exe"))
+            candidates += list(base.glob("xampp/mysql/bin/mysql.exe"))
+            candidates += list(base.glob("laragon/bin/mysql/*/bin/mysql.exe"))
+    elif platform.system() == "Darwin":
+        candidates += [Path("/opt/homebrew/opt/mysql-client/bin/mysql"),
+                       Path("/usr/local/opt/mysql-client/bin/mysql"),
+                       Path("/opt/homebrew/bin/mysql"),
+                       Path("/usr/local/mysql/bin/mysql")]
+    else:
+        candidates += [Path("/usr/bin/mysql"), Path("/usr/local/bin/mysql"),
+                       Path("/usr/local/mysql/bin/mysql")]
+
+    for candidate in sorted(candidates, reverse=True):   # prefer newer versions
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+def mysql_client_hint():
+    """Platform-correct advice for installing the client."""
+    if IS_WINDOWS:
+        return ("comes with MySQL Server 8.x - https://dev.mysql.com/downloads/installer/ - "
+                "or add its bin\\ folder to PATH if already installed")
+    if platform.system() == "Darwin":
+        return "brew install mysql-client"
+    return "sudo apt install mysql-client (or mariadb-client)"
+
+
+BOOST_MIN_WINDOWS = (1, 78)
+BOOST_MIN_POSIX = (1, 74)
+
+
+def read_boost_version(root):
+    """Parse boost/version.hpp under `root`. Returns (major, minor) or None."""
+    header = Path(root) / "boost" / "version.hpp"
+    if not header.is_file():
+        return None
+    try:
+        text = header.read_text(errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"#define\s+BOOST_VERSION\s+(\d+)", text)
+    if not m:
+        return None
+    raw = int(m.group(1))                 # e.g. 107800 -> 1.78.0
+    return (raw // 100000, (raw // 100) % 1000)
+
+
+def find_boost():
+    """Locate a Boost installation and its version.
+
+    Checks the environment variables AzerothCore and CMake actually honour, in
+    the order they take effect, then the conventional Windows location. Returns
+    (root, (major, minor)) or (None, None).
+
+    `Boost_ROOT` is the spelling deps/boost/CMakeLists.txt reads explicitly on
+    Windows; CMake's own find also accepts BOOST_ROOT and BOOSTROOT.
+    """
+    roots = []
+    for var in ("Boost_ROOT", "BOOST_ROOT", "BOOSTROOT"):
+        value = os.environ.get(var)
+        if value:
+            roots.append((var, value))
+
+    if IS_WINDOWS:
+        for candidate in sorted(Path("C:/local").glob("boost_*"), reverse=True):
+            roots.append(("C:/local", str(candidate)))
+    else:
+        for candidate in ("/usr/include", "/usr/local/include", "/opt/homebrew/include"):
+            roots.append(("system", candidate))
+
+    for source, root in roots:
+        version = read_boost_version(root)
+        if version:
+            return (root, version, source)
+    return (None, None, None)
+
+
 def cmd_doctor(args):
     cfg = load_local()
     up = load_upstream()
@@ -185,12 +293,59 @@ def cmd_doctor(args):
 
     check("git", "install Git")
     check("cmake", "install CMake 3.16+")
-    check("mysql", "mysql CLIENT binary; AzerothCore needs it to apply SQL updates "
-                   "(Linux: apt install mysql-client)")
+
+    # Not fatal here on purpose. It is not needed to fetch or compile anything,
+    # and failing before a 20-60 minute build for something wanted at the end of
+    # it wastes the operator's evening - they can install it while that runs.
+    mysql_client = find_mysql_client()
+    if mysql_client:
+        rc, out, _ = capture([mysql_client, "--version"])
+        first = out.splitlines()[0] if out else ""
+        ok(f"{'mysql':<10} {first[:60]}")
+        if not shutil.which("mysql"):
+            print(f"             found off PATH at {mysql_client}")
+    else:
+        warn(f"{'mysql':<10} not found - {mysql_client_hint()}")
+        print("             Needed before the FIRST SERVER START, not to build.")
+
     check("docker", "needed for `ta.py db up`; skip if you run MySQL natively", required=False)
 
+    # Boost is the dependency that most often stops a Windows build, and it
+    # does so only at cmake configure time - after the fetch, and after the
+    # operator has waited. Check it here, where it costs a second.
+    boost_root, boost_version, boost_source = find_boost()
+    boost_min = BOOST_MIN_WINDOWS if IS_WINDOWS else BOOST_MIN_POSIX
+    if boost_version and boost_version >= boost_min:
+        ok(f"{'boost':<10} {boost_version[0]}.{boost_version[1]} at {boost_root}")
+    elif boost_version:
+        problems.append(
+            f"Boost {boost_version[0]}.{boost_version[1]} is too old; "
+            f"{boost_min[0]}.{boost_min[1]}+ is required")
+        print(f"{c('  XX', 'red')} {'boost':<10} {boost_version[0]}.{boost_version[1]} at {boost_root} "
+              f"- too old, need {boost_min[0]}.{boost_min[1]}+")
+        if boost_source in ("Boost_ROOT", "BOOST_ROOT", "BOOSTROOT"):
+            print(f"             (found via the {boost_source} environment variable)")
+        else:
+            print(f"             (found by searching {boost_source})")
+    else:
+        problems.append(f"Boost {boost_min[0]}.{boost_min[1]}+ not found")
+        print(f"{c('  XX', 'red')} {'boost':<10} not found - need {boost_min[0]}.{boost_min[1]}+")
+        if IS_WINDOWS:
+            print("             Install the prebuilt msvc-14.3 binaries, then set")
+            print("             Boost_ROOT to the install folder and reopen PowerShell.")
+        else:
+            print("             sudo apt install libboost-all-dev")
+
     if IS_WINDOWS:
-        warn("On Windows the compiler comes from Visual Studio - see SETUP.md")
+        warn("On Windows the compiler comes from Visual Studio 2022 - see SETUP.md section 3")
+        openssl_roots = [Path(r"C:/Program Files/OpenSSL-Win64"),
+                         Path(r"C:/Program Files/OpenSSL"),
+                         Path(r"C:/OpenSSL-Win64")]
+        found_ssl = next((r for r in openssl_roots if r.is_dir()), None)
+        if found_ssl:
+            ok(f"{'openssl':<10} {found_ssl}")
+        else:
+            warn(f"{'openssl':<10} not found in the usual places - see SETUP.md section 3")
     else:
         check("make", "apt install build-essential", required=False)
         check("ninja", "apt install ninja-build (optional, faster)", required=False)
@@ -212,6 +367,8 @@ def cmd_doctor(args):
     print(f"     realm        : {cfg['realm_name']} @ {cfg['realm_address']}:{cfg['realm_port']}")
     print(f"     mysql        : {cfg['mysql_user']}@{cfg['mysql_host']}:{cfg['mysql_port']}")
     print()
+
+    report_deployed_configs()
 
     if problems:
         print(c("  Missing prerequisites:", "red"))
@@ -327,6 +484,46 @@ def cmd_sync(args):
 # configure / build
 # --------------------------------------------------------------------------
 
+def stale_cache_entries(bdir):
+    """Cached PATH/FILEPATH entries that point at something no longer on disk.
+
+    CMake's cache wins over the environment: once a failed configure has stored
+    Boost_INCLUDE_DIR=C:/local/boost_1_66_0, uninstalling that Boost and setting
+    Boost_ROOT at a newer one changes nothing - the next configure re-reads the
+    dead path, fails to parse a version out of the missing headers and reports
+    the nonsense 'Found unsuitable version "0.0.0"'. Detect that and say so
+    instead of letting an operator chase an environment variable that was
+    already correct.
+
+    Returns a list of (variable, value) pairs.
+    """
+    cache = bdir / "CMakeCache.txt"
+    if not cache.exists():
+        return []
+    stale = []
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = re.match(r"^([A-Za-z0-9_\-\.]+):(PATH|FILEPATH)=(.*)$", line.strip())
+        if not m:
+            continue
+        var, value = m.group(1), m.group(3).strip()
+        if not value or value.endswith("NOTFOUND"):
+            continue
+        if not Path(value).is_absolute():
+            continue
+        if not Path(value).exists():
+            stale.append((var, value))
+    return stale
+
+
+def clear_cmake_cache(bdir, why):
+    """Remove the cache so the next configure re-discovers everything."""
+    cache = bdir / "CMakeCache.txt"
+    if cache.exists():
+        cache.unlink()
+    shutil.rmtree(bdir / "CMakeFiles", ignore_errors=True)
+    warn(f"cleared the CMake cache in {bdir} - {why}")
+
+
 def cmd_configure(args):
     cfg = load_local()
     need("cmake", "install CMake 3.16+")
@@ -337,6 +534,17 @@ def cmd_configure(args):
 
     bdir = build_dir()
     bdir.mkdir(parents=True, exist_ok=True)
+
+    if args.clean:
+        clear_cmake_cache(bdir, "--clean was given")
+    else:
+        stale = stale_cache_entries(bdir)
+        if stale:
+            for var, value in stale[:6]:
+                warn(f"  cached {var} points at {value}, which no longer exists")
+            if len(stale) > 6:
+                warn(f"  ...and {len(stale) - 6} more")
+            clear_cmake_cache(bdir, "it referenced paths that are gone")
 
     cmake = [
         "cmake", str(core),
@@ -399,11 +607,30 @@ def cmd_build(args):
         info("  (AzerothCore globs module sources at configure time; skipping this")
         info("   produces undefined-reference link errors for any new file)")
         run(["cmake", str(bdir)], cwd=bdir)
+
     jobs = args.jobs or os.cpu_count() or 4
-    info(f"building with {jobs} parallel jobs (this takes a while on first run)")
-    run(["cmake", "--build", str(bdir), "--parallel", str(jobs)])
+    build_type = getattr(args, "build_type", None)
+
+    # Visual Studio is a multi-config generator. CMAKE_BUILD_TYPE is ignored
+    # by it, so Release/Debug/RelWithDebInfo must be selected explicitly with
+    # --config at build and install time. Single-config generators (Ninja,
+    # Makefiles) do not need this, but accepting --config there is harmless.
+    if IS_WINDOWS:
+        build_type = build_type or load_local().get("build_type", "Release")
+
+    info(f"building {build_type or 'configured'} with {jobs} parallel jobs "
+         "(this takes a while on first run)")
+
+    build_cmd = ["cmake", "--build", str(bdir), "--parallel", str(jobs)]
+    install_cmd = ["cmake", "--install", str(bdir)]
+
+    if build_type:
+        build_cmd += ["--config", build_type]
+        install_cmd += ["--config", build_type]
+
+    run(build_cmd)
     info("installing into dist/")
-    run(["cmake", "--install", str(bdir)], check=False)
+    run(install_cmd)
     ok("build complete")
     return 0
 
@@ -413,7 +640,16 @@ def cmd_build(args):
 # --------------------------------------------------------------------------
 
 def mysql_available_native():
-    return shutil.which("mysql") is not None
+    """A usable `mysql` client, on PATH or in a standard install directory.
+
+    PATH alone is not enough: the Windows MySQL installer does not add its bin/
+    to PATH, so `doctor` would find the client at
+    C:/Program Files/MySQL/MySQL Server 8.0/bin/mysql.exe and report OK while
+    every actual query fell through to the Docker branch and died with
+    "'docker' not found" - on a machine that had deliberately chosen native
+    MySQL and had no Docker at all.
+    """
+    return find_mysql_client() is not None
 
 
 def mysql_cmd(cfg, database=None):
@@ -427,9 +663,14 @@ def mysql_cmd(cfg, database=None):
     # a script, so the flag is only passed when there is a password to pass.
     password = [f"-p{cfg['mysql_pass']}"] if cfg["mysql_pass"] else []
 
-    if mysql_available_native():
-        cmd = ["mysql", f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
+    client = find_mysql_client()
+    if client:
+        cmd = [client, f"-h{cfg['mysql_host']}", f"-P{cfg['mysql_port']}",
                f"-u{cfg['mysql_user']}"] + password
+    elif cfg.get("db_mode", "docker") != "docker":
+        # The operator chose a MySQL they run themselves. Telling them to
+        # install Docker at this point is advice for a setup they did not pick.
+        die(f"no `mysql` client found. {mysql_client_hint()}")
     else:
         need("docker", "install Docker, or install a native MySQL client")
         cmd = ["docker", "exec", "-i", cfg["docker_container"],
@@ -490,7 +731,7 @@ def cmd_db(args):
                 warn("")
                 warn("then put the credentials in tools/local.json and use `db init`")
                 warn("directly - `db up` is only needed for the Docker route.")
-                warn("See SETUP.md section 1, 'Linux without Docker'.")
+                warn("See SETUP.md section 2, 'Linux without Docker'.")
                 return 1
         info("waiting for MySQL to accept connections")
         import time
@@ -601,12 +842,214 @@ VALUES
 # server configuration
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# body types
+#
+# Three body types, each built on a stock class (docs/BODY-TYPES.md 2). Every
+# other class is refused at character creation.
+#
+# The lever is CharacterCreating.Disabled.ClassMask in worldserver.conf, NOT
+# deleting playercreateinfo rows. Both stop creation, but they fail at
+# different points and only one of them fails politely:
+#
+#   classmask       -> WorldSession::HandleCharCreateOpcode (CharacterHandler.cpp:346)
+#                      returns CHAR_CREATE_DISABLED, which the client shows as a
+#                      real message. Config, so it is reversible without a
+#                      migration and survives a world database re-import.
+#   delete the rows -> Player::Create finds no PlayerInfo, returns false, and
+#                      logs "Possible hacking-attempt" for every honest player
+#                      who picked a hidden class. The client just says failed.
+#
+# Neither one removes anything from the creation SCREEN. In 3.3.5a that list is
+# drawn from the client's own CharBaseInfo.dbc and ChrClasses.dbc; there is no
+# opcode for it (Opcodes.h has only CMSG/SMSG_CHAR_CREATE, a request and its
+# answer). Hiding or renaming needs a client patch - the launcher's job.
+# --------------------------------------------------------------------------
+
+# Body type -> the class id it is built on.
+BODY_TYPE_CLASSES = {"Vanguard": 2, "Skirmisher": 7, "Adept": 8}
+
+# Bit 512 is unused in 3.3.5, which is why "all classes" is 1535 and not 2047.
+CLASSMASK_ALL_PLAYABLE = 1535
+
+
+def body_type_classmask():
+    """Bits for the classes a body type is built on."""
+    mask = 0
+    for class_id in BODY_TYPE_CLASSES.values():
+        mask |= 1 << (class_id - 1)
+    return mask
+
+
+def disabled_classmask():
+    """Value for CharacterCreating.Disabled.ClassMask: everything else."""
+    return CLASSMASK_ALL_PLAYABLE & ~body_type_classmask()
+
+
 CONF_TEMPLATES = ["authserver", "worldserver"]
+
+
+def find_deployed_configs(name):
+    """Every copy of <name>.conf that a launched server could end up reading.
+
+    On Windows ConfigMgr::GetConfigPath() returns the RELATIVE string
+    "configs/" (Config.cpp:709), so the file a server reads is decided by the
+    directory it was launched from - not by the install prefix. An MSBuild
+    build also drops a second copy under build/bin/<Config>/configs/ on every
+    build (ConfigInstall.cmake), which nothing in this repo used to touch.
+
+    So "the config is correct" is not a property of one file. Find them all.
+    """
+    seen, out = set(), []
+    for root in (dist_dir(), build_dir()):
+        if not root.is_dir():
+            continue
+        for path in root.rglob(f"{name}.conf"):
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                out.append(path)
+    return sorted(out)
+
+
+# The keys whose value decides whether this realm behaves like Ashmorrow or
+# like stock AzerothCore. Checked against every config copy on disk, because
+# editing the wrong copy is indistinguishable from not editing at all.
+AUDITED_CONF_KEYS = {
+    "CharacterCreating.Disabled.ClassMask": "character creation limited to the body types",
+    "ValidateSkillLearnedBySpells":         "off-class spells survive a login",
+}
+
+
+def report_deployed_configs():
+    """Show every worldserver.conf on disk and whether it says what we think.
+
+    A realm ran a whole playtest unrestricted because the value was right in
+    one file and stock in the one the server actually read. On Windows
+    ConfigMgr::GetConfigPath() is the relative "configs/" (Config.cpp:709), so
+    which file that is depends on where the server was launched from.
+    """
+    expected = {
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+        "ValidateSkillLearnedBySpells": "0",
+    }
+    configs = find_deployed_configs("worldserver")
+
+    if not configs:
+        warn("no worldserver.conf found yet - run `ta.py conf` after a build")
+        print()
+        return
+
+    print(f"     worldserver.conf copies found: {len(configs)}")
+    bad = 0
+    for path in configs:
+        launched_from = path.parent.parent
+        print(f"       {path.relative_to(REPO)}")
+        print(f"         read by a server launched from {launched_from.relative_to(REPO) or '.'}/")
+        for key, want in expected.items():
+            got = read_conf_value(path, key)
+            if got == want:
+                print(f"         {c('OK', 'green')}   {key} = {got}")
+            else:
+                bad += 1
+                print(f"         {c('BAD', 'red')}  {key} = {got if got is not None else '(missing)'}"
+                      f"  (expected {want}) - {AUDITED_CONF_KEYS[key]}")
+    if bad:
+        warn(f"{bad} setting(s) wrong. Run `ta.py conf` to fix every copy, then restart.")
+        warn("The server logs which file it read: look for '[Classless] Config in effect:'")
+    print()
+
+
+def conf_keys(path):
+    """The setting names a config file defines, in order."""
+    keys = []
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("[") or "=" not in stripped:
+            continue
+        keys.append(stripped.split("=", 1)[0].strip())
+    return keys
+
+
+def add_missing_module_keys(dist_file, target):
+    """Append settings the .dist has and the deployed config does not.
+
+    Values are never changed - an operator's tuning is theirs. But a key added
+    to the module after their config was written would otherwise never appear,
+    and the only symptom is one line at startup:
+
+        > Config: Missing property Classless.OpenRelicSlot in config file ...
+
+    which is easy to miss in a thousand lines of boot log, and leaves the
+    setting silently on its compiled-in default.
+    """
+    have = set(conf_keys(target))
+    missing = [k for k in conf_keys(dist_file) if k not in have]
+    if not missing:
+        return []
+
+    dist_lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    block = ["", "#", "# Added by `ta.py conf`: present in the shipped .dist but missing here.",
+             "# Values are the shipped defaults; existing settings above were not touched.",
+             "#"]
+    for key in missing:
+        for line in dist_lines:
+            stripped = line.strip()
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                block.append(stripped)
+                break
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(block) + "\n")
+    return missing
+
+
+def apply_conf_keys(lines, replacements):
+    """Rewrite the managed keys in a config file, leaving every other line alone.
+
+    Returns (new_lines, {key: (old_value, new_value)}) for the keys that
+    actually changed, so callers can say what they did rather than claiming a
+    file is correct without looking.
+    """
+    out, changed = [], {}
+    for line in lines:
+        stripped = line.strip()
+        for key, value in replacements.items():
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                old = stripped.split("=", 1)[1].strip().strip('"') if "=" in stripped else ""
+                new = f'{key} = "{value}"'
+                if old != str(value):
+                    changed[key] = (old, str(value))
+                out.append(new)
+                break
+        else:
+            out.append(line)
+            continue
+    return out, changed
+
+
+def read_conf_value(path, key):
+    """The value a running server would read for one key, or None if absent.
+
+    Mirrors Config.cpp: last-write-wins is NOT how it works - IsDuplicateOption
+    keeps the first - and every '"' is stripped from the value (Config.cpp:327).
+    """
+    if not Path(path).is_file():
+        return None
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        if name.strip() == key:
+            return value.strip().replace('"', "")
+    return None
 
 
 def cmd_conf(args):
     cfg = load_local()
-    etc = dist_dir() / "etc"
+    etc = dist_dir() / ("configs" if IS_WINDOWS else "etc")
     if not etc.is_dir():
         die(f"{etc} not found - build and install first (`ta.py build`)")
 
@@ -620,18 +1063,30 @@ def cmd_conf(args):
         "CharacterDatabaseInfo": conn_char,
         "DataDir": str((REPO / "data" / "client").as_posix()),
         "SourceDirectory": str(acore_dir().as_posix()),
+        # Quoting is fine for a number: Config.cpp:327 strips every '"' from a
+        # value before parsing it.
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+
+        # MUST be 0 on a classless realm. Player::_LoadSpells calls
+        # CheckSkillLearnedBySpell on every login (PlayerStorage.cpp:6610), and
+        # that asks GetSkillRaceClassInfo whether the spell's skill line is
+        # valid for the character's race and class. Every off-class ability the
+        # broker sells fails that test, so with this on, purchased spells are
+        # DELETED from character_spell at the next login - silently, apart from
+        # one LOG_ERROR. Off-class spells are the entire point of this realm,
+        # so the guard is wrong here.
+        "ValidateSkillLearnedBySpells": "0",
     }
 
     # AzerothCore's built-in SQL updater shells out to the `mysql` client to
     # import .sql files. Without it the server starts but silently applies no
     # database updates, so point at it explicitly when we can find one.
-    mysql_bin = shutil.which("mysql")
+    mysql_bin = find_mysql_client()
     if mysql_bin:
         replacements["MySQLExecutable"] = str(Path(mysql_bin).as_posix())
     else:
-        warn("no `mysql` client on PATH - AzerothCore cannot apply SQL updates.")
-        warn("  Linux:   sudo apt install mysql-client")
-        warn("  Windows: install MySQL Server (its bin/ contains mysql.exe)")
+        warn("no `mysql` client found - AzerothCore cannot apply SQL updates.")
+        warn(f"  {mysql_client_hint()}")
 
     for name in CONF_TEMPLATES:
         dist_file = etc / f"{name}.conf.dist"
@@ -639,24 +1094,43 @@ def cmd_conf(args):
         if not dist_file.exists():
             warn(f"{dist_file.name} missing, skipping")
             continue
-        if target.exists() and not args.force:
-            warn(f"{target.name} already exists (use --force to regenerate)")
-            continue
-        lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        out, seen = [], set()
-        for line in lines:
-            stripped = line.strip()
-            replaced = False
-            for key, value in replacements.items():
-                if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-                    out.append(f'{key} = "{value}"')
-                    seen.add(key)
-                    replaced = True
-                    break
-            if not replaced:
-                out.append(line)
+        # An existing config is NOT skipped. It used to be, and that is how a
+        # realm ended up running with CharacterCreating.Disabled.ClassMask = 0
+        # for a whole playtest: the repo grew a new managed setting, `ta.py
+        # conf` refused to touch the deployed file, and nothing said so. Only
+        # the keys ta.py owns are rewritten; every hand edit elsewhere in the
+        # file survives. --force still regenerates from the .dist.
+        source = dist_file if (args.force or not target.exists()) else target
+        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+        out, changed = apply_conf_keys(lines, replacements)
         target.write_text("\n".join(out) + "\n", encoding="utf-8")
-        ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+
+        if source is dist_file:
+            ok(f"wrote {target.relative_to(REPO)} from {dist_file.name}")
+        elif changed:
+            ok(f"updated {target.relative_to(REPO)} - {len(changed)} setting(s) were stale:")
+            for key, (old_value, new_value) in changed.items():
+                shown_old = old_value if len(old_value) < 40 else old_value[:37] + "..."
+                shown_new = new_value if len(new_value) < 40 else new_value[:37] + "..."
+                print(f"       {key}: {shown_old or '(empty)'} -> {shown_new}")
+        else:
+            ok(f"{target.relative_to(REPO)} already correct")
+
+        # Every other copy on disk gets the same keys. Writing only the one
+        # under dist/ is how a realm can be "configured" and still run on
+        # stock settings: on Windows the server resolves "configs/" against
+        # its working directory, and an MSBuild build leaves a second copy in
+        # the build tree that a double-clicked worldserver.exe reads instead.
+        for other in find_deployed_configs(name):
+            if other.resolve() == target.resolve():
+                continue
+            other_lines = other.read_text(encoding="utf-8", errors="replace").splitlines()
+            other_out, other_changed = apply_conf_keys(other_lines, replacements)
+            other.write_text("\n".join(other_out) + "\n", encoding="utf-8")
+            if other_changed:
+                warn(f"also updated {other.relative_to(REPO)} "
+                     f"({len(other_changed)} stale) - a server launched from "
+                     f"{other.parent.parent.relative_to(REPO)} reads THIS file, not dist/")
 
     # Module configs live in etc/modules/, not etc/ - that is where CMake
     # installs the .dist files and where worldserver looks for them.
@@ -668,8 +1142,26 @@ def cmd_conf(args):
             target = modules_etc / src.name.replace(".conf.dist", ".conf")
             if not target.exists() or args.force:
                 shutil.copy2(src, target)
-            ok(f"module config {src.name} -> etc/modules/")
+                ok(f"module config {src.name} -> etc/modules/")
+                continue
 
+            # The deployed config is the operator's: their tuning stays. Only
+            # settings that did not exist when they configured are appended.
+            added = add_missing_module_keys(src, target)
+            if added:
+                ok(f"module config {target.name}: added {len(added)} new setting(s)")
+                for key in added:
+                    print(f"       {key}")
+            else:
+                ok(f"module config {target.name} has every setting the module defines")
+
+    print()
+    print(f"     Character creation is limited to the three body types:")
+    for name, class_id in BODY_TYPE_CLASSES.items():
+        print(f"       {name:<11} = class {class_id}")
+    print(f"     CharacterCreating.Disabled.ClassMask = {disabled_classmask()} refuses the rest.")
+    print(f"     The client still SHOWS all ten - that list is in its own DBCs,")
+    print(f"     not something the server sends. See docs/BODY-TYPES.md section 4.")
     print()
     print(f"     Realm name lives in the DATABASE, not these files.")
     print(f"     Run `python3 tools/ta.py db realm` to set it to '{cfg['realm_name']}'.")
@@ -680,9 +1172,693 @@ def cmd_conf(args):
 # run
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# one-shot installer
+# --------------------------------------------------------------------------
+
+APT_PACKAGES = [
+    "git", "cmake", "make", "clang", "ccache", "ninja-build",
+    "libboost-all-dev", "libssl-dev", "libmysqlclient-dev",
+    "libreadline-dev", "libbz2-dev", "libncurses-dev",
+    "mysql-client",
+]
+
+
+def step(number, total, title):
+    print()
+    print(c(f"[{number}/{total}] {title}", "blue"))
+    print(c("-" * (len(title) + 8), "grey"))
+
+
+_UNSET = object()
+
+
+class Prompt:
+    """Interactive questions with non-interactive fallbacks.
+
+    Every question can be answered three ways, in priority order: a command-line
+    flag, an answer typed at the prompt, or the default. That means the same
+    installer serves someone setting up their first realm and a scripted rebuild
+    on a machine with no terminal, without maintaining two code paths.
+    """
+
+    def __init__(self, assume_yes):
+        self.assume_yes = assume_yes
+        # A piped stdin cannot answer questions; fall back to defaults rather
+        # than raising EOFError halfway through an install.
+        self.interactive = sys.stdin is not None and sys.stdin.isatty()
+        if assume_yes:
+            self.interactive = False
+
+    def _auto(self, question, shown, why, value=_UNSET):
+        """Report an answer we did not have to ask for, and return it.
+
+        `shown` is what the operator sees, `value` is what the caller gets. They
+        differ whenever displaying the real answer would be wrong - a password
+        must print as asterisks, and a menu prints a human label while the
+        caller needs the key behind it.
+        """
+        print(f"     {question} {c(str(shown), 'yellow')}  ({why})")
+        return shown if value is _UNSET else value
+
+    def confirm(self, question, default=True, override=None):
+        if override is not None:
+            return self._auto(question, "yes" if override else "no", "from flag")
+        if not self.interactive:
+            return self._auto(question, "yes" if default else "no", "default")
+        suffix = "[Y/n]" if default else "[y/N]"
+        while True:
+            try:
+                answer = input(f"     {question} {suffix} ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return default
+            if not answer:
+                return default
+            if answer in ("y", "yes"):
+                return True
+            if answer in ("n", "no"):
+                return False
+            print(f"       please answer y or n")
+
+    def text(self, question, default="", override=None, allow_empty=False):
+        if override is not None:
+            return self._auto(question, override, "from flag")
+        if not self.interactive:
+            return self._auto(question, default or "(empty)", "default", value=default)
+        shown = f" [{default}]" if default else ""
+        while True:
+            try:
+                answer = input(f"     {question}{shown}: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return default
+            answer = answer or default
+            if answer or allow_empty:
+                return answer
+            print("       a value is required")
+
+    def secret(self, question, override=None, generate=False):
+        """Ask for a password without echoing it. Can generate one instead."""
+        if override is not None:
+            return self._auto(question, "*" * 8, "from flag", value=override)
+        if not self.interactive:
+            import secrets
+            value = secrets.token_urlsafe(18) if generate else ""
+            return self._auto(question, "generated" if generate else "(empty)",
+                              "default", value=value)
+        import getpass
+        while True:
+            try:
+                answer = getpass.getpass(f"     {question}"
+                                         f"{' (blank to generate one)' if generate else ''}: ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                answer = ""
+            if answer:
+                return answer
+            if generate:
+                import secrets
+                value = secrets.token_urlsafe(18)
+                print(f"       generated a random password")
+                return value
+            print("       a password is required")
+
+    def choice(self, question, options, default=0, override=None):
+        """options is [(key, label, description)]. Returns the chosen key."""
+        keys = [o[0] for o in options]
+        if override is not None:
+            if override not in keys:
+                die(f"{override!r} is not one of: {', '.join(keys)}")
+            label = next(o[1] for o in options if o[0] == override)
+            return self._auto(question, label, "from flag", value=override)
+        if not self.interactive:
+            return self._auto(question, options[default][1], "default",
+                              value=keys[default])
+
+        print()
+        print(f"     {question}")
+        for index, (key, label, description) in enumerate(options):
+            marker = c("*", "green") if index == default else " "
+            print(f"       {marker} {index + 1}) {c(label, 'yellow')}")
+            for line in description.splitlines():
+                print(f"            {line}")
+        while True:
+            try:
+                answer = input(f"     choose 1-{len(options)} [{default + 1}]: ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return keys[default]
+            if not answer:
+                return keys[default]
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                return keys[int(answer) - 1]
+            if answer.lower() in keys:
+                return answer.lower()
+            print(f"       enter a number from 1 to {len(options)}")
+
+
+def local_ip_guess():
+    """Best guess at this machine's LAN address.
+
+    Opening a UDP socket to a public address does not send anything; it just
+    makes the OS pick the interface it would route through. Used to offer a
+    sensible realm address, because the default of 127.0.0.1 is the single most
+    common cause of "I can log in but the realm shows offline".
+    """
+    import ipaddress
+    import socket
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.connect(("8.8.8.8", 9))
+            found = sock.getsockname()[0]
+        finally:
+            sock.close()
+    except OSError:
+        return None
+
+    # Only offer something a player could actually connect to. Loopback is the
+    # bug this exists to avoid, and a container can hand back link-local or
+    # documentation-range addresses that would be worse than no suggestion.
+    try:
+        addr = ipaddress.ip_address(found)
+    except ValueError:
+        return None
+    if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+        return None
+    if addr in ipaddress.ip_network("192.0.2.0/24"):      # TEST-NET-1
+        return None
+    return found
+
+
+def confirm(question, assume_yes):
+    """Kept for the older call sites that predate the Prompt class."""
+    return Prompt(assume_yes).confirm(question)
+
+
+def docker_available():
+    """True only if the Docker daemon actually answers, not merely installed."""
+    if not shutil.which("docker"):
+        return False
+    rc, _, _ = capture(["docker", "info", "--format", "{{.ServerVersion}}"])
+    return rc == 0
+
+
+def choose_database(prompt, args, cfg):
+    """Decide where MySQL lives, and record it in tools/local.json.
+
+    Three genuinely different situations, and guessing wrong wastes real time:
+    a throwaway container, a service already on this box, or a database
+    somewhere else entirely (the common homelab case, where the realm and the
+    website are not the same machine).
+    """
+    mode = prompt.choice(
+        "Where should the databases live?",
+        [
+            ("docker", "Docker container",
+             "Easiest. Creates a MySQL 8.4 container we manage for you.\n"
+             "Needs Docker installed and able to pull images."),
+            ("local", "MySQL already on this machine",
+             "Use a MySQL/MariaDB service you have installed.\n"
+             "You will be asked for its credentials."),
+            ("remote", "MySQL on another machine",
+             "Point at a database server elsewhere on your network.\n"
+             "The realm needs low latency to it - same LAN, not the internet."),
+        ],
+        # The CLI being installed is not the same as the daemon running - a
+        # stopped daemon is common, and defaulting to Docker there sends people
+        # down a path that cannot work.
+        default=0 if docker_available() else 1,
+        override=args.db,
+    )
+
+    if mode == "docker":
+        if not shutil.which("docker"):
+            die("Docker is not installed. Install it, or re-run and choose another option.")
+        if not docker_available():
+            warn("Docker is installed but its daemon is not responding.")
+            print("       Start it (`sudo systemctl start docker`, or Docker Desktop)")
+            print("       and re-run, or re-run and choose another option.")
+            if not prompt.confirm("Continue anyway?", default=False):
+                die("Docker daemon unavailable")
+        cfg["mysql_host"] = "127.0.0.1"
+        cfg["mysql_port"] = int(prompt.text("Port to publish MySQL on", "3306",
+                                            override=args.db_port))
+        cfg["mysql_user"] = "root"
+        cfg["mysql_pass"] = prompt.secret("Password for the container's root user",
+                                          override=args.db_password, generate=True)
+        return mode
+
+    cfg["mysql_host"] = prompt.text(
+        "Database host", "127.0.0.1" if mode == "local" else "",
+        override=args.db_host)
+    cfg["mysql_port"] = int(prompt.text("Database port", "3306", override=args.db_port))
+    cfg["mysql_user"] = prompt.text("Database user (needs CREATE DATABASE)", "root",
+                                    override=args.db_user)
+    cfg["mysql_pass"] = prompt.secret(f"Password for {cfg['mysql_user']}",
+                                      override=args.db_password)
+    return mode
+
+
+def choose_realm(prompt, args, cfg):
+    """Realm identity, and the address players are redirected to after login."""
+    cfg["realm_name"] = prompt.text("Realm name", cfg.get("realm_name", "Ashmorrow"),
+                                    override=args.realm_name)
+
+    guess = local_ip_guess()
+    print()
+    print("     The realm address is what the client is redirected to AFTER login.")
+    print("     127.0.0.1 works only for playing on this same machine. If anyone")
+    print("     else will connect, use this machine's LAN address instead - this")
+    print("     is the usual cause of 'login works but the realm shows offline'.")
+    if guess:
+        print(f"     This machine looks like {c(guess, 'yellow')} on your network.")
+
+    cfg["realm_address"] = prompt.text("Realm address", guess or "127.0.0.1",
+                                       override=args.realm_address)
+    cfg["realm_port"] = int(prompt.text("World server port", "8085", override=args.realm_port))
+    return cfg
+
+
+def ensure_local_config(prompt, args):
+    """Build tools/local.json from the answers, without clobbering existing ones.
+
+    The shipped defaults exist so the tooling runs in a throwaway sandbox. A
+    real install should not use them, and asking somebody to invent a password
+    by hand is how installs end up with 'password'.
+    """
+    local = REPO / "tools" / "local.json"
+    existing = {}
+    if local.exists():
+        try:
+            existing = json.loads(local.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            die(f"tools/local.json is not valid JSON: {exc}")
+        ok(f"{local.relative_to(REPO)} already exists")
+        if not prompt.confirm("Reconfigure it?", default=False, override=args.reconfigure or None):
+            return existing, None
+
+    cfg = dict(existing)
+    mode = choose_database(prompt, args, cfg)
+    choose_realm(prompt, args, cfg)
+
+    # Service passwords the operator never types; generated unless already set.
+    import secrets
+    for key in ("website_db_pass", "web_db_pass"):
+        cfg.setdefault(key, secrets.token_urlsafe(18))
+
+    cfg["db_mode"] = mode
+    local.write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print()
+    ok(f"wrote {local.relative_to(REPO)}")
+    warn("that file holds your passwords, is gitignored, and is the only copy.")
+    return cfg, mode
+
+
+def install_linux_packages(assume_yes):
+    if IS_WINDOWS or not shutil.which("apt-get"):
+        return False
+    missing = [pkg for pkg in ("cmake", "git") if not shutil.which(pkg)]
+    have_boost = Path("/usr/include/boost/version.hpp").exists()
+    have_mysql = Path("/usr/include/mysql/mysql.h").exists()
+    if not missing and have_boost and have_mysql:
+        ok("build dependencies already present")
+        return True
+
+    print("     The build needs Boost, OpenSSL, MySQL headers and a compiler.")
+    if not confirm("Install them with apt-get?", assume_yes):
+        warn("skipping - install them yourself, then re-run")
+        return False
+
+    sudo = [] if os.geteuid() == 0 else ["sudo"]
+    env = {"DEBIAN_FRONTEND": "noninteractive"}
+    run(sudo + ["apt-get", "update", "-qq"], check=False, env=env)
+    rc = run(sudo + ["apt-get", "install", "-y"] + APT_PACKAGES, check=False, env=env)
+    if rc != 0:
+        warn("apt-get reported problems; continuing, the build will say if something is missing")
+    return True
+
+
+def cmd_install(args):
+    """Take a fresh clone to a running realm, asking about the choices that matter."""
+    prompt = Prompt(args.yes)
+
+    print()
+    print(c("  Tomorrow's Ash - installing realm Ashmorrow", "blue"))
+    print(f"  repo: {REPO}")
+    if args.yes:
+        print("  non-interactive (--yes): taking defaults for anything not passed as a flag")
+    elif not prompt.interactive:
+        print("  stdin is not a terminal: taking defaults for anything not passed as a flag")
+
+    total = 7 if args.client else 6
+
+    # 1 -----------------------------------------------------------------
+    step(1, total, "Prerequisites")
+    if not IS_WINDOWS:
+        install_linux_packages(args.yes)
+    else:
+        print("     On Windows the compiler comes from Visual Studio 2022, and")
+        print("     Boost/OpenSSL/MySQL are installed by hand - see SETUP.md section 3.")
+    if cmd_doctor(argparse.Namespace()) != 0:
+        die("prerequisites are missing - see above, then re-run")
+
+    # 2 -----------------------------------------------------------------
+    step(2, total, "How do you want this set up?")
+    cfg, db_mode = ensure_local_config(prompt, args)
+    if db_mode is None:
+        db_mode = cfg.get("db_mode", "docker")
+
+    build_type = prompt.choice(
+        "Build type",
+        [
+            ("Release", "Release", "Fastest server, smallest build. Use this to play."),
+            ("RelWithDebInfo", "Release with debug info",
+             "Same speed, keeps symbols so crashes are diagnosable.\nLarger build directory."),
+            ("Debug", "Debug", "Slow. Only for tracking down a specific bug."),
+        ],
+        default=0,
+        override=args.build_type,
+    )
+    want_tools = prompt.confirm(
+        "Build the client-data extractors?", default=True,
+        override=(False if args.no_tools else None))
+    if not want_tools:
+        print("       skipping them shortens the build, but you will need them")
+        print("       later unless you already have extracted client data.")
+
+    # 3 -----------------------------------------------------------------
+    step(3, total, "Fetching AzerothCore at the pinned commit")
+    if acore_dir().exists():
+        ok("core checkout already present")
+        cmd_sync(argparse.Namespace())
+    else:
+        print("     Downloads roughly 1 GB.")
+        cmd_bootstrap(argparse.Namespace(force=False))
+
+    # 4 -----------------------------------------------------------------
+    step(4, total, "Building the server")
+    if args.skip_build:
+        warn("skipped (--skip-build)")
+    else:
+        binary = dist_dir() / ("worldserver.exe" if IS_WINDOWS else "worldserver")
+        if binary.exists() and not args.rebuild:
+            ok("worldserver already built - pass --rebuild to force")
+        else:
+            print(f"     {build_type} build, first run takes 20-60 minutes and about 15 GB.")
+            cmd_configure(argparse.Namespace(
+                build_type=build_type,
+                tools="all" if want_tools else "none",
+                generator=args.generator,
+                clean=False))
+            cmd_build(argparse.Namespace(
+                jobs=args.jobs,
+                build_type=build_type))
+
+    # 5 -----------------------------------------------------------------
+    step(5, total, "Database")
+    cfg = load_local()
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+
+    if rc != 0 and db_mode == "docker":
+        print("     Starting the MySQL container.")
+        if cmd_db(argparse.Namespace(action="up")) != 0:
+            return 1
+        rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+
+    if rc != 0:
+        warn(f"cannot reach MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} "
+             f"as {cfg['mysql_user']}.")
+        if db_mode == "local":
+            print("     Install and start it, then re-run - everything above is done:")
+            print("       Linux:   sudo apt install mysql-server")
+            print("       Windows: the MySQL 8.x installer")
+        else:
+            print("     Check the host, port, credentials and that the server allows")
+            print("     remote connections (bind-address) and the firewall permits it.")
+            print("     Fix tools/local.json, then re-run.")
+        return 1
+
+    ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
+
+    # Enforced here rather than at step 1: it is not needed to fetch or compile
+    # anything, so blocking the build on it wastes an evening. But the server
+    # cannot import its ~800 MB of SQL without it, so it must exist by now.
+    if not find_mysql_client():
+        warn("the `mysql` client binary is still missing.")
+        print(f"     {mysql_client_hint()}")
+        print()
+        print("     AzerothCore shells out to it to import its SQL. Without it the")
+        print("     server starts and silently applies no database updates.")
+        print("     Everything above is done; install it and re-run.")
+        return 1
+
+    cmd_db(argparse.Namespace(action="init"))
+
+    # 6 -----------------------------------------------------------------
+    step(6, total, "Server configuration")
+    cmd_conf(argparse.Namespace(force=args.reconfigure))
+
+    # 7 -----------------------------------------------------------------
+    if args.client:
+        step(7, total, "Client data")
+        cmd_extract(argparse.Namespace(client=args.client,
+                                       skip_mmaps=args.skip_mmaps, jobs=args.jobs))
+
+    # done ---------------------------------------------------------------
+    print()
+    print(c("  Installed.", "green"))
+    print()
+    print(f"  Realm     {cfg['realm_name']} at {cfg['realm_address']}:{cfg['realm_port']}")
+    print(f"  Database  {cfg['mysql_user']}@{cfg['mysql_host']}:{cfg['mysql_port']} ({db_mode})")
+    print()
+
+    if not args.client:
+        print("  One thing is left, and it needs your own WoW 3.3.5a client:")
+        print()
+        print(c("     python3 tools/ta.py extract --client /path/to/WoW-3.3.5a", "yellow"))
+        print()
+        print("  The server cannot start without it - it exits at")
+        print("  'Failed to find map files for starting areas'. Add --skip-mmaps to")
+        print("  defer the multi-hour pathfinding step and play sooner.")
+        print()
+
+    print("  Then, in two terminals:")
+    print(c("     python3 tools/ta.py run auth", "yellow"))
+    print(c("     python3 tools/ta.py run world", "yellow"))
+    print()
+    print("  The first world start imports ~800 MB of SQL and looks frozen for")
+    print("  several minutes. That happens once.")
+    print()
+    print("  Finally, register the realm and make an account:")
+    print(c("     python3 tools/ta.py db realm", "yellow"))
+    print("     (then in the worldserver console) account create <user> <pass>")
+    print()
+    return 0
+
+
+# --------------------------------------------------------------------------
+# client data extraction
+# --------------------------------------------------------------------------
+
+# Ordered because each step consumes the previous one's output. Run from the
+# client directory; every extractor writes into its working directory.
+EXTRACT_STEPS = [
+    ("map_extractor",    [],                        ["dbc", "maps"], "DBC and map data", "~10 min"),
+    ("vmap4_extractor",  [],                        ["Buildings"],   "line-of-sight geometry", "~15 min"),
+    ("vmap4_assembler",  ["Buildings", "vmaps"],    ["vmaps"],       "assembling vmaps", "~5 min"),
+    ("mmaps_generator",  [],                        ["mmaps"],       "NPC pathfinding", "HOURS"),
+]
+
+
+def looks_like_wow_client(path):
+    """Cheap sanity check so we fail before a multi-hour run, not during it."""
+    p = Path(path)
+    if not p.is_dir():
+        return "not a directory"
+    data = p / "Data"
+    if not data.is_dir():
+        return "no Data/ subdirectory - is this the WoW client folder?"
+    if not any(data.glob("*.MPQ")) and not any(data.glob("*.mpq")):
+        return "Data/ contains no .MPQ archives"
+    return None
+
+
+def cmd_extract(args):
+    """Run client-data extractors with persistent checkpoints.
+
+    Final outputs under data/client/ are checkpoints. Intermediate Buildings/
+    is never a checkpoint. mmaps_generator requires both maps/ and vmaps/ in
+    the WoW client directory, so those inputs are temporarily restored there.
+    """
+    client = Path(args.client).expanduser().resolve()
+    problem = looks_like_wow_client(client)
+    if problem:
+        die(f"{client}: {problem}\n"
+            "  Point --client at your WoW 3.3.5a folder - the one containing Wow.exe and Data/.")
+
+    # Windows CMake installs the tools directly in dist/, Linux uses dist/bin/.
+    bindir = dist_dir() if IS_WINDOWS else dist_dir() / "bin"
+    if not bindir.is_dir():
+        die("extractors not built - run `ta.py build` first")
+
+    target = REPO / "data" / "client"
+    target.mkdir(parents=True, exist_ok=True)
+
+    # Persistent checkpoints. If these exist, their stages are complete and
+    # will never be unnecessarily repeated.
+    stages = [
+        ("map_extractor", ["dbc", "maps"], "DBC and map data", "~10 min"),
+        ("vmap4_pipeline", ["vmaps"], "line-of-sight geometry", "~20 min"),
+        ("mmaps_generator", ["mmaps"], "NPC pathfinding", "HOURS"),
+    ]
+
+    if args.skip_mmaps:
+        stages = [s for s in stages if s[0] != "mmaps_generator"]
+        warn("skipping mmaps: NPC pathfinding will be poor, but the realm runs.")
+
+    info(f"extracting from {client}")
+    print(f"     output goes to {target.relative_to(REPO)}/")
+    print()
+
+    for index, (tool, produces, what, duration) in enumerate(stages, start=1):
+        if all((target / produced).exists() for produced in produces):
+            ok(f"[{index}/{len(stages)}] {what} - already extracted, skipping")
+            continue
+
+        info(f"[{index}/{len(stages)}] {what} ({duration})")
+
+        if tool == "map_extractor":
+            exe = bindir / ("map_extractor.exe" if IS_WINDOWS else "map_extractor")
+            if not exe.exists():
+                die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
+
+            rc = run([str(exe)], cwd=client, check=False)
+            if rc != 0:
+                die(f"map_extractor failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            for produced in produces:
+                src_dir = client / produced
+                if not src_dir.exists():
+                    die(f"map_extractor reported success but produced no {produced}/")
+                dest = target / produced
+                if dest.exists():
+                    shutil.rmtree(dest, ignore_errors=True)
+                shutil.move(str(src_dir), str(dest))
+                ok(f"  {produced}/ -> {dest.relative_to(REPO)}/")
+            continue
+
+        if tool == "vmap4_pipeline":
+            # vmap4_extractor refuses to work if Buildings/ contains leftovers.
+            buildings = client / "Buildings"
+            if buildings.exists():
+                info("removing stale Buildings/ from a previous extraction")
+                shutil.rmtree(buildings, ignore_errors=True)
+                if buildings.exists():
+                    die(f"could not remove stale extractor output: {buildings}")
+
+            extractor = bindir / ("vmap4_extractor.exe" if IS_WINDOWS else "vmap4_extractor")
+            assembler = bindir / ("vmap4_assembler.exe" if IS_WINDOWS else "vmap4_assembler")
+            if not extractor.exists():
+                die(f"{extractor} missing - was the build run with TOOLS_BUILD=all?")
+            if not assembler.exists():
+                die(f"{assembler} missing - was the build run with TOOLS_BUILD=all?")
+
+            rc = run([str(extractor)], cwd=client, check=False)
+            if rc != 0:
+                die(f"vmap4_extractor failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            if not buildings.is_dir():
+                die("vmap4_extractor reported success but produced no Buildings/")
+
+            rc = run([str(assembler)], cwd=client, check=False)
+            if rc != 0:
+                die(f"vmap4_assembler failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            vmaps = client / "vmaps"
+            if not vmaps.is_dir():
+                die("vmap4_assembler reported success but produced no vmaps/")
+
+            dest = target / "vmaps"
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(vmaps), str(dest))
+            ok(f"  vmaps/ -> {dest.relative_to(REPO)}/")
+
+            shutil.rmtree(buildings, ignore_errors=True)
+            continue
+
+        if tool == "mmaps_generator":
+            jobs = args.jobs or os.cpu_count() or 4
+            warn("this is the long one. It is safe to stop and re-run later.")
+
+            # The generator requires BOTH maps and vmaps in its working directory.
+            restored = []
+            for name in ("maps", "vmaps"):
+                client_data = client / name
+                stored_data = target / name
+                if not client_data.exists() and stored_data.is_dir():
+                    info(f"restoring {name}/ beside the client for mmaps_generator")
+                    shutil.move(str(stored_data), str(client_data))
+                    restored.append(name)
+
+            for name in ("maps", "vmaps"):
+                if not (client / name).is_dir():
+                    die(f"cannot run mmaps_generator: {client / name} is missing")
+
+            exe = bindir / ("mmaps_generator.exe" if IS_WINDOWS else "mmaps_generator")
+            if not exe.exists():
+                die(f"{exe} missing - was the build run with TOOLS_BUILD=all?")
+
+            rc = run([str(exe), "--threads", str(jobs)], cwd=client, check=False)
+            if rc != 0:
+                # Restore any inputs even on failure so a retry has the same
+                # persistent checkpoint state.
+                for name in restored:
+                    client_data = client / name
+                    stored_data = target / name
+                    if client_data.is_dir():
+                        if stored_data.exists():
+                            shutil.rmtree(stored_data, ignore_errors=True)
+                        shutil.move(str(client_data), str(stored_data))
+                die(f"mmaps_generator failed ({rc}). Nothing was moved; fix the cause and re-run.")
+
+            mmaps = client / "mmaps"
+            if not mmaps.is_dir():
+                die("mmaps_generator reported success but produced no mmaps/")
+
+            dest = target / "mmaps"
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            shutil.move(str(mmaps), str(dest))
+            ok(f"  mmaps/ -> {dest.relative_to(REPO)}/")
+
+            # Return maps/vmaps to their persistent repository location.
+            for name in ("maps", "vmaps"):
+                client_data = client / name
+                dest_data = target / name
+                if client_data.is_dir():
+                    if dest_data.exists():
+                        shutil.rmtree(dest_data, ignore_errors=True)
+                    shutil.move(str(client_data), str(dest_data))
+                    ok(f"  {name}/ -> {dest_data.relative_to(REPO)}/")
+            continue
+
+        die(f"unknown extraction step: {tool}")
+
+    leftovers = client / "Buildings"
+    if leftovers.exists():
+        info("removing the Buildings/ intermediate")
+        shutil.rmtree(leftovers, ignore_errors=True)
+
+    ok("client extraction complete")
+    return 0
+
+
 def cmd_run(args):
     binary = "authserver" if args.target == "auth" else "worldserver"
-    exe = dist_dir() / "bin" / (binary + (".exe" if IS_WINDOWS else ""))
+    exe = (dist_dir() if IS_WINDOWS else dist_dir() / "bin") / (binary + (".exe" if IS_WINDOWS else ""))
     if not exe.exists():
         die(f"{exe} not found - run `ta.py build` first")
     info(f"starting {binary} (Ctrl+C to stop)")
@@ -1012,6 +2188,32 @@ def web_dev_db(args):
     return 0
 
 
+def _env_file_values(path, keys):
+    """
+    Read KEY=VALUE pairs out of a .env file.
+
+    Doctors must check the credential the SERVICE actually uses, which is the
+    one in its .env.local - not the one recorded in tools/local.json. When those
+    two disagree the service is down and local.json looks perfectly healthy,
+    which is exactly the failure this exists to catch.
+    """
+    values = {key: "" for key in keys}
+    if not path.exists():
+        return values
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        if key in values:
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            values[key] = value
+    return values
+
+
 def web_doctor(args):
     cfg = load_local()
     problems = 0
@@ -1067,6 +2269,32 @@ def web_doctor(args):
     else:
         warn(f"{cfg['db_web']} schema missing or empty - run `ta.py web sql`")
         problems += 1
+
+    # Can the SITE connect? Everything above this line passes while the website
+    # is completely down, because everything above connects as the admin user
+    # from tools/local.json. The site uses DB_USER/DB_PASSWORD out of
+    # web/.env.local, and when that password and MySQL's disagree every page
+    # logs "Access denied for user 'ash_web'@'localhost'" while the doctor
+    # cheerfully reports the website looks ready. It did exactly that once.
+    site = _env_file_values(web_env_path(), ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"))
+    if not site["DB_USER"]:
+        warn("web/.env.local names no DB_USER - run `ta.py web env --force`")
+        problems += 1
+    else:
+        probe = dict(cfg,
+                     mysql_user=site["DB_USER"],
+                     mysql_pass=site["DB_PASSWORD"],
+                     mysql_host=site["DB_HOST"] or cfg["mysql_host"],
+                     mysql_port=site["DB_PORT"] or cfg["mysql_port"])
+        rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_characters']}`.`characters` LIMIT 0;", check=False)
+        if rc == 0:
+            ok(f"the site's own user '{site['DB_USER']}' connects and can read characters")
+        else:
+            warn(f"the site's own user '{site['DB_USER']}' CANNOT connect with the password in")
+            warn("web/.env.local. Every page will report the database down. Fix with:")
+            warn("  python3 tools/ta.py web dev-db --yes      (development database)")
+            warn("  ...then restart the website so it picks the new password up.")
+            problems += 1
 
     print()
     if problems:
@@ -1141,6 +2369,355 @@ def web_setup(args):
     print(f"     Next: `python3 tools/ta.py web sql` to create the site's schema,")
     print(f"     then `python3 tools/ta.py web start`.")
     return 0
+
+
+# --------------------------------------------------------------------------
+# the admin panel
+#
+# A THIRD service, separate again from the website. It runs as its own MySQL
+# user with privileges the website must never have, so the two are never
+# collapsed into one process - see docs/decisions/0008-admin-panel.md.
+#
+# Same reasoning as the web subcommands above: these exist so ta.py stays the
+# single entry point on both platforms, not because the panel is coupled to the
+# game server.
+# --------------------------------------------------------------------------
+
+ADMIN_DIR = REPO / "web-admin"
+
+
+def admin_env_path():
+    return ADMIN_DIR / ".env.local"
+
+
+def cmd_admin(args):
+    if not ADMIN_DIR.is_dir():
+        die(f"{ADMIN_DIR} not found")
+    return {
+        "env": admin_env,
+        "install": admin_install,
+        "build": admin_build,
+        "dev": admin_dev,
+        "start": admin_start,
+        "sql": admin_sql,
+        "dev-db": admin_dev_db,
+        "doctor": admin_doctor,
+        "setup": admin_setup,
+    }[args.action](args)
+
+
+def admin_env(args):
+    """Write web-admin/.env.local from tools/local.json plus fresh keys."""
+    import secrets
+
+    target = admin_env_path()
+    if target.exists() and not args.force:
+        warn(f"{target.relative_to(REPO)} already exists (use --force to regenerate)")
+        return 0
+
+    cfg = load_local()
+    example = ADMIN_DIR / ".env.example"
+    if not example.exists():
+        die(f"{example} is missing")
+
+    # Two separate keys, and they must stay separate: rotating the session
+    # secret signs everyone out (fine), rotating the TOTP key makes every
+    # enrolled authenticator unreadable (not fine).
+    values = {
+        "ADMIN_SITE_URL": cfg["admin_url"],
+        "ADMIN_PUBLIC": "0",
+        "ADMIN_SESSION_SECRET": secrets.token_urlsafe(48),
+        "ADMIN_TOTP_KEY": secrets.token_urlsafe(48),
+        "REALM_ID": "1",
+        "REALM_NAME": cfg["realm_name"],
+        "DB_HOST": cfg["mysql_host"],
+        "DB_PORT": str(cfg["mysql_port"]),
+        "DB_USER": cfg["admin_db_user"],
+        "DB_PASSWORD": cfg["admin_db_pass"],
+        "DB_AUTH": cfg["db_auth"],
+        "DB_CHARACTERS": cfg["db_characters"],
+        "DB_WORLD": cfg["db_world"],
+        "DB_ADMIN": cfg["db_admin"],
+    }
+
+    out, seen = [], set()
+    for line in example.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in values:
+                out.append(f"{key}={values[key]}")
+                seen.add(key)
+                continue
+        out.append(line)
+
+    missing = [f"{k}={v}" for k, v in values.items() if k not in seen]
+    if missing:
+        out.extend(["", "# Added by `ta.py admin env`"] + missing)
+
+    target.write_text("\n".join(out) + "\n", encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except OSError:
+        pass  # Windows without POSIX permissions - the file is still gitignored.
+
+    ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+    warn("ADMIN_TOTP_KEY is in that file. Back it up: losing it makes every")
+    warn("enrolled authenticator unreadable.")
+    if not cfg["admin_db_pass"]:
+        warn("DB_PASSWORD is empty. Create the panel's database user first:")
+        warn("  1. python3 tools/ta.py admin sql --grants")
+        warn("  2. re-run `ta.py admin env --force`")
+    return 0
+
+
+def admin_install(args):
+    info("installing admin panel dependencies")
+    lock = ADMIN_DIR / "package-lock.json"
+    run(npm_cmd() + (["ci"] if lock.exists() else ["install"]), cwd=ADMIN_DIR)
+    ok("dependencies installed")
+    return 0
+
+
+def admin_build(args):
+    info("building the admin panel")
+    run(npm_cmd() + ["run", "build"], cwd=ADMIN_DIR)
+    ok("built - start it with `ta.py admin start`")
+    return 0
+
+
+def admin_dev(args):
+    if not (ADMIN_DIR / "node_modules").is_dir():
+        die("dependencies are not installed - run `ta.py admin install` first")
+    cfg = load_local()
+    info(f"starting the admin panel in development on port {cfg['admin_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["run", "dev", "--", "--port", str(cfg["admin_port"])], cwd=ADMIN_DIR, check=False)
+    return 0
+
+
+def admin_start(args):
+    if not (ADMIN_DIR / ".next" / "standalone").is_dir():
+        die("the admin panel is not built - run `ta.py admin build` first")
+    cfg = load_local()
+    info(f"starting the admin panel on port {cfg['admin_port']} (Ctrl+C to stop)")
+    run(npm_cmd() + ["start"], cwd=ADMIN_DIR, check=False, env={"PORT": str(cfg["admin_port"])})
+    return 0
+
+
+def _remember_local(values):
+    """Record generated credentials in tools/local.json, which is gitignored."""
+    import json as _json
+
+    local_file = REPO / "tools" / "local.json"
+    local = {}
+    if local_file.exists():
+        try:
+            local = _json.loads(local_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            warn("tools/local.json is not valid JSON - not updating it")
+            return
+    if all(local.get(key) == value for key, value in values.items()):
+        return
+    local.update(values)
+    local_file.write_text(_json.dumps(local, indent=2) + "\n", encoding="utf-8")
+    ok(f"recorded credentials in {local_file.relative_to(REPO)}")
+
+
+def admin_sql(args):
+    """Create the panel's own schema, and optionally its database user."""
+    cfg = load_local()
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "admin-schema.sql", "web-admin/sql/admin-schema.sql")
+
+    if not args.grants:
+        info("skipping the database user (pass --grants to create it)")
+        return 0
+
+    import secrets
+
+    password = cfg["admin_db_pass"] or secrets.token_urlsafe(18)
+    template = (ADMIN_DIR / "sql" / "admin-grants.sql").read_text(encoding="utf-8")
+    if "CHANGE_ME" not in template:
+        die("admin-grants.sql has no CHANGE_ME placeholder - has it been edited?")
+
+    user = cfg["admin_db_user"]
+    info(f"creating the panel's database user '{user}'")
+    # Both hosts, deliberately - same anonymous-''@'localhost' trap documented
+    # in web_dev_db above.
+    for host in ("localhost", "%"):
+        mysql_run(cfg, template.replace("CHANGE_ME", password).replace("'localhost'", f"'{host}'"))
+        mysql_run(cfg, f"ALTER USER IF EXISTS '{user}'@'{host}' IDENTIFIED BY '{password}';")
+
+    _remember_local({"admin_db_user": user, "admin_db_pass": password})
+    ok(f"user '{user}' created, from localhost and from other hosts")
+    return 0
+
+
+def admin_dev_db(args):
+    """
+    One command: a local database the admin panel can actually operate on.
+
+    Shares the website's *fixture* - the schemas, the module SQL, the sample
+    characters - and nothing else. It adds the tables only the panel touches
+    (bans, mutes, the MOTD, teleport destinations, the item-class backup) plus
+    one staff account per tier, so the permission model can be exercised rather
+    than reasoned about.
+
+    It deliberately does NOT call `web dev-db`.
+
+    That was the first version and it was wrong. `web dev-db` creates the
+    *website's* database user, and when `web_db_pass` is not already recorded in
+    tools/local.json it generates a new password, applies it to MySQL and
+    rewrites web/.env.local. A website already running still holds the old
+    password in memory, so setting up the admin panel would knock the public
+    site offline with "Access denied for user 'ash_web'@'localhost'" until it
+    was restarted. Two services, two credentials: this one has no business
+    touching the other's.
+
+    Development only. It creates accounts with known passwords, so it refuses to
+    run without --yes.
+    """
+    import argparse as _argparse
+
+    cfg = load_local()
+
+    if not args.yes:
+        print()
+        warn("`admin dev-db` builds a DEVELOPMENT database and creates staff")
+        warn("accounts WITH KNOWN PASSWORDS.")
+        warn(f"  server  : {cfg['mysql_host']}:{cfg['mysql_port']}")
+        warn(f"  schemas : {cfg['db_auth']}, {cfg['db_world']}, {cfg['db_characters']}, {cfg['db_admin']}")
+        warn("")
+        warn("If that is a real realm's database, DO NOT run this.")
+        warn("")
+        die("re-run with --yes if this is a development database")
+
+    # 1. Is anything listening?
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        if not shutil.which("docker"):
+            die(
+                f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']} and no docker to start one.\n"
+                "       Install MySQL 8 (or Docker), then put the credentials in tools/local.json."
+            )
+        info("no MySQL reachable - starting one in Docker")
+        cmd_db(_argparse.Namespace(action="up"))
+    else:
+        ok(f"MySQL reachable at {cfg['mysql_host']}:{cfg['mysql_port']}")
+
+    # 2. The three AzerothCore schemas, then the shared fixture: sample
+    #    accounts and characters, the module's own SQL, and who bought what.
+    #    None of this touches the website's user or its .env.local.
+    cmd_db(_argparse.Namespace(action="init"))
+    web_fixture(_argparse.Namespace(yes=True))
+
+    # 3. The panel's own schema, then the tables and staff accounts it needs.
+    #    Schema before grants: admin-grants.sql names individual tables and
+    #    MySQL refuses a table-level GRANT for a table that does not exist.
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "admin-schema.sql", "web-admin/sql/admin-schema.sql")
+    _apply_sql(cfg, ADMIN_DIR / "sql" / "dev-fixture-admin.sql", "web-admin/sql/dev-fixture-admin.sql")
+
+    # 4. The panel's own user. `ash_admin` only - `ash_web` is untouched.
+    admin_sql(_argparse.Namespace(grants=True))
+
+    cfg = load_local()
+    probe = dict(cfg, mysql_user=cfg["admin_db_user"], mysql_pass=cfg["admin_db_pass"])
+    rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_admin']}`.`admin_audit` LIMIT 0;", check=False)
+    if rc != 0:
+        die(f"user '{cfg['admin_db_user']}' was created but cannot connect - check the MySQL error log")
+    ok(f"user '{cfg['admin_db_user']}' connects")
+
+    admin_env(_argparse.Namespace(force=True))
+
+    print()
+    ok("the admin panel has a database to operate on")
+    print()
+    print("     Start it:")
+    print("       python3 tools/ta.py admin build && python3 tools/ta.py admin start")
+    print()
+    print("     Sign in with any of these (development passwords):")
+    print("       ASHOWNER   / ownerpass     owner")
+    print("       ASHGM      / gmpass        game master")
+    print("       ASHSUPPORT / supportpass   support, read-only")
+    print()
+    print("     Each is asked to enrol an authenticator on first sign-in.")
+    return 0
+
+
+def admin_doctor(args):
+    cfg = load_local()
+    problems = 0
+
+    if not (ADMIN_DIR / "node_modules").is_dir():
+        warn("dependencies are not installed - run `ta.py admin install`")
+        problems += 1
+    else:
+        ok("dependencies installed")
+
+    if not admin_env_path().exists():
+        warn("web-admin/.env.local is missing - run `ta.py admin env`")
+        problems += 1
+    else:
+        ok("web-admin/.env.local exists")
+        text = admin_env_path().read_text(encoding="utf-8")
+        for key in ("ADMIN_SESSION_SECRET", "ADMIN_TOTP_KEY", "DB_PASSWORD"):
+            line = next((l for l in text.splitlines() if l.startswith(f"{key}=")), None)
+            if line is None or not line.split("=", 1)[1].strip():
+                warn(f"{key} is empty - the panel will refuse to start in production")
+                problems += 1
+
+    rc, _ = mysql_run(cfg, "SELECT 1;", check=False)
+    if rc != 0:
+        warn(f"no MySQL at {cfg['mysql_host']}:{cfg['mysql_port']}")
+        problems += 1
+    else:
+        ok("MySQL reachable")
+        # The panel's own credential, read from the file the panel actually
+        # boots with rather than from tools/local.json - see _env_file_values.
+        panel = _env_file_values(admin_env_path(), ("DB_USER", "DB_PASSWORD", "DB_HOST", "DB_PORT"))
+        probe = dict(cfg,
+                     mysql_user=panel["DB_USER"] or cfg["admin_db_user"],
+                     mysql_pass=panel["DB_PASSWORD"] or cfg["admin_db_pass"],
+                     mysql_host=panel["DB_HOST"] or cfg["mysql_host"],
+                     mysql_port=panel["DB_PORT"] or cfg["mysql_port"])
+        rc, _ = mysql_run(probe, f"SELECT 1 FROM `{cfg['db_admin']}`.`admin_audit` LIMIT 0;", check=False)
+        if rc != 0:
+            warn(f"user '{cfg['admin_db_user']}' cannot read the audit table"
+                 " - run `ta.py admin sql --grants`")
+            problems += 1
+        else:
+            ok(f"user '{cfg['admin_db_user']}' can read the audit table")
+
+            # The audit log is append-only BY GRANT. If that grant is wrong the
+            # panel still works perfectly, which is exactly why it is worth
+            # checking: nothing else would ever notice.
+            rc, _ = mysql_run(
+                probe,
+                f"UPDATE `{cfg['db_admin']}`.`admin_audit` SET summary = summary WHERE id = 0;",
+                check=False,
+            )
+            if rc == 0:
+                warn(f"'{cfg['admin_db_user']}' can UPDATE the audit log - it must not."
+                     " Re-run `ta.py admin sql --grants`.")
+                problems += 1
+            else:
+                ok("the audit log is append-only (UPDATE is refused)")
+
+    if problems:
+        print()
+        warn(f"{problems} problem(s) found")
+        return 1
+    print()
+    ok("the admin panel looks ready")
+    return 0
+
+
+def admin_setup(args):
+    import argparse as _argparse
+
+    admin_install(args)
+    admin_env(_argparse.Namespace(force=False))
+    admin_build(args)
+    return admin_doctor(args)
 
 
 # --------------------------------------------------------------------------
@@ -1688,6 +3265,44 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("install", help="guided setup: dependencies, core, build, database, configs")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="don't ask anything; take defaults for whatever isn't a flag")
+    p.add_argument("--reconfigure", action="store_true",
+                   help="re-ask the setup questions and overwrite existing configs")
+    # database
+    p.add_argument("--db", choices=["docker", "local", "remote"],
+                   help="where MySQL lives (skips that question)")
+    p.add_argument("--db-host", help="database host (local/remote)")
+    p.add_argument("--db-port", help="database port")
+    p.add_argument("--db-user", help="database user; needs CREATE DATABASE")
+    p.add_argument("--db-password", help="database password (prefer the prompt; "
+                                         "a flag lands in your shell history)")
+    # realm
+    p.add_argument("--realm-name", help="realm name shown in the client")
+    p.add_argument("--realm-address", help="address clients are redirected to after login; "
+                                           "use your LAN IP if anyone else connects")
+    p.add_argument("--realm-port", help="world server port")
+    # build
+    p.add_argument("--build-type", choices=["Release", "RelWithDebInfo", "Debug"],
+                   help="compiler build type")
+    p.add_argument("--no-tools", action="store_true",
+                   help="don't build the client-data extractors")
+    p.add_argument("--skip-build", action="store_true", help="don't compile at all")
+    p.add_argument("--rebuild", action="store_true", help="rebuild even if worldserver exists")
+    p.add_argument("-j", "--jobs", type=int, help="parallel build/extract jobs")
+    p.add_argument("--generator", help="explicit CMake generator")
+    # client data
+    p.add_argument("--client", help="path to your WoW 3.3.5a folder; also extracts client data")
+    p.add_argument("--skip-mmaps", action="store_true", help="defer the multi-hour pathfinding step")
+    p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("extract", help="extract map/vmap/mmap/DBC data from your WoW client")
+    p.add_argument("--client", required=True, help="path to your WoW 3.3.5a folder")
+    p.add_argument("--skip-mmaps", action="store_true", help="skip the multi-hour pathfinding step")
+    p.add_argument("-j", "--jobs", type=int, help="threads for mmaps generation")
+    p.set_defaults(func=cmd_extract)
+
     sub.add_parser("doctor", help="check prerequisites").set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("bootstrap", help="fetch pinned AzerothCore and overlay modules")
@@ -1700,10 +3315,14 @@ def main():
     p.add_argument("--build-type", help="Release (default) / RelWithDebInfo / Debug")
     p.add_argument("--tools", help="TOOLS_BUILD: all (default) / none / maps-only / db-only")
     p.add_argument("--generator", help="explicit CMake generator, e.g. \"Visual Studio 17 2022\"")
+    p.add_argument("--clean", action="store_true",
+                   help="discard the CMake cache before configuring")
     p.set_defaults(func=cmd_configure)
 
     p = sub.add_parser("build", help="compile the server")
     p.add_argument("-j", "--jobs", type=int, help="parallel jobs (default: all cores)")
+    p.add_argument("--build-type", choices=["Release", "RelWithDebInfo", "Debug"],
+                   help="build configuration; especially important for Visual Studio")
     p.set_defaults(func=cmd_build)
 
     p = sub.add_parser("db", help="database lifecycle")
@@ -1729,6 +3348,14 @@ def main():
     p.add_argument("--username", help="verify-srp6: an account the realm itself created")
     p.add_argument("--password", help="verify-srp6: that account's password")
     p.set_defaults(func=cmd_web)
+
+    p = sub.add_parser("admin", help="the operator panel in web-admin/ (deploys separately again)")
+    p.add_argument("action", choices=["setup", "env", "install", "build", "dev", "start",
+                                      "sql", "dev-db", "doctor"])
+    p.add_argument("--force", action="store_true", help="env: overwrite an existing .env.local")
+    p.add_argument("--grants", action="store_true", help="sql: also create the panel's MySQL user")
+    p.add_argument("--yes", action="store_true", help="dev-db: confirm writing sample data")
+    p.set_defaults(func=cmd_admin)
 
     p = sub.add_parser("play", help="point your own 3.3.5a client at the realm and start it")
     p.add_argument("action", choices=["doctor", "verify", "provision", "config", "run"])

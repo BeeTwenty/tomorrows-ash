@@ -29,6 +29,12 @@
 
 namespace TomorrowsAsh
 {
+    // The three body types (docs/BODY-TYPES.md), as class bits: Paladin (2),
+    // Shaman (7), Mage (8). Bit 512 is unused in 3.3.5, which is why every
+    // playable class is 1535 and not 2047.
+    constexpr uint32 CLASSMASK_BODY_TYPES   = (1 << 1) | (1 << 6) | (1 << 7);
+    constexpr uint32 CLASSMASK_ALL_PLAYABLE = 1535;
+
     struct ClasslessConfig
     {
         // Master switch. While false the module must not change any gameplay
@@ -52,8 +58,32 @@ namespace TomorrowsAsh
         // Cost in copper to respec. 0 = free.
         uint32 RespecCost = 0;
 
+        // Let any body type equip librams, idols, totems and sigils.
+        // Relics are the one gear category a data change cannot open: the
+        // equip slot is chosen by a hardcoded class check in
+        // Player::FindEquipSlot. See ClasslessRelics.cpp.
+        bool OpenRelicSlot = false;
+
+        // Classes this realm refuses at character creation, read back from
+        // worldserver.conf so the module can check it rather than trust it.
+        uint32 CreationDisabledClassMask = 0;
+
+        // Core setting that deletes off-class spells on login. Must be off.
+        bool ValidateSkillLearnedBySpells = true;
+
         // Points a character of this level is entitled to in total.
         [[nodiscard]] uint32 BudgetForLevel(uint8 level) const;
+
+        // Log whether character creation is actually restricted to the three
+        // body types. Reports, never enforces - the core owns that check.
+        void CheckCreationClassMask() const;
+
+        // Warn if the core is set to delete every off-class ability on login.
+        void CheckSpellValidation() const;
+
+        // Warn if a role still grants the permission that skips the class mask
+        // check, which silently exempts every GM account from the restriction.
+        void CheckCreationRbac() const;
 
         static ClasslessConfig& Instance();
 

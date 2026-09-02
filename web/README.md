@@ -22,9 +22,9 @@ realm on another machine.
 | Styling | Tailwind CSS v4 with a hand-written design system in `src/app/globals.css` |
 | Database | `mysql2` against AzerothCore's MySQL, plus one schema of our own |
 | Auth | SRP6 written straight to `acore_auth.account`, signed cookie sessions |
-| Runtime dependencies | four: `next`, `react`, `mysql2`, `nodemailer` |
+| Runtime dependencies | six: `next`, `react`, `react-dom`, `mysql2`, `marked`, `nodemailer` |
 
-Four dependencies is a deliberate ceiling. A public server's website is a
+That small a dependency set is deliberate. A public server's website is a
 credential-handling surface, and every package added to it is another thing
 that can be compromised on our behalf.
 

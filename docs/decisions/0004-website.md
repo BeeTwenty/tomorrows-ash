@@ -26,7 +26,7 @@ A separate Next.js 15 service in `web/`, in TypeScript, talking to AzerothCore's
 MySQL directly through `mysql2`, with SRP6 credentials written by us and one
 schema of our own for the site's state.
 
-Four runtime dependencies: `next`, `react`, `mysql2`, `nodemailer`.
+Six runtime dependencies: `next`, `react`, `react-dom`, `mysql2`, `marked`, `nodemailer`.
 
 ## Rationale
 
