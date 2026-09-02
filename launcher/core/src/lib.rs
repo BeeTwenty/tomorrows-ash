@@ -18,13 +18,16 @@
 
 pub mod app;
 pub mod client;
+pub mod dbc;
 pub mod error;
 pub mod install;
 pub mod launch;
 pub mod manifest;
+pub mod mpq;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod provision;
+pub mod recipe;
 pub mod settings;
 pub mod source;
 pub mod verify;
