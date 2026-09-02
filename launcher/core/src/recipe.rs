@@ -117,18 +117,14 @@ impl Recipe {
             return Err(Error::Message("recipe versions start at 1".into()));
         }
         // The output path is written into the player's game directory, so it
-        // gets the same treatment as every other path we are handed.
-        let output = Path::new(&self.output);
-        if output.is_absolute()
-            || output
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(Error::Message(format!(
-                "a recipe's output must be a relative path inside the client, and {} is not",
-                self.output
-            )));
-        }
+        // gets exactly the treatment every other path we are handed gets.
+        //
+        // `crate::manifest::safe_relative` rather than `Path::is_absolute`,
+        // which is the trap: `/etc/patch.MPQ` is *not* absolute to Windows —
+        // there is no drive letter to anchor it — and `join` on Windows then
+        // treats it as rooted and drops the client directory entirely. The
+        // Windows leg of CI caught exactly this.
+        crate::manifest::safe_relative(&self.output)?;
         if !self.output.to_ascii_lowercase().ends_with(".mpq") {
             return Err(Error::Message(format!(
                 "a recipe builds an MPQ archive, and {} is not one",
@@ -146,8 +142,11 @@ impl Recipe {
     }
 
     /// Where the built archive goes.
+    ///
+    /// Safe to join: `validate` has already refused anything that is not a
+    /// plain relative path, on every platform rather than on this one.
     pub fn output_path(&self, client_root: &Path) -> PathBuf {
-        client_root.join(self.output.replace('\\', "/"))
+        client_root.join(&self.output)
     }
 }
 
@@ -454,9 +453,18 @@ mod tests {
         assert!(error.contains("url"), "unhelpful: {error}");
     }
 
+    /// Every one of these is harmless-looking on at least one platform and an
+    /// escape on the other, which is why the check cannot be `is_absolute`.
     #[test]
     fn an_output_that_escapes_the_client_is_refused() {
-        for bad in ["../../etc/patch.MPQ", "/etc/patch.MPQ"] {
+        for bad in [
+            "../../etc/patch.MPQ",
+            "/etc/patch.MPQ",
+            "//server/share/patch.MPQ",
+            "C:/Windows/patch.MPQ",
+            "..\\..\\windows\\patch.MPQ",
+            "Data/../../patch.MPQ",
+        ] {
             let mut value: serde_json::Value = serde_json::from_str(&recipe_json()).unwrap();
             value["output"] = serde_json::json!(bad);
             assert!(
