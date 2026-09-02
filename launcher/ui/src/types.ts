@@ -66,6 +66,8 @@ export interface Runtime {
 export interface Settings {
   client_path: string | null;
   realm_address: string | null;
+  /** The website the manifest is fetched from. Empty = the shipped default. */
+  realm_site: string | null;
   runtime_name: string | null;
   prefix: string | null;
   renderer: "direct3d" | "opengl";

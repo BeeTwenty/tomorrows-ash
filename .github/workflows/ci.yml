@@ -277,6 +277,23 @@ jobs:
         run: npm run build
         working-directory: launcher/ui
 
+      # The launcher shipped a startup that abandoned every local load when the
+      # realm was unreachable, leaving the interface on a loading line with
+      # blank tabs behind it. Nothing in the Rust or the typecheck could catch
+      # it: the bug was in how the interface handled a rejected promise. This
+      # drives the real built bundle in a real browser with the Tauri bridge
+      # stubbed, once with the realm reachable and once without.
+      - name: The interface survives an unreachable realm
+        working-directory: launcher/ui
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          # --no-save: playwright is a harness dependency, not a launcher one,
+          # and must not reach the lockfile the release build installs from.
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+          npm run test:startup
+
       - name: Fonts are vendored, not fetched
         run: |
           # The launcher's CSP admits no outside origins, so a stylesheet that

@@ -158,6 +158,11 @@ button {
   color: var(--realm);
 }
 
+/* Not a colour: an absence of one. The ember means "alive" and nothing else. */
+.strip .unreachable {
+  color: var(--faint);
+}
+
 .strip .spacer {
   flex: 1;
 }

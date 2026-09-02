@@ -190,6 +190,7 @@ const demo = {
     return {
       client_path: "/home/player/games/wow-335a",
       realm_address: null,
+      realm_site: null,
       runtime_name: "Wine (system)",
       prefix: "/home/player/.local/share/ashmorrow/prefix",
       renderer: "direct3d",

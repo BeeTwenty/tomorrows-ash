@@ -18,7 +18,10 @@ interface State {
   settings: Settings | null;
   progress: Progress | null;
   busy: string | null;
+  /** Something the player asked for failed. */
   error: string | null;
+  /** The realm could not be reached. Not fatal — most of the launcher is local. */
+  realmError: string | null;
 }
 
 const state: State = {
@@ -30,6 +33,7 @@ const state: State = {
   progress: null,
   busy: null,
   error: null,
+  realmError: null,
 };
 
 const root = document.getElementById("app")!;
@@ -73,8 +77,22 @@ function strip(): HTMLElement {
   bar.append(el("span", { class: "mark" }, "ASHMORROW"));
 
   if (s) {
-    // Ember, and only here: the realm is alive. Same meaning as on the site.
-    bar.append(el("span", { class: "live", title: `${s.realm} · ${s.realm_address}` }, "● live"));
+    // Ember, and only here: the realm is alive. Same meaning as on the site —
+    // which is exactly why it must not show when we could not reach the realm.
+    // It was unconditional, and cheerfully said "live" over a DNS failure.
+    const reached = !state.realmError;
+    bar.append(
+      el(
+        "span",
+        {
+          class: reached ? "live" : "unreachable",
+          title: reached
+            ? `${s.realm} · ${s.realm_address}`
+            : "the realm's configuration could not be fetched",
+        },
+        reached ? "● live" : "○ unreachable",
+      ),
+    );
     bar.append(el("span", {}, s.client_version));
     bar.append(el("span", {}, `patch ${s.patch_level}`));
     bar.append(el("span", {}, s.runtime));
@@ -107,8 +125,20 @@ function strip(): HTMLElement {
 function statusView(): HTMLElement {
   const main = el("main");
   const s = state.status;
+
+  // Deliberately not an early return. The version of this that returned here
+  // when `status` was null put the loading line on screen for ever and hid the
+  // error that explained why — the launcher's whole posture is diagnosis, and
+  // it was doing the opposite.
   if (!s) {
-    main.append(el("p", { class: "hint" }, "Reading the realm's configuration…"));
+    main.append(
+      el(
+        "p",
+        { class: "hint" },
+        state.busy ? "Starting…" : "The launcher could not read its own state.",
+      ),
+    );
+    main.append(problems());
     return main;
   }
 
@@ -138,11 +168,13 @@ function statusView(): HTMLElement {
   }
   main.append(rows);
 
-  if (state.error) {
-    main.append(note("block", "▲", [el("b", {}, "That did not work. "), state.error]));
-  } else if (s.blocked_because) {
+  main.append(problems());
+
+  if (!state.error && !state.realmError && s.blocked_because) {
     main.append(note("block", "▲", [s.blocked_because]));
-  } else if (state.report && !state.report.complete) {
+  }
+
+  if (state.report && !state.report.complete) {
     const r = state.report;
     const details = el("button", { class: "link" }, "Details ▸");
     details.onclick = () => {
@@ -159,6 +191,47 @@ function statusView(): HTMLElement {
   }
 
   return main;
+}
+
+/**
+ * Everything currently wrong, rendered wherever the player is looking.
+ *
+ * The realm being unreachable is a *warning*: the manifest supplies the realm
+ * address and the file hashes, and everything else — choosing a client,
+ * checking its build, settings, Wine, launching — is local and still works.
+ */
+function problems(): DocumentFragment {
+  const out = document.createDocumentFragment();
+
+  if (state.error) {
+    out.append(note("block", "▲", [el("b", {}, "That did not work. "), state.error]));
+  }
+
+  if (state.realmError) {
+    const retry = el("button", { class: "link" }, "Try again");
+    retry.onclick = () => void refreshRealm();
+
+    const settings = el("button", { class: "link" }, "Settings");
+    settings.onclick = () => {
+      state.view = "settings";
+      render();
+    };
+
+    out.append(
+      note("warn", "▲", [
+        el("b", {}, "The realm could not be reached. "),
+        "You can still choose a client, check it and start the game — only the " +
+          "realm's own configuration is missing. Set its address, or the site to " +
+          "fetch it from, in ",
+        settings,
+        ". ",
+        retry,
+        el("div", { class: "detail" }, state.realmError),
+      ]),
+    );
+  }
+
+  return out;
 }
 
 function note(kind: "warn" | "block", flag: string, children: (Node | string)[]): HTMLElement {
@@ -231,7 +304,19 @@ function ledgerView(): HTMLElement {
 function settingsView(): HTMLElement {
   const main = el("main");
   const settings = state.settings;
-  if (!settings) return main;
+
+  // A blank tab tells the player nothing and looks like a crash. This one
+  // returned an empty <main> whenever settings had not loaded, which is
+  // exactly what a failed startup produced.
+  if (!settings) {
+    main.append(problems());
+    main.append(
+      el("p", { class: "hint" }, "Settings could not be loaded, so there is nothing to show yet."),
+    );
+    return main;
+  }
+
+  main.append(problems());
 
   const save = async (change: Partial<Settings>) => {
     Object.assign(settings, change);
@@ -298,6 +383,21 @@ function settingsView(): HTMLElement {
   main.append(field("Windowed", windowed));
 
   main.append(el("h2", {}, "Realm"));
+
+  const site = textInput(settings.realm_site ?? "", { placeholder: "https://your-realm.example" });
+  site.onchange = () => {
+    void save({ realm_site: site.value || null }).then(() => refreshRealm());
+  };
+  main.append(field("Website", site));
+  main.append(
+    el(
+      "p",
+      { class: "hint" },
+      "Where the launcher fetches the realm's configuration and file hashes. " +
+        "Leave empty to use the address this build shipped with.",
+    ),
+  );
+
   const address = textInput(settings.realm_address ?? "", { placeholder: "from the realm" });
   address.onchange = () => void save({ realm_address: address.value || null });
   main.append(field("Address", address));
@@ -375,7 +475,10 @@ function launchBar(): HTMLElement {
   }
   if (!s) {
     bar.disabled = true;
-    bar.textContent = "STARTING";
+    // "STARTING" for ever was the second half of the hang: with no status there
+    // was no button, so no way to do anything about it either.
+    bar.textContent = "UNAVAILABLE";
+    bar.append(el("span", { class: "why" }, "the launcher could not read its own state"));
     return bar;
   }
 
@@ -436,6 +539,33 @@ async function act(): Promise<void> {
   }
 }
 
+/**
+ * Fetch the realm's configuration. Failing is normal and non-fatal.
+ *
+ * The realm may not be deployed, the player may be offline, the site may be
+ * down. None of that should stop someone verifying a client or starting the
+ * game, so this records the failure and returns rather than throwing.
+ */
+async function refreshRealm(): Promise<void> {
+  state.busy = "reading the realm";
+  state.realmError = null;
+  render();
+  try {
+    state.status = await api.refresh();
+  } catch (error) {
+    state.realmError = error instanceof Error ? error.message : String(error);
+    // Fall back to the local view of the world, which needs no network.
+    try {
+      state.status = await api.status();
+    } catch {
+      // Leave status as it was; `problems()` explains either way.
+    }
+  } finally {
+    state.busy = null;
+    render();
+  }
+}
+
 async function run(label: string, work: () => Promise<void>): Promise<void> {
   state.busy = label;
   state.error = null;
@@ -476,12 +606,40 @@ async function start(): Promise<void> {
     render();
   });
 
-  await run("starting", async () => {
-    state.status = await api.refresh();
-    state.report = await api.ledger();
-    state.runtimes = await api.runtimes();
-    state.settings = await api.settings();
-  });
+  // Everything here is local — settings on disk, Wine on the PATH, the cached
+  // ledger, the launcher's own view of the client. None of it needs the realm,
+  // and each is loaded independently so that one failure cannot blank the rest.
+  // The version that fetched the manifest first, in one all-or-nothing block,
+  // left every tab empty whenever the realm was unreachable.
+  const failures: string[] = [];
+  const local = async (what: string, load: () => Promise<void>) => {
+    try {
+      await load();
+    } catch (error) {
+      failures.push(`${what}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  await Promise.all([
+    local("settings", async () => {
+      state.settings = await api.settings();
+    }),
+    local("runtimes", async () => {
+      state.runtimes = await api.runtimes();
+    }),
+    local("ledger", async () => {
+      state.report = await api.ledger();
+    }),
+    local("status", async () => {
+      state.status = await api.status();
+    }),
+  ]);
+
+  if (failures.length > 0) state.error = failures.join("; ");
+  render();
+
+  // Only now the network.
+  await refreshRealm();
 }
 
 void start();
