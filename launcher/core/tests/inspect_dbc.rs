@@ -250,10 +250,12 @@ fn the_stock_matrix_leaves_night_elf_with_nothing() {
     assert_eq!(available(11), 3, "Draenei is the only race with all three");
 }
 
-/// And the swap this project is being asked to decide on: Hunter in place of
-/// Shaman fixes the empty screen and cuts the bill.
+/// The swap that was made, and the two it was made over. Kept as a test rather
+/// than a table in prose because it is the whole justification for Skirmisher
+/// being class 3, and a future edit to the chassis set should have to argue
+/// with arithmetic. ADR 0008 §10.
 #[test]
-fn swapping_shaman_for_hunter_gives_every_race_something() {
+fn hunter_is_the_only_chassis_triple_that_strands_no_race() {
     let table = Dbc::parse(&char_base_info()).unwrap();
     let rows = launcher_core::dbc::race_classes(&table).unwrap();
     let races: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
@@ -274,11 +276,39 @@ fn swapping_shaman_for_hunter_gives_every_race_something() {
         )
     };
 
-    // Paladin(2) / Shaman(7) / Mage(8) — what BODY-TYPES.md approved.
-    assert_eq!(count(&[2, 7, 8]), (14, 1));
-    // Paladin(2) / Hunter(3) / Mage(8) — the proposed swap.
+    // (pairs available out of thirty, races left with nothing)
+    //
+    // One plate chassis that also casts means Paladin — Warrior has rage and
+    // Death Knight has runes — so the whole design space is
+    // Paladin x {Shaman, Hunter} x {Mage, Priest, Warlock}. All six:
+    assert_eq!(
+        count(&[2, 7, 8]),
+        (14, 1),
+        "Shaman/Mage: Night Elf gets nothing"
+    );
+    assert_eq!(
+        count(&[2, 7, 5]),
+        (15, 1),
+        "Shaman/Priest: Gnome gets nothing"
+    );
+    assert_eq!(
+        count(&[2, 7, 9]),
+        (13, 1),
+        "Shaman/Warlock: Night Elf gets nothing"
+    );
+    assert_eq!(
+        count(&[2, 3, 5]),
+        (18, 1),
+        "Hunter/Priest: best count, strands Gnome"
+    );
+    assert_eq!(
+        count(&[2, 3, 9]),
+        (16, 0),
+        "Hunter/Warlock: no gaps, fewer pairs"
+    );
+
+    // Approved: Paladin / Hunter / Mage. Not the highest count — it leaves no
+    // race without a body type, which is the property that matters, and of the
+    // two that manage that it is the better.
     assert_eq!(count(&[2, 3, 8]), (17, 0));
-    // Paladin(2) / Hunter(3) / Priest(5) — better on count, worse on coverage:
-    // it strands Gnome, which has no Priest in Wrath.
-    assert_eq!(count(&[2, 3, 5]), (18, 1));
 }

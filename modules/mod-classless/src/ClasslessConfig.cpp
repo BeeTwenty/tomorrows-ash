@@ -48,13 +48,15 @@ namespace TomorrowsAsh
         PointsPerLevel           = sConfigMgr->GetOption<uint32>("Classless.Points.PerLevel", 1);
         PointsBonus              = sConfigMgr->GetOption<uint32>("Classless.Points.Bonus", 0);
         RespecCost               = sConfigMgr->GetOption<uint32>("Classless.Respec.Cost", 0);
+        ChassisHunterPets        = sConfigMgr->GetOption<bool>("Classless.Chassis.HunterPets", false);
 
         if (Enable)
         {
             LOG_INFO("module.classless",
                      "[Classless] Enabled. Budget: {} point(s)/level from level {}, +{} bonus. "
-                     "SuppressBlizzardTalents={}",
-                     PointsPerLevel, PointsFirstLevel, PointsBonus, SuppressBlizzardTalents);
+                     "SuppressBlizzardTalents={}, ChassisHunterPets={}",
+                     PointsPerLevel, PointsFirstLevel, PointsBonus, SuppressBlizzardTalents,
+                     ChassisHunterPets);
         }
         else
         {

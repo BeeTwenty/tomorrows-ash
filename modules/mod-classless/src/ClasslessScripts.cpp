@@ -99,6 +99,7 @@ public:
 // Defined in their own translation units
 void AddClasslessBrokerScripts();
 void AddClasslessCommandScripts();
+void AddClasslessChassisScripts();
 
 void Addmod_classlessScripts()
 {
@@ -106,4 +107,5 @@ void Addmod_classlessScripts()
     new ClasslessPlayerScript();
     AddClasslessBrokerScripts();
     AddClasslessCommandScripts();
+    AddClasslessChassisScripts();
 }
