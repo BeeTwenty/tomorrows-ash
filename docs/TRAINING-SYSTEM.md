@@ -1,7 +1,13 @@
 # Training system — mastery points
 
-**Status:** proposal, awaiting sign-off. No migrations written, no code beyond
-the body-type indicator (§7), which is separate and already shipped.
+**Status:** signed off. Schema and the trainer strip are **applied**; the C++
+that earns and spends mastery is **not written yet** (§7).
+
+One thing changed under validation and is flagged where it happened: the
+per-quest grant is now **capped per character level**, because the measured
+quest pool would have blown through the ceiling. The approved targets — ~400
+for a focused build, ~800 for a completionist, 1,250 out of reach — are
+unchanged; the mechanism that delivers them is fixed.
 
 **Decided by the product owner:** ranks are bought with a **second currency**,
 earned by playing rather than by levelling or by paying gold. Skill points buy
@@ -118,20 +124,32 @@ and **1,250 out of reach** (nobody maxes everything).
 ### The sources
 
 **1. Quests — the spine. `+1` per non-repeatable quest whose level is within 5
-of the character's.**
+of the character's, capped at `+5` per character level.**
 
-Measured: 8,064 quests exist at levels 1–80. A single character sees a
-fraction of that — one faction, a subset of zones — which on a normal 1–80 run
-is roughly 400–700 quests. That lands the questing floor almost exactly on the
-400 target.
+The cap is the correction validation forced, and it is worth being precise
+about why the first version was wrong.
 
-Everyone quests, so this is the guarantee. The level window is what stops a
-level 80 farming Elwynn Forest: grey quests pay nothing.
+Measured: **5,786 non-repeatable, non-daily quests at levels 1–80 are reachable
+by a single Alliance character** (5,589 for Horde) — not the 400–700 I
+estimated, which was what a *typical run completes*, a different quantity
+entirely. An uncapped `+1` per quest would let a completionist earn several
+thousand mastery against the 1,250 that maxes every ability a level-80 can own.
+The supply would have overshot the ceiling by more than double: precisely the
+outcome the whole design exists to prevent.
+
+**So questing is capped per character level.** The quests are the means, the
+level is the pacing. `+5` per level reaches ~400 by level 80 — a focused,
+eight-ability build, exactly the approved floor — and questing past the cap
+earns nothing, which also removes any reason to farm low-level zones.
+
+This still satisfies "not derived from level alone": levelling grants nothing
+by itself. You must do the content; the level only bounds how much of it counts.
 
 **Repeatables and dailies are excluded** (466 daily quests exist). Include them
-and dailies become an infinite mastery farm, which destroys the ceiling.
+and dailies become an infinite farm, which destroys the ceiling by a different
+route.
 
-**2. First-time dungeon boss kills — `+2` each.**
+**2. First-time dungeon boss kills — `+2` each, outside the cap.**
 
 612 instance encounters are loaded on this realm. A player who runs the
 dungeons of their level range as they go earns a few hundred over 1–80. It is
@@ -160,18 +178,30 @@ it cannot be farmed.
 - **Achievements** — a rich source and a big surface. Worth a later look, not
   worth the balance risk in v1.
 
-### The honest weak point
+### What validation found, and what is still unmeasured
 
-**"400–700 quests on a 1–80 run" is an estimate, not a measurement.** It is the
-single biggest assumption in the supply design, and everything else is tuned
-against it. It is also cheaply falsifiable once anyone levels on the realm:
+The estimate was checked and it was wrong in the way that mattered — see above.
+The fix (a per-level cap) makes the supply **independent of how many quests
+exist**, which is the property the design needed all along: it can no longer be
+broken by content volume.
+
+Still unmeasured: **how many level-appropriate quests a character actually
+completes per level**. If it is reliably above 5, everyone caps out and the
+floor is guaranteed. If some levels come up short — a level gained mostly from
+dungeons, say — those players fall behind the floor. Nobody has levelled on the
+realm yet, so this is open:
 
 ```sql
+-- once somebody has levelled
 SELECT COUNT(*) FROM character_queststatus_rewarded WHERE guid = <yours>;
+SELECT source, at_level, SUM(amount) FROM classless_mastery_log
+ WHERE guid = <yours> GROUP BY source, at_level ORDER BY at_level;
 ```
 
-Tune the per-quest grant from the real number rather than from my estimate. The
-per-source amounts are rows in a table for exactly this reason.
+The second query is why `classless_mastery_log` records `at_level`: the cap
+should be tuned from where it actually binds, not from a guess. If levels do
+come up short, the answer is to raise the cap or let unused cap carry forward
+— both are single-row changes.
 
 ---
 
@@ -258,30 +288,60 @@ first.
 
 ---
 
-## 6. Open decisions
+## 6. Decisions, now made
 
-**a. The native-class asymmetry — the one that could distort everything.**
-A Vanguard *is* a Paladin, and Paladin class trainers will happily sell them
-every Paladin spell rank for gold, because `Trainer::IsTrainerValidForPlayer`
-compares `getClass()`. So a character's native discipline ranks up cheaply with
-gold while everything else costs scarce mastery. That is a standing incentive to
-play your own chassis and ignore the classless system. Options: accept it as
-"your chassis has a home discipline"; suppress class trainers so everything
-routes through mastery; or strip those ranks from `trainer_spell`. **This
-predates mastery but mastery sharpens it, and it deserves a decision before any
-of this is built.**
+**a. The native-class asymmetry — decided: strip the ranks.** A Vanguard *is* a
+Paladin, and `Trainer::IsTrainerValidForPlayer` compares `getClass()`
+(`Trainer.cpp:209`), so Paladin trainers would sell a Vanguard every Paladin
+rank for gold while every other discipline cost scarce mastery.
 
-**b. Does the weekly make the ceiling temporary?** `+5`/week is 260 a year. Over
-a long-lived realm, a veteran eventually affords everything. That may be a fine
-reward for loyalty, or it may be the thing that erases the choice. It is a knob,
-but the intent should be decided now.
+`2026_09_01_03_mastery_trainer_strip.sql` removes exactly the overlapping
+rows — **419 of 6,417**, 402 distinct spells, across 14 trainers: every rank of
+every chain a classless node heads. Trainers stay as NPCs and keep selling
+everything else. The rule is now identical for all three body types: rank 1
+from the tree, ranks 2+ from mastery, no way to buy around it.
 
-**c. Are the per-source amounts right?** They are tuned against an estimated
-quest count (§3). Validate before launch, not after.
+Verified on a copy before applying: 419 removed, **0 tree-ability ranks still
+sold**, 5,998 rows surviving, idempotent on a second run, and rollback restores
+the table exactly. And the check that mattered most — **Plate Mail (spell 750)
+is still sold by its 4 trainers**. It is a proficiency spell, not a tree
+ability, so the armor ladder that locks plate to the Vanguard
+(`BODY-TYPES.md §3`) is untouched. Had the strip caught proficiency spells it
+would have quietly dismantled the body-type design.
+
+**b. The weekly ceiling — approved as designed.** `+5`/week is 260 a year, so a
+veteran eventually affords everything. Accepted as a reward for time played.
+
+**c. Per-source amounts — validated, and one changed.** See §3: the quest grant
+is capped per level because the pool is far larger than the estimate assumed.
 
 ---
 
-## 7. Body type shown in game — shipped
+## 7. What is built, and what is not
+
+**Applied:**
+
+| | |
+|---|---|
+| `2026_09_01_02_mastery_schema.sql` | the five tables, the cost curve, the sources |
+| `2026_09_01_03_mastery_trainer_strip.sql` | 419 trainer rows removed |
+| `2026_09_01_01_classless_body_type.sql` | body types as rows (§8) |
+
+**Not written yet — this is the whole runtime half:**
+
+- earning: hooks for quest completion (with the per-level cap), first boss
+  kills, exploration, and the weekly
+- spending: broker pages per owned ability, showing cost, pool and level gate
+- enforcement: ranks bought in order, never below the stock level gate
+- respec: refunding mastery for removed nodes, leaving `granted = 0` alone
+- `.classless mastery` for inspection
+
+None of it is verifiable without a client anyway. The schema is applied so the
+migrations are settled and the shape is fixed; the code is the next phase.
+
+---
+
+## 8. Body type shown in game — shipped
 
 Separate from the above, and already built. The client shows the underlying
 class name (Paladin/Shaman/Mage) and nothing server-side can change that

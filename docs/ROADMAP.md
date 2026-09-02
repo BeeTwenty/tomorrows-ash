@@ -148,16 +148,14 @@ Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
       file), and `ValidateSkillLearnedBySpells = 1` was deleting every
       broker-taught ability at the player's next login. Both are managed
       settings now, and worldserver audits them at every start.
-- [ ] **Rank progression — mastery points, proposed and awaiting sign-off.**
-      A second currency, earned by playing rather than by levelling or paying
-      gold. Ranks priced by their stock level gate (`1 + ⌊level/10⌋`), not by
-      rank ordinal — measured, the ordinal curve charges 40× more for Fireball
-      than for the cheapest ability purely because its chain is long. Supply
-      targets ~400 mastery from questing alone (a focused 8-ability build) and
-      ~800 for a completionist, against 1,250 to max all 25 nodes a level-80
-      character can own. Schema is additive; the website contract is untouched.
-      Three decisions open, one of them structural (the native-class
-      asymmetry).
+- [x] **Mastery points signed off; schema and trainer strip applied.** Ranks
+      priced by their stock level gate. The quest grant is capped per character
+      level — validation measured 5,786 reachable quests against 1,250 to max
+      everything, so an uncapped grant would have overshot the ceiling by more
+      than double. 419 trainer rows stripped so ranks cannot be bought with
+      gold; Plate Mail survives, so the armor ladder is untouched.
+- [ ] **The mastery runtime is not written** — earning hooks, broker rank
+      pages, respec integration, `.classless mastery`. Schema is settled.
 - [x] **Body type is now shown in game** — login message and `.classless
       status`, names in `classless_body_type` so they stay renameable.
 - [ ] **Spellbook tabs** — broker spells land under General because the client

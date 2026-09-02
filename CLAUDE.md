@@ -80,6 +80,7 @@ Do not re-derive them from memory; if you doubt one, verify it the same way.
 | `CharacterCreating.Disabled.ClassMask` restricts everyone | **Not GMs.** The check is skipped for accounts holding RBAC permission 15, which stock AzerothCore attaches to `Role: Sec Level Moderator` — and the roles nest, so **every account at gmlevel 1+ bypasses it** while gmlevel 0 is blocked correctly. On a realm run by its owner, the tester is the one account exempt. `db-auth/2026_09_01_00_classless_creation_rbac.sql` removes the link; the module warns at startup if it comes back. |
 | One `worldserver.conf` is the config | **There can be several, and Windows picks by working directory.** `ConfigMgr::GetConfigPath()` returns the *relative* `"configs/"` on Windows (`Config.cpp:709`), and an MSBuild build drops a second copy under `build/bin/<Config>/configs/` on every build. Editing the wrong one is indistinguishable from editing nothing. `ta.py conf` writes them all; `ta.py doctor` lists them; the server logs `[Classless] Config in effect:` with the absolute path it read. |
 | A setting being right in the repo means the realm has it | **No.** `ta.py conf` used to skip an existing config entirely, so a key added later never reached a configured realm — a whole playtest ran with character creation unrestricted. It now rewrites its own keys in place. When a config matters, check the deployed file or the startup log, never the generator. |
+| `PSendSysMessage` takes printf format strings | **No — it is fmt.** It forwards to `Acore::StringFormat` (`Chat.h:140`), so the placeholder is `{}`; a `%s` prints literally and the arguments are dropped, with no compile error. A whole playtest saw `You are playing as: %s (%s armor)`. Also cast `uint8` at the call site or fmt prints it as a character. `tools/tests/test_format_strings.py` guards it. |
 | Off-class spells stay learned | **Not with `ValidateSkillLearnedBySpells = 1`.** `Player::_LoadSpells` (`PlayerStorage.cpp:6610`) deletes any spell whose skill line is invalid for the character's race/class, at every login. That is every ability the broker sells. It must be 0 on this realm; `ta.py conf` now forces it and the module warns at startup. |
 | Cloth chest pieces are `INVTYPE_CHEST` | **They are `INVTYPE_ROBE` (20).** Any query comparing armor classes by slot that filters on 5 alone drops cloth entirely and looks like it worked. |
 
@@ -179,7 +180,7 @@ Coordinate, do not collide:
 | `docs/BODY-TYPES.md` | the three body types, final |
 | `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
 | `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
-| `docs/TRAINING-SYSTEM.md` | mastery points: the rank-progression design, awaiting sign-off |
+| `docs/TRAINING-SYSTEM.md` | mastery points: design signed off, schema applied, runtime not written |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
 | `web/` | the public site (§9) |
