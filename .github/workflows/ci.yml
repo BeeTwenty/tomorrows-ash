@@ -151,11 +151,16 @@ jobs:
           # Nothing under launcher/ should be big. Our own patch content is
           # served, never committed, and a stray archive is how a repository
           # quietly becomes a mirror.
+          #
+          # The `|| true` is load-bearing under `bash -e`: without it the loop
+          # exits non-zero whenever its last file is small, so this step failed
+          # in exactly the case it is meant to pass, and had been doing so on
+          # every run since it was written.
           LARGE=$(git ls-files -s launcher | awk '{print $4}' | while read -r f; do
             [ -f "$f" ] || continue
             size=$(wc -c < "$f")
-            [ "$size" -gt 1048576 ] && echo "$f ($size bytes)"
-          done)
+            if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes)"; fi
+          done || true)
           if [ -n "$LARGE" ]; then
             echo "Files over 1 MB are committed under launcher/:"; echo "$LARGE"; exit 1
           fi

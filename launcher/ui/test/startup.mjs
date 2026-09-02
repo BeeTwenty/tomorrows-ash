@@ -25,6 +25,7 @@
  */
 import { chromium } from "playwright";
 import { createServer } from "node:http";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 
@@ -89,8 +90,12 @@ const server = createServer(async (req, res) => {
 });
 await new Promise((r) => server.listen(4180, r));
 
+// Some environments preinstall Chromium somewhere Playwright would not look;
+// a CI runner installs its own and knows where it put it. Naming a path that
+// does not exist is a hard failure, so only name one that does.
+const preinstalled = process.env.PLAYWRIGHT_CHROMIUM ?? "/opt/pw-browsers/chromium";
 const browser = await chromium.launch({
-  executablePath: "/opt/pw-browsers/chromium",
+  ...(existsSync(preinstalled) ? { executablePath: preinstalled } : {}),
   args: ["--no-sandbox"],
 });
 
