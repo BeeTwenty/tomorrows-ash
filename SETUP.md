@@ -1018,7 +1018,7 @@ reasoned about:
 | Account | Password | Tier |
 |---|---|---|
 | `ASHOWNER` | `ownerpass` | owner — staff levels, promoting item changes |
-| `ASHSTAFF` | (the website fixture's) | administrator — realm and trees |
+| `ASHSTAFF` | **cannot sign in** | administrator — exists only so the armory has a staff account to hide; its salt and verifier are placeholder bytes, not derived from any password |
 | `ASHGM` | `gmpass` | game master — bans, character edits |
 | `ASHSUPPORT` | `supportpass` | support — read only |
 | `ASHCULPRIT` | `culpritpass` | a level-0 player to act on |
@@ -1115,9 +1115,18 @@ SOAP_USER=<a GM account>
 SOAP_PASSWORD=<its password>
 ```
 
-**Never expose 7878.** Bind it to localhost and give the account the lowest GM
-level that covers the commands the panel actually sends — the panel's own tiers
-do not constrain the worldserver.
+**Never expose 7878.** Bind it to localhost.
+
+**The SOAP account must be gmlevel 3 or higher.** `ACSoap.cpp` refuses anything
+below `SEC_ADMINISTRATOR` with a 403, and that floor is hardcoded — there is no
+"least privilege" option here. It authenticates with a game account's username
+and password (SRP6-verified, so a normal account password), which means the
+panel's environment holds a credential for a genuinely powerful account. Use a
+dedicated one, not a person's.
+
+Create one the ordinary way — register it on the website, then promote it to
+administrator on its account page in the panel — rather than reusing a fixture
+account or your own.
 
 ### 12.6 The one thing that is deliberately missing
 
