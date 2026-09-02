@@ -293,12 +293,16 @@ To check a build without tagging, run the workflow manually from the Actions
 tab — it builds and leaves the installers as workflow artifacts without
 publishing anything.
 
-**The Windows job is proven as far as the tests; the bundling step is not yet.**
-Its first run found a genuine cross-platform bug — a test asserting Unix path
-semantics that Windows disagreed with — which is a fair advertisement for having
-it. Whether `cargo tauri build` completes and produces an installer on the
-Windows runner has not been observed yet at the time of writing; the run after
-the fix is the one that answers it.
+**Both jobs now build and bundle.** The Windows runner produces the NSIS
+installer, the `.msi` and the bare `.exe`; the Linux one produces the AppImage,
+the `.deb` and the bare binary, and then runs the smoke test against it. The
+Windows job's very first run found a genuine cross-platform bug — a test
+asserting Unix path semantics that Windows disagreed with — which is a fair
+advertisement for having it.
+
+What is still unobserved is anyone *starting* the Windows `.exe`. There is no
+Windows smoke test, and no Windows machine here; the Linux one is the only leg
+that proves the binary runs.
 
 ---
 

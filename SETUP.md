@@ -880,10 +880,13 @@ it builds and leaves the installers as workflow artifacts, publishing nothing.
 The binaries are unsigned by choice ([ADR 0005](docs/decisions/0005-client-distribution.md) §6),
 which is why the sums are published alongside them.
 
-> **Partly proven.** The workflow's first run caught a real cross-platform test
-> bug on Windows, which is what it is for. Whether the Windows *bundling* step
-> produces an installer has not been observed yet — nothing in this project has
-> a webview to build the shell with locally.
+> **What the workflow proves, and what it does not.** Both platforms build and
+> bundle: Windows produces the installer, the `.msi` and the bare `.exe`, Linux
+> the AppImage, the `.deb` and the bare binary. The Linux leg then *starts* the
+> binary it just built and drives it to a launch
+> (`launcher/test/smoke-linux.sh`), so a build that comes up broken fails there
+> rather than on your machine. There is no Windows equivalent, so whether the
+> `.exe` runs is still something only a person with Windows can tell you.
 
 ### 10.7 Launcher troubleshooting
 
