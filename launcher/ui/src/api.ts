@@ -17,22 +17,48 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 
 export async function pickFolder(): Promise<string | null> {
   if (!inTauri) return "/home/player/games/World of Warcraft 3.3.5a";
+  // `plugin:dialog|open` over the IPC, so it needs `dialog:allow-open` in
+  // src-tauri/capabilities/default.json. Left to reject on purpose: the player
+  // pressed a button and is owed an answer, and `run()` shows it.
   const { open } = await import("@tauri-apps/plugin-dialog");
   const chosen = await open({ directory: true, multiple: false, title: "Where is your 3.3.5a client?" });
   return typeof chosen === "string" ? chosen : null;
 }
 
-export async function onProgress(handler: (p: Progress) => void): Promise<void> {
-  if (!inTauri) return;
-  const { listen } = await import("@tauri-apps/api/event");
-  await listen<Progress>("verify:progress", (event) => handler(event.payload));
+/**
+ * Subscribe to an event from the Rust side, and never fail doing it.
+ *
+ * `listen` is not an ordinary function call: it goes over the IPC as
+ * `plugin:event|listen`, which Tauri 2 refuses unless the capability file
+ * grants it. A build that shipped without
+ * `src-tauri/capabilities/default.json` therefore had this reject — and
+ * because subscribing happened before any state was loaded, the whole
+ * interface came up empty with nothing on screen to say why.
+ *
+ * Progress narration is a nice-to-have. Verifying, provisioning and launching
+ * all work without it, so a failure here is logged and swallowed: it must
+ * never be the thing that stops the launcher starting. `false` says the
+ * subscription is not live, for a caller that wants to know.
+ */
+async function subscribe<T>(event: string, handler: (payload: T) => void): Promise<boolean> {
+  if (!inTauri) return false;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    await listen<T>(event, (message) => handler(message.payload));
+    return true;
+  } catch (error) {
+    console.warn(`no live updates for ${event}:`, error);
+    return false;
+  }
+}
+
+export function onProgress(handler: (p: Progress) => void): Promise<boolean> {
+  return subscribe<Progress>("verify:progress", handler);
 }
 
 /** Provisioning has no percentage worth showing, so it narrates instead. */
-export async function onStep(handler: (step: string) => void): Promise<void> {
-  if (!inTauri) return;
-  const { listen } = await import("@tauri-apps/api/event");
-  await listen<string>("provision:step", (event) => handler(event.payload));
+export function onStep(handler: (step: string) => void): Promise<boolean> {
+  return subscribe<string>("provision:step", handler);
 }
 
 export const api = {

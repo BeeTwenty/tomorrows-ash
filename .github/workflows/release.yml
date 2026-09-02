@@ -108,6 +108,31 @@ jobs:
         working-directory: launcher
         run: npm run build -- --bundles ${{ matrix.bundles }}
 
+      # Actually run it. The launcher has shipped broken twice with every other
+      # check green, both times because nothing anywhere started the binary:
+      # `cargo test` cannot (the shell needs a webview) and the interface
+      # harness stubs the bridge it is meant to be testing. This starts the real
+      # binary under a real webview and a real ACL, drives it to a launch, and
+      # asserts on what it did to the filesystem. Windows has no equivalent yet,
+      # so a Windows-only regression is still on the player to find.
+      - name: The launcher starts, verifies a client and runs the game
+        if: runner.os == 'Linux'
+        env:
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/smoke
+        run: |
+          sudo apt-get install -y xvfb xdotool imagemagick
+          launcher/test/smoke-linux.sh
+
+      # What the window looked like when it gave up, which is the one thing a
+      # log of a GUI failure never tells you.
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'Linux'
+        with:
+          name: smoke-failure-${{ github.sha }}
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Collect the bundles and sum them
         id: collect
         shell: bash

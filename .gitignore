@@ -41,6 +41,8 @@ next-env.d.ts
 # --- Launcher (launcher/) ---
 launcher/core/target/
 launcher/src-tauri/target/
+# tauri-build regenerates the ACL schemas from capabilities/ on every build.
+launcher/src-tauri/gen/
 launcher/ui/dist/
 # Cargo.lock IS committed for the launcher: it ships as a signed binary to
 # players, so the exact dependency set has to be reproducible from the tag.

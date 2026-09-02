@@ -553,7 +553,7 @@ async function refreshRealm(): Promise<void> {
   try {
     state.status = await api.refresh();
   } catch (error) {
-    state.realmError = error instanceof Error ? error.message : String(error);
+    state.realmError = reason(error);
     // Fall back to the local view of the world, which needs no network.
     try {
       state.status = await api.status();
@@ -575,7 +575,7 @@ async function run(label: string, work: () => Promise<void>): Promise<void> {
   } catch (error) {
     // The Rust side's errors are already written for a player to read, so they
     // are shown as they are rather than wrapped in something vaguer.
-    state.error = error instanceof Error ? error.message : String(error);
+    state.error = reason(error);
   } finally {
     state.busy = null;
     render();
@@ -590,33 +590,30 @@ function render(): void {
   );
 }
 
+/** Whatever a thrown value turns out to be, as something a player can read. */
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function start(): Promise<void> {
   render();
-  await onStep((step) => {
-    // The busy label is the narration: one line, replaced, never a log.
-    if (state.busy) {
-      state.busy = step;
-      render();
-    }
-  });
-  await onProgress((progress) => {
-    state.progress = progress;
-    // Only the bar changed; a full re-render at hashing speed would be the one
-    // place this UI could feel slow.
-    render();
-  });
 
-  // Everything here is local — settings on disk, Wine on the PATH, the cached
-  // ledger, the launcher's own view of the client. None of it needs the realm,
-  // and each is loaded independently so that one failure cannot blank the rest.
-  // The version that fetched the manifest first, in one all-or-nothing block,
-  // left every tab empty whenever the realm was unreachable.
+  // Local state first, and before anything that touches the IPC's plugin
+  // surface. Settings on disk, Wine on the PATH, the cached ledger, the
+  // launcher's own view of the client: none of it needs the realm, and each is
+  // loaded independently so that one failure cannot blank the rest.
+  //
+  // Order matters here, not just independence. The build that shipped
+  // subscribed to progress events first, that subscription was denied by an
+  // ACL that did not exist, and the throw took the whole of this block with
+  // it — every tab empty, and no message, because nothing had run yet that
+  // could record one.
   const failures: string[] = [];
   const local = async (what: string, load: () => Promise<void>) => {
     try {
       await load();
     } catch (error) {
-      failures.push(`${what}: ${error instanceof Error ? error.message : String(error)}`);
+      failures.push(`${what}: ${reason(error)}`);
     }
   };
 
@@ -638,8 +635,33 @@ async function start(): Promise<void> {
   if (failures.length > 0) state.error = failures.join("; ");
   render();
 
+  // Then the narration. Neither of these can reject — see `subscribe` in
+  // api.ts — and the launcher is fully usable if both come back false; all
+  // that is lost is the progress bar moving while a long job runs.
+  await onStep((step) => {
+    // The busy label is the narration: one line, replaced, never a log.
+    if (state.busy) {
+      state.busy = step;
+      render();
+    }
+  });
+  await onProgress((progress) => {
+    state.progress = progress;
+    // Only the bar changed; a full re-render at hashing speed would be the one
+    // place this UI could feel slow.
+    render();
+  });
+
   // Only now the network.
   await refreshRealm();
 }
 
-void start();
+// Nothing in `start` is supposed to reject. If something does anyway, the
+// player gets told: an interface that comes up blank and silent is the exact
+// failure this launcher has already shipped once, and a caught error on screen
+// is worth more than a clean-looking empty window.
+void start().catch((error) => {
+  state.busy = null;
+  state.error = `the launcher could not start: ${reason(error)}`;
+  render();
+});

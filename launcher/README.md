@@ -48,7 +48,10 @@ core/         the whole of the launcher's behaviour, as a plain Rust library
               game directory is testable in CI without a webview or a game
 core/src/bin/ ashmorrow-manifest: generate and check the hash manifest
 src-tauri/    the window. Thin: every command is marshalling over core
+src-tauri/capabilities/
+              what the window is allowed to ask for. Not boilerplate — see below
 ui/           the interface. TypeScript, no framework, 14 kB
+test/         the headless smoke test: starts the real binary and launches a game
 manifests/    the manifest schema, and Ashmorrow's own manifest
 tools/        icon and font generation, both reproducible from source
 ```
@@ -57,6 +60,27 @@ Why the split: `src-tauri` cannot be built without a system webview, so anything
 that lives in it is outside `cargo test`'s reach. Pushing logic into the shell
 means pushing it out of CI. The HTTP transport lives in `core` behind a feature
 flag for exactly that reason.
+
+### `src-tauri/capabilities/` is load-bearing
+
+Tauri 2 refuses every `plugin:` command that no capability grants — *including
+its own core ones*, and including them at runtime, on the player's machine,
+rather than at build time. With no `capabilities/` directory the interface's
+`listen()` is rejected, `plugin:dialog|open` is rejected, and nothing in
+`cargo fmt`, `clippy`, the tests or the typecheck notices.
+
+That is exactly how the launcher shipped broken: subscribing to progress events
+threw before a single line of state had loaded, so every tab came up empty and
+the window had nothing on it to say why. `default.json` grants `core:default`
+and `dialog:allow-open`, and the interface is now written so that a refusal
+costs the progress bar and nothing else.
+
+Two things keep it that way, and both fail on the pre-fix build:
+
+- CI checks that every plugin the interface imports has a matching permission,
+  and that the capability targets a window label that exists.
+- `launcher/test/smoke-linux.sh` starts the real binary and asserts it got to a
+  launch.
 
 ---
 
@@ -210,6 +234,29 @@ cd launcher/ui && npm run typecheck
 
 No webview needed for any of it — that is the point of keeping every behaviour
 in `core/`.
+
+Two more, which cover the part `core/` cannot:
+
+```bash
+cd launcher/ui && npm run build && npm run test:startup   # the interface, in a real browser
+launcher/test/smoke-linux.sh                              # the real binary, driven to a launch
+```
+
+`test:startup` drives the built bundle in Chromium with the Tauri bridge stubbed
+at `window.__TAURI_INTERNALS__`, once against a reachable realm, once against an
+unreachable one, and once with every `plugin:` command refused. Each of those
+three is a failure that reached a player.
+
+`smoke-linux.sh` is the one that would have caught both. It needs `Xvfb`,
+`xdotool`, ImageMagick and a built launcher; it generates a three-file client
+with a genuine build-12340 version resource, stands a realm up on loopback,
+puts a recording shell script on `PATH` where Wine would be, presses the launch
+bar twice, and then asserts that the launcher wrote `realmlist.wtf` and invoked
+the runtime with the right prefix, working directory and arguments. It runs on
+every push, on the Linux leg of the build workflow.
+
+There is no Windows equivalent yet, so a Windows-only regression is still on
+whoever runs the `.exe` to find.
 
 ### Getting a build without building it
 

@@ -11,7 +11,6 @@
 use std::sync::Mutex;
 
 use launcher_core::app::{Account, App, Status};
-use launcher_core::launch::Renderer;
 use launcher_core::net::Network;
 use launcher_core::settings::{cache_path, settings_path};
 use launcher_core::verify::Report;
