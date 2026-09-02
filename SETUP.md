@@ -21,7 +21,7 @@ This guide covers **Windows** and **Linux**. Everything runs through one helper,
 | Boost | 1.78+ prebuilt, msvc-14.3 | `libboost-all-dev` |
 | OpenSSL | Win64 OpenSSL **3.x** | `libssl-dev` |
 | MySQL | MySQL Server 8.x | Docker **or** `mysql-server` |
-| MySQL **client** | comes with MySQL Server | `mysql-client` ← **needed even with Docker** |
+| MySQL **client** | comes with MySQL Server (usually **not** on PATH — the installer finds it) | `mysql-client` ← **needed even with Docker** |
 
 **Also required, separately:** a **World of Warcraft 3.3.5a (build 12340)**
 client. Not distributed here, not downloadable from this repo. You need your own
@@ -34,7 +34,112 @@ copy. Section 5 explains what to do with it.
 
 ---
 
-## 1. Linux — quick path
+## 1. The short way
+
+From a fresh clone, on either platform:
+
+```bash
+# Linux / macOS
+./install.sh
+
+# Windows (PowerShell)
+.\install.ps1
+```
+
+It asks you about the choices that matter, then does dependencies, fetches
+AzerothCore at the pinned commit, builds, creates the databases and renders the
+server configs. It is **idempotent** — re-run it after a failure and it skips
+what already succeeded.
+
+What it asks:
+
+| Question | Options | Why it matters |
+|---|---|---|
+| Where the databases live | Docker container / MySQL already on this machine / MySQL on another machine | The homelab case is usually the third — realm and database on different boxes |
+| Realm address | defaults to your detected LAN IP | This is what clients are redirected to **after** login. `127.0.0.1` here is the usual cause of "login works but the realm shows offline" |
+| Realm name and world port | `Ashmorrow`, `8085` | |
+| Build type | Release / RelWithDebInfo / Debug | Release to play; the others are larger and only for debugging |
+| Build the extractors? | yes | Skipping shortens the build, but you need them unless you already have extracted client data |
+
+### Answering up front instead
+
+**Every question has a matching flag**, so the same script serves a first-time
+setup and an unattended rebuild. A question whose flag is supplied is not asked.
+
+```bash
+# Linux / macOS
+./install.sh --db remote --db-host db.homelab.lan --db-user acore \
+             --realm-address 192.168.1.50 --build-type Release
+
+# Windows
+.\install.ps1 -Database remote -DbHost db.homelab.lan -DbUser acore `
+              -RealmAddress 192.168.1.50 -BuildType Release
+```
+
+| `install.sh` | `install.ps1` | Values | What it does |
+|---|---|---|---|
+| `--db` | `-Database` | `docker` `local` `remote` | Where MySQL lives (not `-Db`: PowerShell reserves that as an alias for `-Debug`) |
+| `--db-host` | `-DbHost` | hostname or IP | Database host (`local`/`remote`) |
+| `--db-port` | `-DbPort` | port | Database port, default `3306` |
+| `--db-user` | `-DbUser` | username | Needs `CREATE DATABASE`; default `root` |
+| `--db-password` | `-DbPassword` | password | **Prefer the prompt** — a flag lands in shell history |
+| `--realm-name` | `-RealmName` | text | Realm name in the client, default `Ashmorrow` |
+| `--realm-address` | `-RealmAddress` | IP or hostname | Where clients go **after** login — see the warning above |
+| `--realm-port` | `-RealmPort` | port | World server port, default `8085` |
+| `--build-type` | `-BuildType` | `Release` `RelWithDebInfo` `Debug` | Compiler build type |
+| `--no-tools` | `-NoTools` | flag | Don't build the client-data extractors |
+| `--skip-build` | `-SkipBuild` | flag | Don't compile at all |
+| `--rebuild` | `-Rebuild` | flag | Rebuild even if `worldserver` already exists |
+| `--jobs N` | `-Jobs N` | number | Parallel build/extract jobs, default all cores |
+| `--generator` | `-Generator` | CMake generator | e.g. `"Visual Studio 17 2022"` |
+| `--client PATH` | `-ClientPath PATH` | path | Your WoW 3.3.5a folder; also extracts client data |
+| `--skip-mmaps` | `-SkipMmaps` | flag | Defer the multi-hour pathfinding step |
+| `--reconfigure` | `-Reconfigure` | flag | Re-ask everything, overwrite `tools/local.json` |
+| `--yes` / `-y` | `-Yes` | flag | Ask nothing; take defaults for anything not flagged |
+| — | `-PythonPath` | path to `python.exe` | Windows only. Skip interpreter detection when it picks the wrong Python |
+
+Your answers are written to **`tools/local.json`**, which every other `ta.py`
+command reads. It holds your database password, is gitignored, and is the only
+copy — back it up. Re-running the installer leaves it alone unless you pass
+`--reconfigure`.
+
+### Worked examples
+
+```bash
+# Homelab: realm on this box, database on the NAS, played from other machines
+./install.sh --db remote --db-host 192.168.1.20 --db-user acore \
+             --realm-address 192.168.1.50
+
+# Just me, on this laptop, nothing else installed
+./install.sh --db docker
+
+# Rebuild on a CI box, no questions, no client data
+./install.sh --yes --db local --db-user root --db-password "$MYSQL_PW" --rebuild
+
+# I already have extracted client data; skip the extractors to shorten the build
+./install.sh --no-tools
+```
+
+If you already have your WoW 3.3.5a client, hand it over and the installer does
+the client-data extraction too:
+
+```bash
+./install.sh --client ~/Games/WoW-3.3.5a
+.\install.ps1 -ClientPath 'C:\Games\WoW-3.3.5a'
+```
+
+Useful flags: `--yes` (never prompt), `--skip-mmaps` (defer the multi-hour
+pathfinding step so you can play sooner), `-j N` (parallel jobs).
+
+> The first build takes 20–60 minutes and about 15 GB. The installer tells you
+> before it starts.
+
+Everything below is the same process done by hand, for when a single step needs
+attention.
+
+---
+
+## 2. Linux — step by step
 
 ```bash
 # 1. dependencies
@@ -65,7 +170,7 @@ python3 tools/ta.py db init      # create the three schemas
 python3 tools/ta.py conf
 ```
 
-Then go to **section 5** (client data) — the server will not start without it.
+Then go to **section 6** (client data) — the server will not start without it.
 
 > **If `db up` fails with "429 Too Many Requests"**, that is Docker Hub
 > rate-limiting anonymous image pulls — nothing is wrong with your setup. Either
@@ -94,7 +199,7 @@ Skip `ta.py db up`; `db init`, `conf` and `db realm` work unchanged.
 
 ---
 
-## 2. Windows — quick path
+## 3. Windows — step by step
 
 Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
 
@@ -104,15 +209,37 @@ Use **PowerShell**. Run `git` commands from PowerShell or Git Bash.
    **Desktop development with C++**.
 2. **CMake** — during install choose *Add CMake to the system PATH*.
 3. **Git for Windows**, **Python 3** (tick *Add python.exe to PATH*).
-4. **Boost** — download the prebuilt `boost_1_8x_0-msvc-14.3-64.exe` from
+4. **Boost — 1.78 or newer.** This is the most common cause of a failed
+   Windows configure, and the version matters: AzerothCore requires **1.78+ on
+   Windows** (`deps/boost/CMakeLists.txt`). An older Boost that happens to be
+   installed will be found and rejected.
+
+   Download the prebuilt `boost_1_8x_0-msvc-14.3-64.exe` from
    [Boost binaries](https://sourceforge.net/projects/boost/files/boost-binaries/)
-   and install to e.g. `C:\local\boost_1_86_0`. Then set a system environment
-   variable:
+   — pick a **1.8x** build, matching **msvc-14.3** (Visual Studio 2022) and
+   **-64**. Install to e.g. `C:\local\boost_1_86_0`, then set a system
+   environment variable:
    ```
-   BOOST_ROOT = C:\local\boost_1_86_0
+   Boost_ROOT = C:\local\boost_1_86_0
    ```
+   `deps/boost/CMakeLists.txt` reads `Boost_ROOT`; CMake itself also accepts
+   `BOOST_ROOT` and `BOOSTROOT`. Windows environment variable names are
+   case-insensitive, so `BOOST_ROOT` works there too — on Linux and macOS the
+   capitalisation matters, so prefer `Boost_ROOT` everywhere.
+
    (Windows Search → "Edit the system environment variables" → Environment
    Variables → New, under *System variables*. **Reopen PowerShell afterwards.**)
+
+   `python tools\ta.py doctor` reports the version it finds and where it came
+   from, so check that before starting a build.
+
+   > **If you already have an older Boost** — say `C:\local\boost_1_66_0` —
+   > installing a newer one is not enough on its own: point `Boost_ROOT` at the
+   > new folder, or the old one may still be found first. And if a configure
+   > already failed against the old Boost, the answer is cached: CMake stores
+   > the include directory it found and re-reads it next time, ignoring the
+   > environment. `ta.py configure` now detects a cache whose paths have
+   > vanished and clears it for you; `--clean` forces it.
 5. **OpenSSL** — Win64 OpenSSL **v3.x** (not Light, not v1.x) from
    [slproweb](https://slproweb.com/products/Win32OpenSSL.html).
 6. **MySQL Server 8.x** — the MySQL Installer. Remember the root password; its
@@ -169,10 +296,12 @@ to your PATH and reopen PowerShell.
 
 ---
 
-## 3. What `ta.py` does
+## 4. What `ta.py` does
 
 | Command | Purpose |
 |---|---|
+| **`install`** | **everything below, in one command** |
+| `extract --client PATH` | pull map/vmap/mmap/DBC data out of your WoW client |
 | `doctor` | check prerequisites and report what's missing |
 | `bootstrap` | clone AzerothCore at the pinned commit into `.acore/`, link our modules |
 | `sync` | re-link/re-copy modules after editing (only needed in copy mode) |
@@ -183,7 +312,7 @@ to your PATH and reopen PowerShell.
 | `db realm` | register the **Ashmorrow** realm row |
 | `conf` | render `dist/etc/*.conf` pointed at your database |
 | `run auth` / `run world` | start a server binary |
-| `web setup` | install, configure and build the website (section 9) |
+| `web setup` | install, configure and build the website (section 10) |
 | `web sql` | create the website's own schema (and its MySQL user, with `--grants`) |
 | `web start` / `web dev` | run the website |
 | `web doctor` | check the website's prerequisites |
@@ -194,7 +323,7 @@ environment variables. Never commit credentials.
 
 ---
 
-## 4. Databases
+## 5. Databases
 
 `ta.py db init` creates three empty schemas:
 
@@ -231,10 +360,22 @@ The website itself uses `web/src/lib/srp6.ts`, which CI checks against the same 
 
 ---
 
-## 5. Client data (required — the server won't start without it)
+## 6. Client data (required — the server won't start without it)
 
 The server needs map, vmap, mmap and DBC data **extracted from your own WoW
 3.3.5a client**. This is the slowest one-time step.
+
+**The easy way** — one command, correct order, output filed where the server
+looks for it:
+
+```bash
+python3 tools/ta.py extract --client /path/to/WoW-3.3.5a
+python3 tools/ta.py extract --client /path/to/WoW-3.3.5a --skip-mmaps   # play sooner
+```
+
+It validates the path before starting (so you don't discover a typo an hour in),
+skips anything already extracted so an interrupted run resumes, and cleans up
+its intermediates. The rest of this section is what it does, by hand.
 
 The extractors were built alongside the server into `dist/bin/`:
 `map_extractor`, `vmap4_extractor`, `vmap4_assembler`, `mmaps_generator`.
@@ -270,7 +411,7 @@ gitignored — client data must never be committed.
 
 ---
 
-## 6. First run
+## 7. First run
 
 Two processes. Two terminals.
 
@@ -282,7 +423,7 @@ python3 tools/ta.py run auth
 python3 tools/ta.py run world
 ```
 
-First `run world` performs the big SQL import described in section 4. Wait for:
+First `run world` performs the big SQL import described in section 5. Wait for:
 
 ```
 World initialized in X minutes Y seconds
@@ -306,7 +447,7 @@ Restart the authserver after `db realm` so it picks up the new realm row.
 
 ---
 
-## 7. Connecting a client
+## 8. Connecting a client
 
 1. Copy your WoW 3.3.5a client somewhere (do not point it at the extraction
    folder you used above if you'd rather keep that pristine — either works).
@@ -341,7 +482,7 @@ homelab box's firewall for LAN play.
 
 ---
 
-## 8. The classless module
+## 9. The classless module
 
 `modules/mod-classless` is built into the server automatically. Its config is
 installed to `dist/etc/mod_classless.conf`.
@@ -388,14 +529,21 @@ data. Some of what Phase 2 needs can only be measured in-game.
 Classless.Enable = 0                      # master switch
 Classless.Announce = 1                    # login notice
 Classless.SuppressBlizzardTalents = 0     # Phase 2 - do not enable yet
+Classless.OpenRelicSlot = 0               # Phase 3 - librams/idols/totems/sigils
 ```
+
+`OpenRelicSlot` is the only gear restriction that is not a database row. Relic
+slots are chosen by a hardcoded class check in the core, so the Phase 3 SQL
+pass cannot reach them; this setting turns on a module hook that answers that
+one check and nothing else. See
+[docs/PHASE3-ITEMIZATION.md §4](docs/PHASE3-ITEMIZATION.md).
 
 **Do not set `SuppressBlizzardTalents = 1` before the replacement system
 exists**, or characters will have no way to spend points at all.
 
 ---
 
-## 9. The website
+## 10. The website
 
 The public site — landing page, account registration, armory, rankings, realm
 status, wiki and patch notes — lives in **`web/`** and is a **separate
@@ -656,7 +804,7 @@ sudo systemctl restart ashmorrow-web
 
 ---
 
-## 10. The launcher
+## 11. The launcher
 
 **`launcher/`** is a desktop application that verifies a player's own 3.3.5a
 client, writes the realmlist, installs Ashmorrow's patches and starts the game —
@@ -664,7 +812,7 @@ natively on Windows, through Wine or Proton on Linux. Like the website, it is a
 **separate service** with its own build and its own release cadence.
 
 It replaces "edit `realmlist.wtf` and run `Wow.exe`" as the *recommended* route.
-It never replaces it as the only one: section 7 stays correct forever, and is
+It never replaces it as the only one: section 8 stays correct forever, and is
 what you fall back to when the launcher is broken, unavailable on your platform,
 or simply not something you want to run.
 
@@ -902,22 +1050,207 @@ which is why the sums are published alongside them.
 
 ---
 
-## 11. Troubleshooting
+## 12. The admin panel
+
+**`web-admin/`** is the operator surface: accounts, characters, ability trees,
+itemization, realm configuration, and a record of everything anyone did. Like
+the website and the launcher it is a **separate service** — and here the
+separation is not just deployment convenience, it is the security boundary. It
+runs as its own MySQL user with privileges the website must never have.
+
+Read [ADR 0008](docs/decisions/0008-admin-panel.md) before changing anything
+about how access is decided; [web-admin/README.md](web-admin/README.md) is the
+code map.
+
+### 12.1 What you need
+
+Node.js 20+, npm, and a realm database. Nothing from the C++ toolchain. It does
+**not** need the worldserver running — but a few actions do, and it says so
+rather than pretending otherwise (see 12.5).
+
+There is no demo mode. Without a database the panel refuses to start.
+
+### 12.2 A development instance
+
+```bash
+python3 tools/ta.py admin dev-db --yes    # database, schema, grants, fixture, .env.local
+python3 tools/ta.py admin build
+python3 tools/ta.py admin start           # http://127.0.0.1:3010
+```
+
+`admin dev-db` layers on top of `web dev-db` rather than repeating it, and adds
+one staff account per tier so the permission model can be exercised rather than
+reasoned about:
+
+| Account | Password | Tier |
+|---|---|---|
+| `ASHOWNER` | `ownerpass` | owner — staff levels, promoting item changes |
+| `ASHSTAFF` | (the website fixture's) | administrator — realm and trees |
+| `ASHGM` | `gmpass` | game master — bans, character edits |
+| `ASHSUPPORT` | `supportpass` | support — read only |
+| `ASHCULPRIT` | `culpritpass` | a level-0 player to act on |
+
+Development passwords, obviously. `admin dev-db` refuses to run without `--yes`
+and prints what it is about to write to first.
+
+Every account is asked to enrol an authenticator on first sign-in. There is no
+way to skip it.
+
+### 12.3 Production
+
+```bash
+mysql -u root -p < web-admin/sql/admin-schema.sql
+$EDITOR web-admin/sql/admin-grants.sql          # replace CHANGE_ME with a password
+mysql -u root -p < web-admin/sql/admin-grants.sql
+
+cd web-admin
+npm ci
+npm run gen-secret                              # prints the two keys
+cp .env.example .env.local && $EDITOR .env.local
+npm run build
+npm start                                       # 127.0.0.1:3010
+```
+
+Or, from the repository root, `python3 tools/ta.py admin setup`.
+
+Windows is the same, with `.\install.ps1`-style paths:
+
+```powershell
+mysql -u root -p < web-admin\sql\admin-schema.sql
+notepad web-admin\sql\admin-grants.sql
+mysql -u root -p < web-admin\sql\admin-grants.sql
+
+cd web-admin
+npm ci
+npm run gen-secret
+copy .env.example .env.local
+notepad .env.local
+npm run build
+npm start
+```
+
+Serve it behind a reverse proxy that terminates TLS, and then tell the panel
+that it is public:
+
+```
+ADMIN_PUBLIC=1
+ADMIN_SITE_URL=https://admin.example.com
+ADMIN_IP_ALLOWLIST=203.0.113.7,198.51.100.0/24
+ADMIN_TRUSTED_PROXY_HOPS=1
+```
+
+With `ADMIN_PUBLIC=1` the panel **refuses to start** unless the allowlist is
+non-empty, a trusted proxy is configured, and the site URL is https. That is
+deliberate. Those three are the controls; starting without them and logging a
+warning is how an open admin panel ends up on the internet for a week.
+
+`ADMIN_TRUSTED_PROXY_HOPS` is the number of proxies **you** operate.
+`X-Forwarded-For` is written by the client, so hops are counted from the right
+and only that many are peeled off. Get it too high and a client can claim any
+address it likes.
+
+### 12.4 The two keys are not interchangeable
+
+| Key | Rotating it |
+|---|---|
+| `ADMIN_SESSION_SECRET` | signs every staff member out. Safe, occasionally useful. |
+| `ADMIN_TOTP_KEY` | makes every enrolled authenticator unreadable. **Back it up.** |
+
+They are separate for exactly that reason. `npm run gen-secret` prints both.
+
+### 12.5 What needs the worldserver, and what does not
+
+Everything that changes a database row works without it: bans, unbans, mutes,
+password resets, staff levels, offline character edits, tree edits, itemization,
+MOTD, maintenance mode.
+
+These need SOAP, and are refused with a reason when it is not configured: kicks,
+revives, teleports, pushing a MOTD to the running server, and reloading the
+trees. Enable it in `worldserver.conf`:
+
+```
+SOAP.Enabled = 1
+SOAP.IP      = "127.0.0.1"
+SOAP.Port    = 7878
+```
+
+then in `web-admin/.env.local`:
+
+```
+SOAP_ENABLED=1
+SOAP_USER=<a GM account>
+SOAP_PASSWORD=<its password>
+```
+
+**Never expose 7878.** Bind it to localhost and give the account the lowest GM
+level that covers the commands the panel actually sends — the panel's own tiers
+do not constrain the worldserver.
+
+### 12.6 The one thing that is deliberately missing
+
+There is no budget editor. `Classless.Points.PerLevel` and friends live in
+`mod_classless.conf` on the worldserver, which the panel cannot read; mirroring
+them into the panel's environment would create a second source of truth that
+silently disagrees with the first. Character pages show points **spent** and say
+plainly that the total available is unknown until the module publishes those
+values to a `classless_config` table. ADR 0008 carries the request.
+
+Two others, for the same reason — the panel would be lying:
+
+- **Population cap.** `PlayerLimit` is a config file value with no database
+  representation. Use maintenance mode, which does take effect immediately.
+- **Anything needing a running server, without one.** See 12.5.
+
+### 12.7 Admin panel troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Refuses to start, "misconfigured and will refuse every request" | it lists what is missing. `ADMIN_PUBLIC=1` requires an allowlist, a trusted proxy and https |
+| Every request bounces to the sign-in page | the allowlist. Check `ADMIN_TRUSTED_PROXY_HOPS` matches how many proxies you actually run — with it at 0 behind a proxy, no address is trusted and everything is refused |
+| Correct password, "those credentials are not valid" | the account has no `account_access` row for this realm, or its `gmlevel` is 0. The message is deliberately vague; the audit log says which |
+| "That code is not right" for a code that is right | clock drift on the authenticator's device, or the code was already used — a code lives once, not for its whole window |
+| Locked out: lost device, no recovery codes left | an owner clears the enrolment. There is no self-service path, by design |
+| Every administrator locked out at once | `ADMIN_TOTP_KEY` changed. Restore it from your backup — the sealed secrets cannot be read without it |
+| Signed out mid-session | your GM level changed, your password changed, the idle window passed, or your network address changed. The sign-in page says which |
+| Kick / revive / teleport unavailable | SOAP is not configured — 12.5 |
+| Tree edits do not take effect in game | the module caches trees at load. Use "Reload trees on the server", which needs SOAP; otherwise they apply at the next restart |
+| A character edit is refused | they are online. The worldserver owns their row and would overwrite the change |
+| `admin doctor` says the audit log is not append-only | `ash_admin` has `UPDATE` on `admin_audit` and must not. Re-run `ta.py admin sql --grants` |
+| The **website** starts logging `Access denied for user 'ash_web'@'localhost'` after setting the panel up | An early version of `admin dev-db` re-ran `web dev-db`, which rotates the website's database password when `web_db_pass` is not recorded in `tools/local.json`. Fixed — it no longer touches the site's user at all. On a machine that already hit it: `python3 tools/ta.py web dev-db --yes`, then restart the website. `ta.py web doctor` now reports this rather than passing. |
+
+---
+
+## 13. Troubleshooting
 
 | Symptom | Cause / fix |
 |---|---|
 | `no C++ compiler` from `doctor` | Linux: `apt install build-essential`. Windows: VS 2022 with the C++ workload |
-| CMake can't find Boost | `BOOST_ROOT` not set, or PowerShell not reopened after setting it |
-| Server starts, database stays empty | no `mysql` client on PATH — see section 0 |
-| `Could not find DBC file` / instant exit | client data missing — section 5 |
+| CMake can't find Boost | `Boost_ROOT` not set, or PowerShell not reopened after setting it |
+| `Could NOT find Boost: Found unsuitable version "1.66.0", but required is at least "1.78"` | an older Boost is installed and being found. Install 1.8x and point `Boost_ROOT` at **that** folder |
+| `Could NOT find Boost: Found unsuitable version "0.0.0" ... (found C:/local/boost_1_66_0, )` | a stale `build/CMakeCache.txt` from an earlier failed configure — it still points at a Boost you removed, so no version can be read out of it. Re-run `ta.py configure` (it clears a cache with dead paths), or force it with `python tools\ta.py configure --clean` |
+| `Policy CMP0167 is not set: The FindBoost module is removed` | harmless warning from CMake 4.x; the build is unaffected |
+| `install.sh` says Python 3.8+ not found | install Python; the script prints the command for your platform |
+| `install.ps1` won't run | execution policy: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` |
+| `install.ps1` : `NativeCommandError` naming Python | interpreter detection tripped over your Python. Point at it directly: `.\install.ps1 -PythonPath 'C:\Path\To\python.exe'` |
+| "not a usable Python 3.8+" for a Python you know is fine | the message now prints what `--version` returned — send that. Detection needs `Python X.Y` in that output |
+| "Python 3.8+ is required and was not found" but it is installed | `python` may be the Microsoft Store stub. Use `-PythonPath`, or reinstall from python.org ticking *Add python.exe to PATH* |
+| Installer stopped partway | just run it again — it skips whatever already succeeded |
+| `extract` rejects your client path | it wants the folder holding `Wow.exe` and `Data/`, not `Data/` itself |
+| Server starts, database stays empty | no `mysql` client found — see section 0 |
+| Installer stops at step 5 saying `mysql` is missing | expected: it's needed to import SQL, not to build. Install MySQL Server and re-run; everything already done is skipped |
+| `mysql` installed on Windows but "not found" | it lives in `C:\Program Files\MySQL\MySQL Server 8.x\bin` and isn't on PATH. The installer now looks there itself — if yours is elsewhere, add that `bin` folder to PATH |
+| `Could not find DBC file` / instant exit | client data missing — section 6 |
 | Client: "unable to connect" | authserver not running, or `realmlist.wtf` wrong |
-| Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 7 step 3 |
+| Client: logs in, realm offline/greyed | `realmlist.address` in the DB is `127.0.0.1` but the client is on another machine — section 8 step 3 |
 | Module edits don't take effect | `ta.py` fell back to copy mode — run `ta.py sync` |
 | Out of disk during build | full build needs ~15 GB. `ta.py configure --tools none` skips the extractors if you already have client data |
-| `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 1) |
+| `db up` fails, "429 Too Many Requests" | Docker Hub rate limit. `docker login`, or use native MySQL (section 2) |
 | `db status` says "container: not created" | expected and harmless when you run MySQL natively |
 
-Website problems have their own table in [section 9.8](#98-website-troubleshooting), and the launcher's are in [section 10.7](#107-launcher-troubleshooting).
+Website problems have their own table in [section 9.8](#98-website-troubleshooting), the launcher's are in
+[section 10.6](#106-launcher-troubleshooting), and the admin panel's are in
+[section 12.7](#127-admin-panel-troubleshooting).
 
 Still stuck? `python3 tools/ta.py doctor` output is the fastest thing to share —
-or `python3 tools/ta.py web doctor` for the website.
+or `python3 tools/ta.py web doctor` for the website, `python3 tools/ta.py admin doctor`
+for the panel.

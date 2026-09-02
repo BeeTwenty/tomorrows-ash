@@ -18,9 +18,21 @@ Built on [AzerothCore](https://github.com/azerothcore/azerothcore-wotlk)
 ```bash
 git clone https://github.com/BeeTwenty/tomorrows-ash.git
 cd tomorrows-ash
-python3 tools/ta.py doctor      # what's missing on this machine?
-python3 tools/ta.py bootstrap   # fetch AzerothCore at the pinned commit
-python3 tools/ta.py configure && python3 tools/ta.py build
+
+./install.sh          # Linux / macOS
+.\install.ps1         # Windows (PowerShell)
+```
+
+A guided setup: it asks where MySQL should live (Docker, this machine, or
+another box), what address players should be redirected to after login, and how
+to build — then does dependencies, AzerothCore at the pinned commit, the build,
+databases and configs. Re-runnable; it skips whatever already succeeded. Every
+question has a flag, so it also works unattended.
+
+Point it at your own WoW 3.3.5a client and it extracts the map data too:
+
+```bash
+./install.sh --client ~/Games/WoW-3.3.5a
 ```
 
 The **website** is a separate service and needs none of the above — it runs on
@@ -60,6 +72,7 @@ this repository. There is no hidden divergence. See
 
 | Document | What it covers |
 |---|---|
+| [CLAUDE.md](CLAUDE.md) | orientation for AI sessions: invariants, traps, verified facts |
 | [SETUP.md](SETUP.md) | build & run, Windows + Linux, client connection |
 | [docs/CLASS-RESTRICTIONS.md](docs/CLASS-RESTRICTIONS.md) | how AzerothCore actually enforces class rules — the research this design rests on |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | repo model, module design, the unsolved balance problem |

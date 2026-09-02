@@ -59,3 +59,6 @@ package-lock.json
 # release workflow runs `npm ci`, which fails outright without a lockfile.
 !launcher/package-lock.json
 !launcher/ui/package-lock.json
+# ...and the admin panel's, because CI installs it with `npm ci`, which refuses
+# to run without one. The public site's is tracked already for the same reason.
+!web-admin/package-lock.json

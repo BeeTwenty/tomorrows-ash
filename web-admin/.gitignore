@@ -1,0 +1,11 @@
+# Never commit environment files - they carry the database password and the
+# session and TOTP keys. CI fails the build if one appears.
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts

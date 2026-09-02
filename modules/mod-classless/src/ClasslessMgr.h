@@ -84,12 +84,26 @@ namespace TomorrowsAsh
         bool   Granted  = true;
     };
 
+    struct ClasslessBodyType
+    {
+        uint8       ClassId = 0;
+        std::string Name;
+        std::string Armor;
+        std::string Description;
+    };
+
     class ClasslessMgr
     {
     public:
         static ClasslessMgr& Instance();
 
         void Load();
+
+        // The body type a class is, or nullptr for a class that is not one of
+        // the three. Never assume the player IS a body type: a GM or a
+        // character made before the restriction existed can be anything.
+        [[nodiscard]] ClasslessBodyType const* GetBodyType(uint8 classId) const;
+        [[nodiscard]] ClasslessBodyType const* GetBodyType(Player const* player) const;
 
         [[nodiscard]] std::vector<ClasslessTree const*> GetTrees() const;
         [[nodiscard]] ClasslessTree const* GetTree(uint32 treeId) const;
@@ -122,6 +136,7 @@ namespace TomorrowsAsh
         [[nodiscard]] static char const* Explain(LearnCheck reason);
 
     private:
+        std::unordered_map<uint8, ClasslessBodyType> _bodyTypes;
         std::unordered_map<uint32, ClasslessTree> _trees;
         std::unordered_map<uint32, ClasslessNode> _nodes;
 

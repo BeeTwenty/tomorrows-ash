@@ -22,6 +22,110 @@ jobs:
       - name: ta.py --help works
         run: python tools/ta.py --help
 
+      - name: install.ps1 parameters do not collide with PowerShell's own
+        shell: pwsh
+        run: |
+          # A parameter named -Db is rejected outright at binding time, because
+          # 'db' is the built-in alias for -Debug that [CmdletBinding()] adds.
+          # The script then fails for everyone before it runs a single line, and
+          # a parse check does NOT catch it - this was shipped once already.
+          $reserved = @{}
+          foreach ($p in [System.Management.Automation.Internal.CommonParameters].GetProperties()) {
+            $reserved[$p.Name] = $p.Name
+            foreach ($a in $p.GetCustomAttributes([System.Management.Automation.AliasAttribute], $false)) {
+              foreach ($n in $a.AliasNames) { $reserved[$n] = $p.Name }
+            }
+          }
+
+          $text = Get-Content install.ps1 -Raw
+          $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$errors)
+          if ($errors) { $errors | ForEach-Object { $_.Message }; exit 1 }
+
+          $names = $ast.ParamBlock.Parameters | ForEach-Object { $_.Name.VariablePath.UserPath }
+          $bad = @()
+          foreach ($n in $names) {
+            $hit = $reserved.Keys | Where-Object { $_ -eq $n }
+            if ($hit) { $bad += "  -$n conflicts with the common parameter -$($reserved[$hit])" }
+          }
+          if ($bad) {
+            Write-Host "install.ps1 declares parameters PowerShell reserves:"
+            $bad | ForEach-Object { Write-Host $_ }
+            Write-Host "Rename them - the script cannot run at all otherwise."
+            exit 1
+          }
+          Write-Host "install.ps1: $($names.Count) parameters, none reserved by PowerShell"
+
+      - name: SETUP.md documents every installer flag
+        run: |
+          python - <<'PY'
+          # Three sessions edit tools/ta.py. A flag added without a docs row is
+          # invisible to anyone who did not write it, and the PowerShell name
+          # cannot be guessed from the bash one - so check both directions.
+          #
+          # This looks for a TABLE ROW, not merely the string somewhere in the
+          # file: a flag used in an example further down would otherwise satisfy
+          # a substring check while having no reference entry at all.
+          import re, sys, pathlib
+
+          src = pathlib.Path("tools/ta.py").read_text()
+          block = src[src.index('sub.add_parser("install"'):src.index("p.set_defaults(func=cmd_install)")]
+          flags = set()
+          for m in re.finditer(r'p\.add_argument\((.*?)\)\n', block, re.S):
+              flags |= {n for n in re.findall(r'"(--[a-zA-Z][\w-]*)"', m.group(1))}
+
+          # Only the SCRIPT's param block, not parameters of functions defined
+          # inside it - those are internal and have no business in user docs.
+          ps = pathlib.Path("install.ps1").read_text()
+          start = ps.index("param(")
+          depth, end = 0, None
+          for i, ch in enumerate(ps[start:], start):
+              if ch == "(":
+                  depth += 1
+              elif ch == ")":
+                  depth -= 1
+                  if depth == 0:
+                      end = i
+                      break
+          params = set(re.findall(r'^\s*\[[\w\[\]]+\]\s*\$(\w+)', ps[start:end], re.M))
+
+          # Only markdown table rows count as documentation.
+          rows = [l for l in pathlib.Path("SETUP.md").read_text().splitlines()
+                  if l.lstrip().startswith("|")]
+          table = "\n".join(rows)
+
+          missing_flags = sorted(f for f in flags if f not in table)
+          missing_params = sorted(f"-{p}" for p in params if f"-{p}" not in table)
+
+          if missing_flags or missing_params:
+              if missing_flags:
+                  print("Installer flags with no table row in SETUP.md:", ", ".join(missing_flags))
+              if missing_params:
+                  print("install.ps1 parameters with no table row:", ", ".join(missing_params))
+              print("Add them to the flag table in SETUP.md section 1.")
+              sys.exit(1)
+          print(f"SETUP.md documents all {len(flags)} flags and {len(params)} PowerShell parameters")
+          PY
+
+      - name: Character creation is limited to the three body types
+        run: python tools/tests/test_body_types.py
+
+      - name: Module format strings use fmt, not printf
+        run: python tools/tests/test_format_strings.py
+
+      - name: CharBaseInfo.dbc reader
+        run: python tools/tests/test_charbaseinfo.py
+
+      - name: Installer choice logic
+        run: |
+          # The installer's answers become the realm's configuration, so a bug
+          # here is a broken install rather than a cosmetic problem. Two caught
+          # this way: a --db flag storing the menu label instead of the key, and
+          # --db-password storing the asterisks shown on screen.
+          rm -f tools/local.json
+          python tools/tests/test_install_choices.py
+          rm -f tools/local.json
+
       - name: upstream.json is valid and complete
         run: |
           python - <<'PY'
@@ -111,7 +215,7 @@ jobs:
           python3 - <<'PY'
           import json, pathlib, sys, re
           bad = []
-          for path in ["web/package.json", "launcher/ui/package.json", "launcher/package.json"]:
+          for path in ["web/package.json", "web-admin/package.json", "launcher/ui/package.json"]:
               got = json.loads(pathlib.Path(path).read_text()).get("license")
               if got != "GPL-2.0-or-later":
                   bad.append(f"{path}: license is {got!r}")
@@ -151,16 +255,16 @@ jobs:
           # Nothing under launcher/ should be big. Our own patch content is
           # served, never committed, and a stray archive is how a repository
           # quietly becomes a mirror.
-          #
-          # The `|| true` is load-bearing under `bash -e`: without it the loop
-          # exits non-zero whenever its last file is small, so this step failed
-          # in exactly the case it is meant to pass, and had been doing so on
-          # every run since it was written.
+          # `if` rather than `[ ... ] && echo`: the && form makes the loop's exit
+          # status 1 whenever the LAST file is under the limit, which under
+          # `bash -e` aborts the step before it can report anything. The guard
+          # then fails on a clean tree and passes nothing - it was failing this
+          # way on every commit that had a launcher/ directory.
           LARGE=$(git ls-files -s launcher | awk '{print $4}' | while read -r f; do
             [ -f "$f" ] || continue
             size=$(wc -c < "$f")
             if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes)"; fi
-          done || true)
+          done)
           if [ -n "$LARGE" ]; then
             echo "Files over 1 MB are committed under launcher/:"; echo "$LARGE"; exit 1
           fi
@@ -237,6 +341,44 @@ jobs:
               print("\n".join(bad)); sys.exit(1)
           print("module SQL layout OK")
           PY
+
+      - name: Staged SQL cannot be applied by accident
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          # sql-staged/ holds generated migrations that are written but must not
+          # run until somebody decides they should. The updater only reads
+          # data/sql/db-*, so the guard is simply that nothing staged has also
+          # been left in the applied tree under the same name - which is what a
+          # half-finished "promote it" looks like.
+          bad = []
+          for name in json.load(open("upstream.json"))["modules"]:
+              staged = pathlib.Path("modules") / name / "data" / "sql-staged"
+              applied = pathlib.Path("modules") / name / "data" / "sql"
+              if not staged.is_dir():
+                  continue
+              if staged.resolve().is_relative_to(applied.resolve()):
+                  bad.append(f"{staged}: inside data/sql, the updater would run it")
+              names = {f.name for f in staged.glob("*.sql")}
+              for f in applied.rglob("*.sql"):
+                  if f.name in names:
+                      bad.append(f"{f}: same filename as a staged migration")
+          if bad:
+              print("\n".join(bad)); sys.exit(1)
+          print("staged SQL is staged")
+          PY
+
+      - name: The item audit tool is runnable
+        run: |
+          python -c "import ast; ast.parse(open('tools/audit_items.py').read())"
+          python tools/audit_items.py --help > /dev/null
+          echo "audit_items.py OK"
+
+      - name: The generators are runnable
+        run: |
+          python -c "import ast; ast.parse(open('tools/gen_body_types.py').read())"
+          python tools/gen_body_types.py --help > /dev/null
+          echo "gen_body_types.py OK"
 
       - name: Documentation links resolve
         run: |
@@ -466,6 +608,132 @@ jobs:
         run: |
           # .env.local holds database credentials and the session secret.
           if git ls-files | grep -E '^web/\.env(\.|$)' | grep -v '\.env\.example'; then
+            echo "An environment file with credentials is tracked in git."
+            exit 1
+          fi
+          echo "clean"
+
+  admin:
+    name: Admin panel
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web-admin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web-admin/package-lock.json
+
+      - name: Install exactly what the lockfile says
+        run: npm ci
+
+      # Build first: it regenerates next-env.d.ts and .next/types, which the
+      # typecheck below needs and which are deliberately not committed.
+      - name: Build
+        run: npm run build
+        env:
+          ADMIN_SITE_URL: https://admin.ashmorrow.example
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # roles.ts, ip.ts, totp.ts and secretbox.ts are pure and carry the
+      # security model, so they are tested exhaustively rather than reasoned
+      # about. totp.test.ts asserts against RFC 6238's own published vectors.
+      - name: Unit tests
+        run: npm test
+
+      - name: The panel starts and serves its sign-in page
+        run: |
+          # No database - port 1 answers nothing. The panel has no demo mode, so
+          # this proves only what it should: the process boots and the pre-auth
+          # path (config check, address resolution, allowlist) renders without
+          # touching MySQL.
+          #
+          # DB_PASSWORD is set even though nothing connects: an empty one is a
+          # startup refusal in production, which is correct behaviour and not
+          # what this step is testing. The step below tests the refusals.
+          ADMIN_SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
+          ADMIN_TOTP_KEY=ci-only-totp-key-that-is-long-enough-to-pass-validation \
+          ADMIN_SITE_URL=http://127.0.0.1:3010 \
+          DB_HOST=127.0.0.1 DB_PORT=1 DB_PASSWORD=ci-only-not-a-real-password \
+          PORT=3010 npm start &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:3010/login > /dev/null && break
+            sleep 1
+          done
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3010/login)
+          echo "/login -> $code"
+          [ "$code" = "200" ] || exit 1
+
+          # Anonymous requests must never reach a panel page.
+          for path in / /accounts /characters /trees /items /realm /audit; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:3010$path")
+            echo "$path -> $code"
+            [ "$code" = "307" ] || [ "$code" = "302" ] || exit 1
+          done
+
+      - name: A public instance with no allowlist refuses to start
+        run: |
+          # This is the control that keeps the panel off the open internet, so
+          # CI asserts it rather than trusting it. Starting with a warning
+          # instead of failing is exactly the bug this guards against.
+          set +e
+          ADMIN_PUBLIC=1 \
+          ADMIN_SITE_URL=https://admin.ashmorrow.example \
+          ADMIN_SESSION_SECRET=ci-only-secret-that-is-long-enough-to-pass-validation \
+          ADMIN_TOTP_KEY=ci-only-totp-key-that-is-long-enough-to-pass-validation \
+          DB_HOST=127.0.0.1 DB_PASSWORD=x \
+          PORT=3012 timeout 40 npm start > boot.log 2>&1
+          status=$?
+          set -e
+          cat boot.log
+          if [ "$status" = "0" ]; then
+            echo "The panel started as public with an empty allowlist. It must refuse."
+            exit 1
+          fi
+          grep -q "ADMIN_IP_ALLOWLIST" boot.log || {
+            echo "It refused, but not for the allowlist - check the message."
+            exit 1
+          }
+          echo "refused, as it should"
+
+      - name: The audit table is append-only in the grants
+        run: |
+          # ash_admin holds INSERT on admin_audit and must never hold UPDATE or
+          # DELETE. That property is what makes the log worth having, and it
+          # lives in one file where a well-meaning edit could undo it.
+          python3 - <<'PY'
+          import re, sys, pathlib
+          sql = pathlib.Path("sql/admin-grants.sql").read_text()
+          grants = [
+              line for line in sql.splitlines()
+              if "admin_audit" in line and line.strip().upper().startswith("GRANT")
+          ]
+          if not grants:
+              sys.exit("No GRANT on admin_audit found at all.")
+          for line in grants:
+              privileges = re.search(r"GRANT\s+(.*?)\s+ON", line, re.I)
+              names = {p.strip().upper() for p in privileges.group(1).split(",")}
+              forbidden = names & {"UPDATE", "DELETE", "ALL", "ALL PRIVILEGES", "DROP", "ALTER"}
+              if forbidden:
+                  sys.exit(f"admin_audit must stay append-only; found {sorted(forbidden)} in: {line}")
+          print("append-only:", "; ".join(g.strip() for g in grants))
+          PY
+
+      - name: Secrets are not committed
+        run: |
+          # .env.local holds the database password, the session secret and the
+          # TOTP key that every enrolled authenticator depends on.
+          if git ls-files | grep -E '^web-admin/\.env(\.|$)' | grep -v '\.env\.example'; then
             echo "An environment file with credentials is tracked in git."
             exit 1
           fi

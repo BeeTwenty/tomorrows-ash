@@ -38,6 +38,22 @@ namespace TomorrowsAsh
     {
         _trees.clear();
         _nodes.clear();
+        _bodyTypes.clear();
+
+        if (QueryResult result = WorldDatabase.Query(
+                "SELECT class_id, name, armor, description FROM classless_body_type"))
+        {
+            do
+            {
+                Field* fields = result->Fetch();
+                ClasslessBodyType body;
+                body.ClassId     = fields[0].Get<uint8>();
+                body.Name        = fields[1].Get<std::string>();
+                body.Armor       = fields[2].Get<std::string>();
+                body.Description = fields[3].Get<std::string>();
+                _bodyTypes[body.ClassId] = std::move(body);
+            } while (result->NextRow());
+        }
 
         if (QueryResult result = WorldDatabase.Query(
                 "SELECT id, name, description, sort_order FROM classless_tree "
@@ -121,6 +137,17 @@ namespace TomorrowsAsh
         LOG_INFO("module.classless", "[Classless] Loaded {} trees, {} abilities{}",
                  _trees.size(), _nodes.size(),
                  orphaned ? Acore::StringFormat(" ({} skipped)", orphaned) : "");
+    }
+
+    ClasslessBodyType const* ClasslessMgr::GetBodyType(uint8 classId) const
+    {
+        auto itr = _bodyTypes.find(classId);
+        return itr == _bodyTypes.end() ? nullptr : &itr->second;
+    }
+
+    ClasslessBodyType const* ClasslessMgr::GetBodyType(Player const* player) const
+    {
+        return player ? GetBodyType(player->getClass()) : nullptr;
     }
 
     std::vector<ClasslessTree const*> ClasslessMgr::GetTrees() const
