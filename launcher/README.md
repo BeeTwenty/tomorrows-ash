@@ -51,8 +51,9 @@ src-tauri/    the window. Thin: every command is marshalling over core
 src-tauri/capabilities/
               what the window is allowed to ask for. Not boilerplate — see below
 ui/           the interface. TypeScript, no framework, 14 kB
-test/         the headless smoke test: starts the real binary and launches a game
+test/         the headless smoke tests: start the real binary, drive it, assert
 manifests/    the manifest schema, and Ashmorrow's own manifest
+recipes/      the body-type client patch, as edits rather than as a file
 tools/        icon and font generation, both reproducible from source
 ```
 
@@ -303,6 +304,35 @@ advertisement for having it.
 What is still unobserved is anyone *starting* the Windows `.exe`. There is no
 Windows smoke test, and no Windows machine here; the Linux one is the only leg
 that proves the binary runs.
+
+---
+
+## The body-type client patch
+
+`ashmorrow-manifest inspect-dbc <client-dir>` reads a client's `ChrClasses` and
+`CharBaseInfo` out of its own archives and prints what is in them: the archives
+in load order, which one each table was actually read from, every class and its
+name, and the race × class matrix the client will offer. Read-only, and nothing
+leaves the machine.
+
+Run it before trusting anything in `launcher/recipes/`. The field the class
+names live in is not recorded anywhere in the file format, so the recipe carries
+it as a number and the tool finds it independently — if the two disagree, the
+recipe is wrong for that client and applying it would corrupt the table rather
+than rename it.
+
+The patch itself is *instructions*, not a table: rename these classes, keep
+these three, add these race rows. The launcher reads the player's own DBCs,
+applies the edits and builds the archive locally, so no Blizzard bytes ever
+reach our infrastructure and one recipe serves every locale. See
+[ADR 0008](../docs/decisions/0008-body-type-client-patch.md) for why, and
+[ADR 0009](../docs/decisions/0009-recipe-versioning.md) for how it is versioned
+and checked.
+
+**Nothing is published yet.** `launcher/patch-manifest.json` lists no recipes, so
+no launcher applies one. That waits on the server accepting the combinations the
+screen would offer — a patch that hides classes the realm still refuses is worse
+than no patch.
 
 ---
 

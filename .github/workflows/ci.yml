@@ -166,6 +166,46 @@ jobs:
           fi
           echo "clean"
 
+      - name: A changed recipe raises its version
+        run: |
+          # ADR 0009 §3. The recipe describes edits to a player's game
+          # directory, and the version is the only thing the launcher compares
+          # when deciding whether to rebuild. A recipe that changes without its
+          # version changing is a change that silently never reaches anyone —
+          # or worse, reaches half of them.
+          if [ ! -d launcher/recipes ]; then echo "no recipes yet"; exit 0; fi
+          git fetch --depth=1 origin main >/dev/null 2>&1 || {
+            echo "::warning::no origin/main to compare against; skipping"; exit 0; }
+
+          fail=0
+          for file in launcher/recipes/*.json; do
+            [ -f "$file" ] || continue
+            before=$(git show "origin/main:$file" 2>/dev/null || true)
+            if [ -z "$before" ]; then
+              echo "  $file is new"
+              continue
+            fi
+            if [ "$before" = "$(cat "$file")" ]; then
+              echo "  $file is unchanged"
+              continue
+            fi
+            new=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$file")
+            old=$(printf '%s' "$before" | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")
+            if [ "$new" -le "$old" ]; then
+              echo "  $file changed but its version is still $new (main has $old)"
+              fail=1
+            else
+              echo "  $file: $old -> $new"
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo
+            echo "Raise the recipe's version in the same commit that changes it."
+            echo "See docs/decisions/0009-recipe-versioning.md §3."
+            exit 1
+          fi
+          echo "clean"
+
       - name: No core modifications have crept in
         run: |
           # ADR 0002: the classless system needs zero AzerothCore C++ patches.

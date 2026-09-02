@@ -35,6 +35,11 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
+    /// Prose for whoever edits the file. Ignored by every reader, and present
+    /// because the case for shipping instructions instead of a binary is that
+    /// a human reviews them.
+    #[serde(rename = "$comment", default, skip_serializing_if = "Option::is_none")]
+    pub comment: Option<serde_json::Value>,
     pub schema: u32,
     /// Stable across versions. Names the ledger entry and the output file.
     pub id: String,

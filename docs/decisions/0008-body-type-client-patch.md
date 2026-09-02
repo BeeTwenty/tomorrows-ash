@@ -1,9 +1,11 @@
 # ADR 0008 — Showing three body types at character creation
 
 **Date:** 2026-09-01
-**Status:** **Proposed — architecture only, no code written.** The brief asked
-for this before implementation because it touches the verification model Phase 2
-built.
+**Status:** Partly accepted, and one question open.
+Recipe-over-shipped-MPQ is **approved** and built (`launcher/core/src/recipe.rs`).
+`inspect-dbc` is **built** and awaits a run against a real client. The race
+matrix is **confirmed** — §10. The chassis question is **open**, and §10 is the
+proposal that was asked for.
 
 > **Nothing here has been checked against a real client.** There is no 3.3.5a
 > client in this sandbox, so every claim about DBC layout, MPQ load order and
@@ -341,3 +343,119 @@ of Wrath.
   a few hundred lines of MPQ writing and keeps rule 2 intact. I recommend it.
 - Nothing else is blocked. `inspect-dbc` is safe to build now and de-risks
   everything after it, so I would like to start there.
+
+---
+
+## 10. Addendum — the matrix is confirmed, and a chassis proposal
+
+*Added after the product owner ran `check_client_combos.py` against a real
+client and asked for a swap candidate before committing to the race-data work.*
+
+### 10.1 §3 was right
+
+Sixteen of the thirty race/body-type pairs are server-accepted and
+client-blocked. Night Elf has none; most other races have one. That is the
+matrix §3 reasoned out, confirmed against a real client rather than recalled,
+and it is now also a test — `launcher/core/tests/inspect_dbc.rs` asserts the
+fourteen-of-thirty count and the Night Elf zero, so a future edit to the
+body-type set that quietly changes the bill fails the build.
+
+### 10.2 Vanguard cannot be swapped, and the reason is short
+
+The design fixes three constraints: one plate chassis, one mail, one cloth
+([BODY-TYPES §3](../BODY-TYPES.md)), and all three must cast, which means all
+three must use mana ([BODY-TYPES §1](../BODY-TYPES.md)).
+
+In 3.3.5a there is exactly **one** class that is plate *and* mana: Paladin.
+Warrior is plate and uses rage; Death Knight is plate and uses runes. So the
+entire design space is:
+
+> Paladin × {Shaman, Hunter} × {Mage, Priest, Warlock}
+
+Six combinations, not sixty. Vanguard was never a choice, which is worth
+knowing before spending time on it: **Paladin's four races are a floor, not a
+decision.**
+
+### 10.3 All six, counted
+
+Pairs available out of thirty, and how many races are left with nothing:
+
+| Vanguard | Skirmisher | Adept | Pairs | Races with none |
+|---|---|---|---|---|
+| Paladin | Shaman | Mage | 14 | **1** — Night Elf |
+| Paladin | Shaman | Priest | 15 | **1** — Gnome |
+| Paladin | Shaman | Warlock | 13 | **1** — Night Elf |
+| **Paladin** | **Hunter** | **Mage** | **17** | **0** |
+| Paladin | Hunter | Priest | 18 | **1** — Gnome |
+| Paladin | Hunter | Warlock | 16 | 0 |
+
+The last three columns are computed from the client's own table in
+`swapping_shaman_for_hunter_gives_every_race_something`, not from this table.
+
+### 10.4 The proposal: Skirmisher moves from Shaman (7) to Hunter (3)
+
+Not Priest. Priest is the swap that was suggested, and it is the wrong one for
+two reasons:
+
+- **Priest is cloth.** Skirmisher is the mail chassis with 334 melee attack
+  power. Priest could only replace *Adept*, and Adept→Priest scores 15 pairs
+  against Mage's 14 — one better, and it moves the empty screen from Night Elf
+  to Gnome rather than fixing it.
+- **Paladin/Hunter/Priest scores highest on raw count (18) and still strands
+  Gnome**, whose only mana classes in Wrath are Mage and Warlock. Trading a
+  broken Night Elf for a broken Gnome is not progress.
+
+Hunter fits Skirmisher's constraints exactly: **mail armour, mana** (Hunters do
+not use focus until Cataclysm), and a melee-and-cast profile that is what
+"trades blows and casts" describes.
+
+What it buys:
+
+- **Every race gets at least one body type.** This is the one that matters. A
+  race with none is not a smaller version of a race with one — it is a character
+  creation screen with nothing on it.
+- **Sixteen missing datasets become thirteen.** About a fifth less of the work
+  in §3, which is the bulk of the project.
+- **Blood Elf and Draenei get all three**, so there is at least one race per
+  faction where the choice is real.
+
+### 10.5 What it costs, stated plainly
+
+**The approved stat table does not change.** BODY-TYPES §2 sets Skirmisher's
+targets absolutely — 6939 HP, 120 Str, 130 Sta and the rest — and the migration
+writes those numbers whatever the underlying class is. What changes is only the
+*annotation*: "bold = changed from stock" is currently a diff against Shaman and
+would become a diff against Hunter. The tuning survives; the footnotes move.
+
+Two real costs, neither fatal, both worth knowing before deciding:
+
+1. **The attack-power formula is keyed on class.** AzerothCore computes melee AP
+   from class-specific coefficients in `Player::UpdateAttackPowerAndDamage`, so
+   Skirmisher's *derived* 334 AP figure would need recomputing against Hunter's
+   coefficients even though its Strength and Agility are unchanged. That is an
+   arithmetic re-check of one number, not a redesign — but it is a number
+   BODY-TYPES publishes, so it should be re-derived rather than assumed to
+   carry over.
+2. **Hunter carries pet machinery.** The class has a pet from level 10 and the
+   client shows a pet bar for it. On a classless realm where everyone gets every
+   spell that may be a feature or an irrelevance, but it is a visible difference
+   from Shaman and should be a decision rather than a surprise. Ranged-weapon
+   assumptions (auto shot) are in the same category.
+
+Neither of these touches the launcher or the recipe. They are `mod-classless`
+and BODY-TYPES questions.
+
+### 10.6 What I recommend
+
+**Swap Skirmisher to Hunter.** It is the only one of the six combinations that
+leaves no race stranded, it cuts the largest remaining piece of work by a fifth,
+and it costs one re-derived number and a decision about pets.
+
+If the pet machinery turns out to be unacceptable, the fallback is to keep
+Shaman and accept sixteen datasets, because **Paladin/Shaman/Warlock is worse
+on both counts** and Priest cannot be a mail chassis. There is no third option
+hiding in the table.
+
+Whichever way this goes, it changes `char_base_info.add` in the recipe and
+nothing else in the launcher: the recipe is data, and this is exactly the kind
+of change it exists to make cheap.
