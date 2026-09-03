@@ -84,14 +84,18 @@ on the melee side of the pool, and the Adept should never be expected to melee.
 |---|---|---|---|
 | Underlying class | Paladin (2) | **Hunter (3)** | Mage (8) |
 | Armor | Plate | Mail | Cloth |
-| Melee AP @80 | 522 | 334 | 45 |
-| Ranged AP @80 | 80 | **224** | 45 |
+| Melee AP @80 | 522 | **395** | 45 |
+| Ranged AP @80 | 80 | **331** | 45 |
 | Feel | Stands in front | Trades blows and casts | Glass, but unrestricted |
 
 Skirmisher moved from Shaman (7) to Hunter (3) — the only chassis triple in
 which every race has a body type at all. See [ADR 0008 §10](decisions/0008-body-type-client-patch.md).
-§2.1 below re-derives what that changed, which is less than it looks and one
-thing more than expected.
+§2.1 re-derives what that changed; §2.3 is what it left undone.
+
+> **The anchor tables below are Shaman's, and no longer describe the
+> Skirmisher.** They were derived when the chassis was Shaman and have not been
+> re-derived for Hunter. `player_class_stats` for class 3 is **stock and
+> un-tuned** — see §2.3. Vanguard and Adept are correct.
 
 ### Level 80 anchor
 
@@ -163,11 +167,19 @@ than from memory. `Player::UpdateAttackPowerAndDamage` picks a formula by class:
 | `level×2 + Str + Agi − 20` | **Hunter, Shaman**, Rogue |
 | `Str − 10` | Mage, Priest, Warlock |
 
-**Melee attack power does not change.** Hunter and Shaman are the same arm of
-the same branch, so the Skirmisher's 334 at 80 and 240 at 60 are the numbers
-either way. `CanUseItem`'s armour test pairs them too — both map to
-`ITEM_SUBCLASS_ARMOR_MAIL` — so mail proficiency is likewise untouched. Two of
-the three costs quoted when the swap was proposed turn out to be zero.
+**Correction (2026-09-02): melee attack power does change.** This section
+previously said it did not, on the grounds that Hunter and Shaman share a
+formula. They do — but the formula takes Strength and Agility, and those are
+properties of the *chassis*, not the branch. Measured against the live table:
+
+| | Str | Agi | `level×2 + Str + Agi − 20` |
+|---|---:|---:|---:|
+| Shaman (7) | 120 | 74 | 334 |
+| **Hunter (3)** | 74 | 181 | **395** |
+
+So melee AP rises about 18%, not zero. The armour claim does hold: both map to
+`ITEM_SUBCLASS_ARMOR_MAIL`, so mail proficiency is genuinely untouched. One of
+the three costs quoted when the swap was proposed is zero, not two.
 
 **Ranged attack power does change, and by a lot.** That formula is separate:
 
@@ -177,10 +189,13 @@ the three costs quoted when the swap was proposed turn out to be zero.
 | `level + Agi − 10` | Rogue, Warrior |
 | `Agi − 10` | everyone else, Shaman included |
 
-At 80 with 74 Agility that is **224 for a Hunter-chassis Skirmisher against 64
-for a Shaman-chassis one** — and against 80 for the Vanguard. The mail chassis
-goes from the *worst* ranged attack power of the three to nearly three times the
-plate chassis's. Nobody chose that; it arrived with the class id.
+**Corrected the same way.** The 224 above was computed with Shaman's 74
+Agility against Hunter's formula. Hunter's own Agility is 181, so the figure is
+**331** — against 64 for a Shaman-chassis Skirmisher and 80 for the Vanguard.
+
+The mail chassis goes from the *worst* ranged attack power of the three to more
+than four times the plate chassis's. Nobody chose that; it arrived with the
+class id, and it is larger than the swap's write-up said.
 
 Whether it should stay is a live question, not a settled one:
 
@@ -202,6 +217,43 @@ numbers this document changes. The right figure is **45**.
 It matters mainly to §5's claim of a "20× AP spread": 522 ÷ 45 is **11.6×**, not
 20×. The design point survives — an Adept still cannot melee — but the gap it
 rests on is about half as wide as stated.
+
+### 2.3 The Skirmisher has no approved stat anchor — open
+
+The stat migration is regenerated and now writes **only class 8**. Class 3 is
+left on stock, deliberately, because the approved numbers do not transfer and
+inventing replacements is not mine to do.
+
+Measured at level 80:
+
+| | Str | Agi | Sta | Int | Spi | **total** |
+|---|---:|---:|---:|---:|---:|---:|
+| Vanguard — Paladin (2) | 151 | 90 | 143 | 98 | 105 | **587** |
+| Adept — Mage (8), tuned | 55 | 55 | 110 | 190 | 180 | **590** |
+| Skirmisher — **Hunter (3), stock** | 74 | 181 | 128 | 90 | 97 | **570** |
+| *(old Shaman (7) as shipped)* | *120* | *74* | *130* | *128* | *143* | *595* |
+
+The old anchor was "trim 6 Stamina to land on 595". Hunter starts at **570**,
+so the equivalent move is to **add about 20**, not remove six — the opposite
+direction. And the shape is different in a way arithmetic cannot resolve:
+Hunter's Agility is 181 against Shaman's 74, its Strength 74 against 120. The
+middle chassis has gone from a Strength/Spirit build to an Agility one.
+
+Three things need a decision, and the first mandate for this project asked to
+approve actual numbers rather than a strategy name:
+
+1. **Does the ~590 parity target still hold?** Hunter is 20 short. Adding it
+   keeps "near-identical budgets, the differentiator is armor and
+   distribution".
+2. **Where does it go?** Stamina is the safe answer and the one the Adept's
+   rationale used. Intellect/Spirit would push the Skirmisher back toward the
+   caster half it occupied as a Shaman.
+3. **Does the ranged attack power stay?** §2.1: 331 against the Vanguard's 80.
+   Keeping it gives the middle chassis an identity; neutralising it via
+   `OnPlayerIsClass` makes the swap a pure availability change.
+
+Until 1 and 2 are answered, the Skirmisher is playable and un-tuned: stock
+Hunter, which is a coherent chassis, just not one anybody signed off.
 
 ---
 

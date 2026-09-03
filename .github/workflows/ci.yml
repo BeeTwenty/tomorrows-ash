@@ -107,6 +107,9 @@ jobs:
           print(f"SETUP.md documents all {len(flags)} flags and {len(params)} PowerShell parameters")
           PY
 
+      - name: Migrations match the body types
+        run: python tools/tests/test_migrations_match_chassis.py
+
       - name: Character creation is limited to the three body types
         run: python tools/tests/test_body_types.py
 

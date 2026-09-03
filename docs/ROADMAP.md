@@ -136,6 +136,25 @@ number with `python3 tools/audit_items.py`.
 
 ---
 
+## Chassis swap — Skirmisher is Hunter
+
+- [x] **Migrations regenerated** against a live world DB and applied: race
+      coverage now adds 3 Hunter pairs (Hunter natively covers 7 of 10 races),
+      the stat migration writes only class 8, and a cleanup migration reverts
+      what the Shaman-era versions did — Shaman's stats back to stock, the six
+      added Shaman race rows removed, stock rows untouched.
+- [x] **`test_migrations_match_chassis.py` wired into CI**, after fixing a
+      case-sensitivity bug that made its class-stats check match nothing and
+      report "skipped". It now carries self-tests proving both detectors catch
+      the real stale content they missed.
+- [ ] **The Skirmisher has no approved stat anchor.** Class 3 is stock and
+      un-tuned; the Shaman-derived numbers do not transfer. Three questions in
+      [BODY-TYPES.md §2.3](BODY-TYPES.md).
+- [ ] **Ranged attack power** — 331 against the Vanguard's 80, arrived with the
+      class id. Keep or neutralise; [§2.1](BODY-TYPES.md).
+
+---
+
 ## Training system — reopened by the first playtest
 
 Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).

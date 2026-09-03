@@ -20,14 +20,7 @@ fixes:
 
     python3 tools/tests/test_migrations_match_chassis.py
 
-NOT WIRED INTO CI YET, on purpose. It currently fails, because the race-coverage
-migration really is stale — and adding a red step to tell everyone something
-already known, while blocking every other build, costs more than it says. The
-line below belongs in `.github/workflows/ci.yml` beside the other
-`tools/tests/*` steps, in the same change that regenerates the migration:
-
-      - name: Migrations match the body types
-        run: python tools/tests/test_migrations_match_chassis.py
+Wired into CI on 2026-09-02, once the migrations had actually been regenerated.
 """
 
 import re
@@ -85,7 +78,13 @@ if not stats.is_file():
     print(f"2. class stats          -> {stats.name} absent, nothing to check")
 else:
     text = stats.read_text(encoding="utf-8")
-    touched = {int(c) for c in re.findall(r"player_class_stats`[^;]*?`class`\s*=\s*(\d+)", text, re.S)}
+    # Case-insensitively, because the generated SQL writes `Class` and this
+    # pattern was written as `class`. It matched nothing, printed "skipped",
+    # and passed - while the file underneath really did carry Shaman(7). A
+    # check that cannot fail is worse than no check: it reports safety.
+    touched = {int(c) for c in re.findall(
+        r"player_class_stats`[^;]*?`class`\s*(?:=|IN\s*\()\s*([\d,\s]+)", text, re.S | re.I)
+        for c in re.findall(r"\d+", c)}
     touched |= {int(c) for c in re.findall(r"VALUES\s*\((\d+),\s*\d+,", text)}
     stale = sorted(touched - ALLOWED) if touched else []
     if stale:
@@ -142,6 +141,31 @@ else:
         )
     else:
         print(f"4. launcher recipe      -> {describe(keep)}")
+
+
+# --- 5. the detectors can actually fail --------------------------------------
+# Both of the checks above passed for weeks while the tree was wrong: the
+# class-stats pattern was case-sensitive and matched nothing, and "matched
+# nothing" printed as "skipped". So each detector is now run against a sample
+# of the real stale content it failed to catch.
+stale_stats = """
+UPDATE `player_class_stats` SET `Stamina` = 25 WHERE `Class` = 7 AND `Level` = 7;
+INSERT IGNORE INTO `classless_class_stats_backup`
+SELECT `Class`, `Level` FROM `player_class_stats` WHERE `Class` IN (7, 8);
+"""
+caught = {int(c) for m in re.findall(
+    r"player_class_stats`[^;]*?`class`\s*(?:=|IN\s*\()\s*([\d,\s]+)", stale_stats, re.S | re.I)
+    for c in re.findall(r"\d+", m)}
+if 7 not in caught:
+    fails.append(f"self-test: the class-stats detector still misses Shaman(7); saw {sorted(caught)}")
+else:
+    print(f"5. detector self-test   -> stale Shaman(7) caught in class-stats SQL {sorted(caught)}")
+
+stale_races = "-- Human Skirmisher (race 1, class 7), action bar from Draenei"
+if 7 not in {int(c) for c in re.findall(r"class (\d+)\)", stale_races)}:
+    fails.append("self-test: the race-coverage detector misses a stale class id")
+else:
+    print("6. detector self-test   -> stale Shaman(7) caught in race-coverage SQL")
 
 print()
 print("FAILURES:" if fails else "migrations agree with the body types")

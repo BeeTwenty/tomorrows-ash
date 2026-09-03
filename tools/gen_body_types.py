@@ -46,8 +46,22 @@ STAT_COLUMNS = ["BaseHP", "BaseMana", "Strength", "Agility", "Stamina", "Intelle
 APPROVED = {
     # class: {level: {column: approved value}}
     2: {},                                     # Vanguard: the reference, untouched
-    7: {60: {"Stamina": 90},
-        80: {"Stamina": 130}},
+
+    # Skirmisher: NO APPROVED ANCHOR YET.
+    #
+    # The chassis moved from Shaman (7) to Hunter (3), and the anchors this
+    # file used to hold were derived against Shaman's stat line. They do not
+    # transfer: Hunter's stock spread is a different shape entirely - Agility
+    # 181 against Shaman's 74, Strength 74 against 120 - and its stat total at
+    # 80 is 570 where Shaman's was 601. The old target was "trim 6 Stamina to
+    # land on 595"; the equivalent for Hunter would be to ADD about 20, and
+    # where to put it is a balance decision, not arithmetic.
+    #
+    # An empty dict means "leave this class on stock", which is honest: the
+    # Skirmisher is currently un-tuned and the generator says so rather than
+    # inventing numbers nobody approved. See docs/BODY-TYPES.md section 2.3.
+    3: {},
+
     8: {60: {"BaseHP": 1400, "BaseMana": 1500, "Strength": 45, "Agility": 45,
              "Stamina": 70, "Intellect": 130, "Spirit": 130},
         80: {"BaseHP": 7100, "BaseMana": 4400, "Strength": 55, "Agility": 55,
@@ -99,8 +113,9 @@ def interpolate(delta_60, delta_80, level):
 
 def stock_curve(cfg):
     """{class: {level: {column: value}}} straight from the realm."""
+    wanted = ",".join(str(c) for c in sorted(BODY_TYPE_CLASSES.values()))
     rows = query(cfg, "SELECT Class, Level, " + ", ".join(STAT_COLUMNS) +
-                      " FROM player_class_stats WHERE Class IN (2,7,8) ORDER BY Class, Level")
+                      f" FROM player_class_stats WHERE Class IN ({wanted}) ORDER BY Class, Level")
     out = {}
     for row in rows:
         class_id, level = int(row[0]), int(row[1])
@@ -160,6 +175,7 @@ def build_stats(stock):
 
 
 def emit_stats(curve, stock):
+    tuned = ", ".join(str(c) for c in sorted(curve)) or "-1"
     lines = ["""--
 -- Body-type stat curves for player_class_stats.
 --
@@ -197,8 +213,10 @@ CREATE TABLE IF NOT EXISTS `classless_class_stats_backup` (
 INSERT IGNORE INTO `classless_class_stats_backup`
   (`Class`, `Level`, `BaseHP`, `BaseMana`, `Strength`, `Agility`, `Stamina`, `Intellect`, `Spirit`)
 SELECT `Class`, `Level`, `BaseHP`, `BaseMana`, `Strength`, `Agility`, `Stamina`, `Intellect`, `Spirit`
-FROM `player_class_stats` WHERE `Class` IN (7, 8);
+FROM `player_class_stats` WHERE `Class` IN (TUNED_CLASSES);
 """]
+
+    lines[0] = lines[0].replace("TUNED_CLASSES", tuned)
 
     for class_id in sorted(curve):
         name = next(n for n, c_ in BODY_TYPE_CLASSES.items() if c_ == class_id)
