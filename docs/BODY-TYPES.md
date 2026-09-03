@@ -89,7 +89,7 @@ on the melee side of the pool, and the Adept should never be expected to melee.
 | Feel | Stands in front | Trades blows and casts | Glass, but unrestricted |
 
 Skirmisher moved from Shaman (7) to Hunter (3) — the only chassis triple in
-which every race has a body type at all. See [ADR 0008 §10](decisions/0008-body-type-client-patch.md).
+which every race has a body type at all. See [ADR 0010 §10](decisions/0010-body-type-client-patch.md).
 §2.1 re-derives what that changed; §2.3 is what it left undone.
 
 > **The anchor tables below are Shaman's, and no longer describe the
