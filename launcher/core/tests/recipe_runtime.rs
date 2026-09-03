@@ -416,12 +416,28 @@ fn the_launcher_builds_a_published_recipe_and_then_lets_you_launch() {
         "the reason has to be on screen: {:?}",
         status.rows.iter().map(|r| &r.key).collect::<Vec<_>>()
     );
-    // The label only reaches BUILD PATCH when nothing earlier is wrong, and on
-    // a machine with no Wine the runtime blocks first. Asserting the string
-    // unconditionally would make this test pass or fail on whether the runner
-    // happens to have Wine installed, which is not what it is about.
+    // The bar names one thing at a time, in the order a player does them, so
+    // walk the ladder rather than asserting the end of it. Verifying comes
+    // before building; the Windows leg caught this test expecting BUILD PATCH
+    // from a launcher still saying VERIFY, and it passed on Linux only because
+    // the absent Wine blocked earlier and skipped the assertion entirely.
+    app.verify(&|_| {}).unwrap();
+
+    let status = app.status();
+    assert!(!status.can_launch);
+    // With the client verified, the patch is the only thing left — on a
+    // machine that has a runtime. Where there is no Wine the runtime blocks
+    // first and the label never reaches the recipe, which is a property of the
+    // runner rather than of the patch, so the strong assertion runs where it
+    // means something and the weak one runs everywhere.
     if status.blocked_because.is_empty() {
         assert_eq!(status.action, "BUILD PATCH");
+    } else {
+        assert!(
+            status.blocked_because.contains("Wine") || status.blocked_because.contains("Proton"),
+            "the only expected blocker here is a missing runtime: {}",
+            status.blocked_because
+        );
     }
 
     // Build it.
