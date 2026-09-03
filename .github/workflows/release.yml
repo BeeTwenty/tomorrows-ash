@@ -35,6 +35,13 @@ on:
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
+# On a pull request `github.sha` is the ephemeral merge commit GitHub makes for
+# the run. It is not in anyone's clone, so a build stamped or named with it is a
+# build nobody can look up — which is exactly the failure the stamp exists to
+# prevent. The pull request's head commit is the one that was actually written.
+env:
+  ASHMORROW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 # A second push to the same branch makes the first build irrelevant.
 concurrency:
   group: launcher-${{ github.ref }}
@@ -122,7 +129,7 @@ jobs:
         env:
           # Stamped into the interface so a screenshot says which commit it is.
           # Two bug reports have now been impossible to place against a build.
-          ASHMORROW_BUILD: ${{ github.sha }}
+          ASHMORROW_BUILD: ${{ env.ASHMORROW_SHA }}
         run: npm run build -- --bundles ${{ matrix.bundles }}
 
       # Actually run it. The launcher has shipped broken twice with every other
@@ -154,7 +161,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure() && runner.os == 'Linux'
         with:
-          name: smoke-failure-${{ github.sha }}
+          name: smoke-failure-${{ env.ASHMORROW_SHA }}
           path: ${{ runner.temp }}/smoke
           if-no-files-found: ignore
           retention-days: 7
@@ -209,7 +216,7 @@ jobs:
       # tellable apart at a glance.
       - uses: actions/upload-artifact@v4
         with:
-          name: launcher-${{ runner.os }}-${{ github.sha }}
+          name: launcher-${{ runner.os }}-${{ env.ASHMORROW_SHA }}
           path: dist/*
           if-no-files-found: error
           retention-days: 14
