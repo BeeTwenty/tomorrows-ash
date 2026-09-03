@@ -185,15 +185,44 @@ client sees all ten classes and can create any of them. Enforcement is
 So the order is not negotiable:
 
 1. `inspect-dbc` against a real client — confirm the matrix and the field layout
-   the recipe carries. *Built; needs a client run.*
+   the recipe carries. **Done, 2026-09-03.** It corrected `name_field` from 5 to
+   4 and confirmed the thirteen `add` rows are the exact complement of the
+   client's matrix. ADR 0010 §7.1–7.2.
 2. The chassis decision (ADR 0010 §10) — it changes how much of step 3 there is.
+   **Done:** Skirmisher is Hunter (3).
 3. Server-side: `playercreateinfo` and friends for every new race/class pair,
    and the create-packet rule. **The bulk of the work, and not launcher work.**
-4. Publish the recipe and turn on the launcher step.
+   **Done and verified on the live realm:** all ten races reach all three body
+   types.
+4. Publish the recipe and turn on the launcher step. **Blocked — and not on
+   data.**
 
 Publishing the recipe before step 3 would give players a character-creation
 screen offering combinations the server then refuses — which is worse than the
-current state, where the screen is honest about what it will accept.
+current state, where the screen is honest about what it will accept. Steps 1–3
+are now done, so that reason is spent. The recipe is nonetheless still absent
+from `patch-manifest.json`, for a different reason worth stating plainly:
+
+> **Nothing reads `patch-manifest.json` yet.** Adding the recipe to it today
+> changes no behaviour on any machine. It would only remove the test that says
+> the recipe is unpublished — trading an accurate statement for an inaccurate
+> one.
+
+What step 4 actually requires, none of which exists:
+
+| | Where | State |
+|---|---|---|
+| A `recipes` array in the served manifest, assembled from `patch-manifest.json` beside `patches` and `runtime` (§2) | `web/src/lib/launcher.ts` | not written — and it is the **website session's** file, so this is a cross-session ask |
+| Fetch the recipe, verify it against the manifest hash (Tier 3) | launcher runtime | not written |
+| Read the player's two tables, `recipe::build`, write `Data/patch-4.MPQ` | launcher runtime | the library half exists (`launcher_core::recipe`); nothing calls it |
+| The slot check before writing (`would_clobber`, §4) | launcher runtime | library half exists, uncalled |
+| The ledger — recipe version, archive hash, source hashes (§4) | launcher runtime | not written |
+| Tier 3b: rebuild and compare on every start (§5) | launcher runtime | not written |
+| Gate the launch bar on the archive being present and matching (§5) | launcher runtime | not written |
+
+`launcher_core::recipe` and `launcher_core::mpq` are the tested library beneath
+all of that, and `main.rs` does not mention either. **The remaining work is the
+launcher runtime, not the recipe.**
 
 ## 7. What this costs if it is wrong
 
@@ -204,3 +233,24 @@ is out of range or the column it points at holds no name in this client, and
 `inspect-dbc` finds the column independently so the two can be compared. But
 neither is a substitute for one person running the tool against a real client
 once, which is why §6 starts there.
+
+**That run happened on 2026-09-03, and both halves were wrong.** The recipe said
+`name_field: 5` and the right answer is 4; the tool's own search said 3. Neither
+guard caught it:
+
+- `apply`'s refusal tests whether *any* of the sixteen locale columns from
+  `name_field` holds a name. Starting one column late, the block still overlaps
+  fifteen real locale columns, so the test passes. It would have written the
+  name into columns 5–20, left the enUS name at column 4 untouched, and
+  overwritten the string-flags word at 20. The visible symptom would have been
+  *nothing changing*, with a corrupted table underneath.
+- `inspect-dbc` took the first column that held plausible text. `ChrClasses`
+  has two string columns and the wrong one — `PetNameToken` at 3 — comes first.
+
+So the comparison in §6 step 1 was real and it worked: a human ran the tool,
+disbelieved the output, and stopped. What has changed is that neither number is
+a judgement call any more. The column is identified by shape (sixteen locale
+columns of which a single-locale client populates exactly one), the report
+prints every candidate with its evidence rather than only the winner, and the
+recipe's `name_field` is asserted against a fixture built from the core's own
+format string rather than from the recipe. `docs/decisions/0010-body-type-client-patch.md` §7.1.

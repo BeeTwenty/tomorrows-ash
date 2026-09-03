@@ -148,7 +148,19 @@ impl Dbc {
     }
 
     /// The string a record's offset points at.
+    ///
+    /// **Offset zero is the empty string, and is not read from the block.**
+    /// Every Blizzard-authored DBC begins its string block with a NUL so that
+    /// "this row has no string" and "the first string in the block" cannot
+    /// collide. A table repacked by a third-party editor does not always keep
+    /// that NUL, and then every empty reference reads as whatever string
+    /// happens to be first — which turns a column of blanks into a column that
+    /// looks convincingly like names. Honouring the convention rather than the
+    /// bytes is what makes an empty column detectable as empty.
     pub fn string_at(&self, offset: u32) -> Result<&str> {
+        if offset == 0 {
+            return Ok("");
+        }
         let from = offset as usize;
         let block = self
             .strings
@@ -209,6 +221,12 @@ impl Dbc {
     ) -> Result<&str> {
         let offset = self.u32_field(index, first_field + locale_column)?;
         self.string_at(offset)
+    }
+
+    /// The raw string block, for reporting what a client's table actually
+    /// contains when a column does not read the way it should.
+    pub fn strings(&self) -> &[u8] {
+        &self.strings
     }
 
     pub fn write(&self) -> Vec<u8> {
@@ -397,4 +415,101 @@ mod tests {
         let error = Dbc::parse(&bytes).unwrap_err().to_string();
         assert!(error.contains("the file is"), "unhelpful: {error}");
     }
+}
+
+/* ------------------------------------------------------------------ *
+ * Finding the name column
+ * ------------------------------------------------------------------ */
+
+/// What a column looks like when read as the first locale of a `_Lang` field.
+#[derive(Debug, Clone)]
+pub struct LangCandidate {
+    pub field: usize,
+    /// Rows whose locale column zero reads like a name.
+    pub named: usize,
+    /// Non-empty cells in the *other* fifteen locale columns, over all rows.
+    pub bleed: usize,
+    /// The word that follows the sixteen columns — the string flags in a real
+    /// `_Lang` field. Reported, not required: a repacked table may zero it.
+    pub flags: Option<u32>,
+    /// The first row's value, so a person can see what was matched.
+    pub sample: String,
+}
+
+impl LangCandidate {
+    /// A real `_Lang` field in a client installed in one language: every row
+    /// named in the locale the client runs, and nothing at all in the fifteen
+    /// it does not.
+    pub fn is_clean(&self, rows: usize) -> bool {
+        rows > 0 && self.named == rows && self.bleed == 0
+    }
+}
+
+fn reads_like_a_name(text: &str) -> bool {
+    text.len() >= 2 && text.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+}
+
+/// Every column that could be the start of a `_Lang` field, with the evidence.
+///
+/// The shape is what identifies it, not "this column holds strings". Two
+/// columns in `ChrClasses` hold strings — `PetNameToken` at 3 and the name at
+/// 4 — and the wrong one comes first, so a scan that takes the first column of
+/// plausible text picks `PetNameToken` and renames a pet token. What separates
+/// them is that a `_Lang` field is *sixteen* columns of which a single-locale
+/// client populates exactly one: reading `PetNameToken` as the start of a block
+/// makes the real name column its second locale, which shows up as bleed.
+pub fn lang_candidates(table: &Dbc, id_field: usize) -> Vec<LangCandidate> {
+    let fields = (table.record_size as usize) / 4;
+    let rows = table.record_count();
+    let mut out = Vec::new();
+
+    for field in 0..fields.saturating_sub(LOCALES) {
+        if field == id_field {
+            continue;
+        }
+        let mut named = 0usize;
+        let mut bleed = 0usize;
+        let mut sample = String::new();
+        for row in 0..rows {
+            match table.localised(row, field, 0) {
+                Ok(text) if reads_like_a_name(text) => {
+                    named += 1;
+                    if sample.is_empty() {
+                        sample = text.to_string();
+                    }
+                }
+                _ => {}
+            }
+            for locale in 1..LOCALES {
+                if table
+                    .localised(row, field, locale)
+                    .is_ok_and(|text| !text.is_empty())
+                {
+                    bleed += 1;
+                }
+            }
+        }
+        out.push(LangCandidate {
+            field,
+            named,
+            bleed,
+            flags: table.u32_field(0, field + LOCALES).ok(),
+            sample,
+        });
+    }
+    out
+}
+
+/// The one column that is unambiguously the name.
+///
+/// Returns `None` rather than a guess when nothing is clean or more than one
+/// thing is: this number is written into a file on a player's disk, and a
+/// confident wrong answer corrupts the table it was meant to rename.
+pub fn find_name_field(table: &Dbc, id_field: usize) -> Option<usize> {
+    let rows = table.record_count();
+    let mut clean = lang_candidates(table, id_field)
+        .into_iter()
+        .filter(|candidate| candidate.is_clean(rows));
+    let first = clean.next()?;
+    clean.next().is_none().then_some(first.field)
 }

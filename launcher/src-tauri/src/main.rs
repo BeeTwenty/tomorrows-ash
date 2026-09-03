@@ -63,6 +63,14 @@ impl StartupReport {
 
 static REPORTED: AtomicBool = AtomicBool::new(false);
 
+/// How far startup got, for the watchdog to name when it gives up.
+///
+/// "The interface never reported" is true of two very different failures — the
+/// backend never came up, and the backend came up but the webview never ran our
+/// code — and the second is the one the capability bug produced. Saying which
+/// costs an atomic.
+static REACHED_SETUP: AtomicBool = AtomicBool::new(false);
+
 /// `launcher_core::Error` carries paths and reasons a player should see, and
 /// Tauri needs a `String` on the wire.
 type Answer<T> = Result<T, String>;
@@ -100,7 +108,11 @@ fn report_startup(shared: tauri::State<'_, Shared>, report: StartupReport) {
             // interface came up blank on a player's machine.
             eprintln!("  the event subscription was refused — check src-tauri/capabilities/");
         }
-        std::process::exit(if report.healthy() && report.events { 0 } else { 1 });
+        std::process::exit(if report.healthy() && report.events {
+            0
+        } else {
+            1
+        });
     }
 }
 
@@ -219,6 +231,17 @@ fn launch(shared: tauri::State<'_, Shared>) -> Answer<()> {
         .map_err(|e| format!("could not start {}: {e}", plan.program.display()))
 }
 
+/// The furthest point startup is known to have got past.
+fn stage() -> &'static str {
+    if REPORTED.load(Ordering::SeqCst) {
+        "the interface's report"
+    } else if REACHED_SETUP.load(Ordering::SeqCst) {
+        "backend setup"
+    } else {
+        "process start"
+    }
+}
+
 fn main() {
     let base_url = std::env::var("ASHMORROW_BASE_URL")
         .ok()
@@ -230,10 +253,46 @@ fn main() {
         // If the interface never gets far enough to report, nothing else will
         // ever say so — the window just sits there, which is precisely the
         // failure being tested for. Fail loudly instead of hanging a runner.
+        //
+        // The deadline is generous because the cost of it being too short is a
+        // false failure and a wasted twelve-minute Windows build, and because a
+        // real hang never reports at all — waiting longer does not hide it, it
+        // only delays the same verdict. A cold WebView2 creating its profile on
+        // a contended runner has taken over a minute; 60s produced a red build
+        // on a commit that changed no launcher code at all.
+        //
+        // The heartbeats are the other half: without them the log cannot
+        // distinguish "slow" from "stuck", which is the question anyone reading
+        // a timeout actually has.
         std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_secs(60));
+            let started = std::time::Instant::now();
+            let deadline = std::time::Duration::from_secs(120);
+            let beat = std::time::Duration::from_secs(15);
+            while started.elapsed() < deadline {
+                std::thread::sleep(beat);
+                if REPORTED.load(Ordering::SeqCst) {
+                    return;
+                }
+                eprintln!(
+                    "startup waiting: {}s, reached {}",
+                    started.elapsed().as_secs(),
+                    stage()
+                );
+            }
             if !REPORTED.load(Ordering::SeqCst) {
-                eprintln!("startup BROKEN: the interface never reported in 60s");
+                eprintln!(
+                    "startup BROKEN: the interface never reported in {}s; reached {}",
+                    deadline.as_secs(),
+                    stage()
+                );
+                if REACHED_SETUP.load(Ordering::SeqCst) {
+                    eprintln!(
+                        "  the backend started and the webview never called back. That is \
+                         what a wrong src-tauri/capabilities/ looks like."
+                    );
+                } else {
+                    eprintln!("  the backend never finished setup, so the window never opened.");
+                }
                 std::process::exit(1);
             }
         });
@@ -251,6 +310,7 @@ fn main() {
                 http: Network::new(),
                 self_check,
             });
+            REACHED_SETUP.store(true, Ordering::SeqCst);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

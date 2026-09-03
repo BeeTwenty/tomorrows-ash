@@ -425,9 +425,22 @@ jobs:
                   target = (md.parent / link.split("#")[0]).resolve()
                   if not target.exists():
                       bad.append(f"{md}: broken link -> {link}")
+          # An ADR that is renumbered leaves two kinds of stale reference behind.
+          # The loop above finds the ones whose path is wrong; this finds the ones
+          # where the path was updated and the number in the link text was not,
+          # which reads as authoritative and points somewhere else.
+          for md in pathlib.Path(".").rglob("*.md"):
+              if SKIP & set(md.parts):
+                  continue
+              for label, link in re.findall(r"\[([^]]*?ADR\s*(?:0\d{3})[^]]*)\]\(([^)]+)\)",
+                                            md.read_text(errors="replace")):
+                  said = re.search(r"ADR\s*(0\d{3})", label).group(1)
+                  name = pathlib.PurePosixPath(link.split("#")[0]).name
+                  if name[:4].isdigit() and name[:4] != said:
+                      bad.append(f"{md}: link says ADR {said} but points at {name}")
           if bad:
               print("\n".join(bad)); sys.exit(1)
-          print("all relative doc links resolve")
+          print("all relative doc links resolve, and every ADR link names the ADR it points at")
           PY
 
   launcher:

@@ -303,6 +303,97 @@ propagate into the server's own `ChrClasses` and `CharBaseInfo`, and the
 resulting mismatch would be maddening. SETUP §5 should say so, and the extraction
 step should check.
 
+### 7.1 What the first real-client run found (2026-09-03)
+
+Both numbers the patch turns on were wrong, and they were wrong in ways that
+agreed with each other.
+
+**`ChrClasses.Name_Lang` is field 4, not 5.** The authority is the format string
+the core's own DBC loader parses with —
+`ChrClassesEntryfmt` in `src/server/shared/DataStores/DBCfmt.h` at the pinned
+commit:
+
+```
+"nxixssssssssssssssssxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxixii"      60 fields
+ ││││└──────────────┘                                     └──┴─ 56, 58, 59
+ ││││ 4..19  Name_Lang, sixteen locale columns  (20 is its flags word)
+ │││└ 3      PetNameToken
+ ││└ 2       powerType
+ │└ 1        unused
+ └ 0         ClassID
+```
+
+The struct comment in `DBCStructure.h` says `name[16]` is 5–20 and is simply
+wrong; the format string is what the loader reads. The real client agrees with
+the format string: 60 fields at 240 bytes, which is `4 + 3×(16+1) + 5`.
+
+Writing at 5 would have put the sixteen locale columns at 5–20: the enUS name at
+column 4 untouched, so **nothing visible would change**, and the string-flags
+word at 20 overwritten. A silent corruption presenting as "the patch didn't
+work".
+
+**The tool's own column search was also wrong**, and would have confirmed the
+error rather than catching it. It took the first column holding plausible text.
+`ChrClasses` has two string columns and the decoy comes first: `PetNameToken` at
+3 — and a real client fills that column on *every* row, nine `PET` and the
+Warlock's `DEMON`, whether the class has a pet or not. So the search found ten
+rows of plausible text one column early, stopped, and printed ten classes named
+"PET" and "DEMON". Obviously wrong, which is the only reason it was caught.
+
+Three things changed:
+
+1. **Shape, not text, identifies the column.** A `_Lang` field is sixteen
+   consecutive columns of which a single-locale client populates exactly one.
+   Read `PetNameToken` as the start of such a block and the real name column
+   falls inside it — visible as *bleed*, and disqualifying. `dbc::lang_candidates`.
+2. **A string offset of 0 means "no string", by convention rather than by
+   reading byte 0.** Blizzard's files begin the string block with a NUL so the
+   two cannot collide; a table repacked by a third-party editor need not, and
+   then every empty reference reads as whatever string is first. This is
+   hardening, not the fix: the measured client keeps the NUL, and the first
+   report's ten identical names were real data in the wrong column, not an
+   artefact of reading offset zero. The cost is that a string stored *at*
+   offset 0 becomes unreadable, which is correct — nothing in the file
+   distinguishes it from empty.
+3. **The report prints every candidate with its evidence**, plus the raw fields
+   of record 0 and the head of the string block, so a disagreement can be
+   settled without another run on somebody else's machine.
+
+### 7.2 Confirmed against the real client (2026-09-03)
+
+The rebuilt tool was run against the same install. `Name_Lang is field 4`, no
+bleed, flags word 16712191, and the ten class names read correctly. Field 3 is
+listed as a candidate and loses on bleed of 10 — the name column falling inside
+its sixteen — which is the mechanism working as designed.
+
+The rest of the report confirms the design's arithmetic against measurement
+rather than recollection:
+
+| | Expected | Client |
+|---|---|---|
+| `ChrClasses` shape | 60 fields, 240 bytes | **as expected** |
+| `Name_Lang` flags at 20 | a flags word | 16712191 |
+| Second and third name blocks | flags at 37 and 54 | 16712172 both |
+| `CharBaseInfo` | 62 rows | **62** |
+| Race/body-type pairs already offered | 17 of 30 (§10) | **17** |
+| Rows the recipe adds | 13 | **exactly the 13 missing** |
+
+The thirteen `add` rows were checked against the measured matrix pair by pair
+and are its exact complement — not a row too many, not one missing. The fixture
+in `launcher/core/tests/common/mod.rs` now reproduces this client: the fully
+populated decoy column, the real flags values, and the 62-row matrix, asserted
+against these numbers by `the_fixture_matches_the_measured_client`.
+
+**The recipe is confirmed correct and is still not published.** The reason is no
+longer the data — see ADR 0009 §6, where the remaining blocker is now recorded.
+
+The deeper lesson is about the fixture, not the format. The test built its
+`ChrClasses` *from* `recipe.name_field`, so the fixture moved whenever the
+recipe did and the two agreed all the way to a real client. The fixture is now
+the layout the format string describes, fixed independently, and the recipe is
+asserted against it — `launcher/core/tests/common/mod.rs`. Setting `name_field`
+back to 5 now fails three tests.
+
 ---
 
 ## 8. Recommended first step, before any of this is built
