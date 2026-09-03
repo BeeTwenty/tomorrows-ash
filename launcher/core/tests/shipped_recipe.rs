@@ -1,4 +1,4 @@
-//! The recipe we ship has to load, and mean what ADR 0008 says it means.
+//! The recipe we ship has to load, and mean what ADR 0010 says it means.
 //!
 //! It is a hand-edited JSON file that nothing parses at build time, and it
 //! describes edits to a player's game directory. That combination is worth a
@@ -35,7 +35,7 @@ fn the_shipped_recipe_parses() {
 /// ever disagree about which classes are the chassis, the character creation
 /// screen believes this one.
 ///
-/// Skirmisher is Hunter (3), not Shaman (7) — ADR 0008 §10. Changing that back
+/// Skirmisher is Hunter (3), not Shaman (7) — ADR 0010 §10. Changing that back
 /// without also changing `add` would strand Night Elf again, which is the whole
 /// reason the swap happened.
 #[test]
@@ -67,7 +67,7 @@ fn the_recipe_renames_exactly_the_three_body_types() {
     );
 }
 
-/// ADR 0008 §10: with Hunter as Skirmisher, thirteen pairs are missing rather
+/// ADR 0010 §10: with Hunter as Skirmisher, thirteen pairs are missing rather
 /// than sixteen, and no race is left without one.
 #[test]
 fn the_recipe_adds_the_thirteen_missing_pairs() {

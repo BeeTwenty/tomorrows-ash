@@ -1,9 +1,9 @@
 # 0009 — How the body-type patch is versioned, published and checked
 
 **Status:** Proposed
-**Supersedes nothing. Depends on [0008](0008-body-type-client-patch.md).**
+**Supersedes nothing. Depends on [0010](0010-body-type-client-patch.md).**
 
-ADR 0008 settled *what* the client patch is: a recipe of edits, applied to the
+ADR 0010 settled *what* the client patch is: a recipe of edits, applied to the
 player's own DBCs, built into an archive locally. This settles the plumbing —
 where the recipe is published, how a version increments, when the launcher
 rebuilds, and how the result is verified.
@@ -95,6 +95,14 @@ without raising `version` fails, with the same posture as the other guards in
 this repository: enforced rather than remembered. That is what makes "every
 recipe change is traceable to a reviewed PR" true rather than aspirational.
 
+**Prose is exempt, and has to be.** The guard compares the recipe with
+`$comment`, `summary` and `revision` removed, because none of those change what
+a player's client gets. Demanding a bump for a reworded comment would rebuild
+the patch on every machine that has one — a worse outcome than the drift being
+guarded against, and the guard proved the point by firing on a comment that had
+only changed which ADR number it cited. Change anything the launcher acts on and
+the bump is still required.
+
 Optionally, tag published versions `recipe-v<N>`. Not required — `revision`
 already gives traceability — but it makes the tagged raw URL in §2 possible and
 costs one command.
@@ -141,7 +149,7 @@ Its ledger entry therefore records all of it:
 which means every custom server uses it; a player who also plays elsewhere very
 likely has one. If the slot holds an archive that is not ours, the launcher says
 so and stops rather than overwriting someone else's work
-(`recipe::would_clobber`). ADR 0008 §7.
+(`recipe::would_clobber`). ADR 0010 §7.
 
 ## 5. How the result is verified
 
@@ -178,7 +186,7 @@ So the order is not negotiable:
 
 1. `inspect-dbc` against a real client — confirm the matrix and the field layout
    the recipe carries. *Built; needs a client run.*
-2. The chassis decision (ADR 0008 §10) — it changes how much of step 3 there is.
+2. The chassis decision (ADR 0010 §10) — it changes how much of step 3 there is.
 3. Server-side: `playercreateinfo` and friends for every new race/class pair,
    and the create-packet rule. **The bulk of the work, and not launcher work.**
 4. Publish the recipe and turn on the launcher step.

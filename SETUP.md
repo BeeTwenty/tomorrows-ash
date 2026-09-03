@@ -1006,9 +1006,19 @@ never touches `~/.wine` or any prefix belonging to another game.
 
 **Every push builds both platforms**, so a testable `.exe` exists without anyone
 owning a Windows machine. Actions tab → your commit's run → *Artifacts*:
-`launcher-Windows-<sha>` holds the installer, the `.msi` and the bare
-`ashmorrow-launcher.exe`. For testing a change the bare executable is the one to
-take — it installs nothing and leaves nothing behind.
+`launcher-Windows-<sha>` holds the installer, the `.msi`, the bare
+`ashmorrow-launcher.exe` and `ashmorrow-manifest.exe`. For testing a change the
+bare executable is the one to take — it installs nothing and leaves nothing
+behind.
+
+`ashmorrow-manifest.exe` is the command-line tool, shipped alongside because
+everything it does needs a real client on the same machine:
+
+```
+ashmorrow-manifest.exe inspect-dbc "C:\path\to\World of Warcraft"
+ashmorrow-manifest.exe hash        "C:\path\to\World of Warcraft"
+ashmorrow-manifest.exe check       "C:\path\to\World of Warcraft" manifest.json
+```
 
 To publish, tag it:
 

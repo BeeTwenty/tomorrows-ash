@@ -181,7 +181,7 @@ So melee AP rises about 18%, not zero. The armour claim does hold: both map to
 `ITEM_SUBCLASS_ARMOR_MAIL`, so mail proficiency is genuinely untouched. One of
 the three costs quoted when the swap was proposed is zero, not two.
 
-**Ranged attack power does change, and by a lot.** That formula is separate:
+**Ranged attack power changes, and it is kept.** That formula is separate:
 
 | Formula | Classes |
 |---|---|
@@ -197,16 +197,27 @@ The mail chassis goes from the *worst* ranged attack power of the three to more
 than four times the plate chassis's. Nobody chose that; it arrived with the
 class id, and it is larger than the swap's write-up said.
 
-Whether it should stay is a live question, not a settled one:
+**This was not chosen, and it is kept on purpose.** It arrived with the class
+id when Skirmisher moved to Hunter, for reasons that had nothing to do with
+balance — but a middle chassis whose only description is "between the other
+two" is the one that never gets picked for a reason. Ranged attack power gives
+it a niche of its own, in the same way plate and 522 melee AP give the Vanguard
+one and unrestricted casting gives the Adept one:
 
-- **Keep it.** It gives the middle chassis an identity beyond "the compromise",
-  and "trades blows" arguably covers a bow.
-- **Neutralise it.** `OnPlayerIsClass` can answer the ranged branch as Shaman
-  would — the same hook the pet decision uses, about thirty lines — so the swap
-  becomes a pure availability change with no balance tail.
+| | Vanguard | Skirmisher | Adept |
+|---|---|---|---|
+| Its niche | stands in front | **reaches** | casts anything |
 
-Not implemented either way. The swap was approved on availability grounds, and
-this is a separate decision.
+It also reads correctly against "trades blows and casts": a bow is one of the
+blows. The alternative was to answer the ranged branch as Shaman through
+`OnPlayerIsClass` — about thirty lines, the same hook the pet decision uses —
+and that option is deliberately not taken. **Decided 2026-09-03.**
+
+The consequence to watch, when there is play to watch: ranged weapons and the
+abilities that scale off ranged attack power are now a Skirmisher speciality,
+where before they were nobody's. That is a tree-authoring consideration rather
+than a stat one — §3's rule about not selling away the distinction applies to
+ranged scaling exactly as it does to armour.
 
 ### 2.2 Correction: the Adept's melee attack power
 

@@ -152,8 +152,15 @@ Coordinate, do not collide:
   the price *paid*, not `classless_node.cost`, which can change.
 - **`docs/decisions/` is shared.** Numbering is sequential across all sessions
   (0001–0003 server, 0004 website, 0005–0006 launcher, 0007 licence, 0008 admin
-  panel). Check the directory before claiming a number, and never renumber
-  someone else's ADR.
+  panel, 0009–0010 launcher again). Check the directory before claiming a
+  number, and never renumber someone else's ADR.
+
+  This has already gone wrong once: the launcher session wrote its body-type ADR
+  as 0008 while the website session was writing the admin panel as 0008, and the
+  collision only surfaced at a merge. It was resolved by moving the *later*
+  claim — the body-type patch is now 0010 — because the admin panel's number was
+  the one this list had already promised. `ls docs/decisions/` costs nothing and
+  is the whole check.
 - **The admin panel needs one thing from the server branch.** `classless_config`
   in the world database, holding `Points.FirstLevel`, `Points.PerLevel` and
   `Points.Bonus`, read by the module at load with `mod_classless.conf` as the

@@ -3,7 +3,7 @@
 //! Enough of the format to do one job: read two DBC files out of a player's own
 //! client, and write two edited ones back into an archive the client will load.
 //! Not a general MPQ library, and deliberately not trying to be — see
-//! `docs/decisions/0008-body-type-client-patch.md` §4 for why this lives here
+//! `docs/decisions/0010-body-type-client-patch.md` §4 for why this lives here
 //! at all rather than being a dependency.
 //!
 //! What is implemented:

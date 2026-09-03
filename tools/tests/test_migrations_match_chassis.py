@@ -7,7 +7,7 @@ one names it by hand. Change the constant and those files do not change with
 it — they sit in the tree, correct-looking, describing the previous decision.
 
 That is not a hypothetical. Skirmisher moved from Shaman (7) to Hunter (3) on
-2026-09-02 (docs/decisions/0008-body-type-client-patch.md section 10), after the
+2026-09-02 (docs/decisions/0010-body-type-client-patch.md section 10), after the
 race-coverage migration had already been generated for Shaman. Nothing in the
 repository noticed. The realm would have accepted Shamans, the patched client
 would have offered Hunters, and the first symptom would have been a player

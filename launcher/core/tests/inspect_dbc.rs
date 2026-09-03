@@ -75,7 +75,7 @@ fn chr_classes() -> Vec<u8> {
     out
 }
 
-/// The Wrath matrix, as reasoned in ADR 0008 §3 — this is the thing a real
+/// The Wrath matrix, as reasoned in ADR 0010 §3 — this is the thing a real
 /// client is supposed to correct or confirm.
 fn char_base_info() -> Vec<u8> {
     let pairs: &[(u8, u8)] = &[
@@ -226,7 +226,7 @@ fn inspect_dbc_reads_a_clients_tables_and_reports_the_matrix() {
     assert!(text.contains("race x class"), "no matrix:\n{text}");
 }
 
-/// The claim in ADR 0008 §3 that the whole race-data bill rests on: with
+/// The claim in ADR 0010 §3 that the whole race-data bill rests on: with
 /// Paladin, Shaman and Mage as the three body types, only fourteen of the
 /// thirty race/body-type pairs exist, and Night Elf gets none.
 #[test]
@@ -245,7 +245,7 @@ fn the_stock_matrix_leaves_night_elf_with_nothing() {
     };
 
     let total: usize = races.iter().map(|race| available(*race)).sum();
-    assert_eq!(total, 14, "ADR 0008 §3 says fourteen of thirty exist");
+    assert_eq!(total, 14, "ADR 0010 §3 says fourteen of thirty exist");
     assert_eq!(available(4), 0, "Night Elf is the race with no body type");
     assert_eq!(available(11), 3, "Draenei is the only race with all three");
 }
@@ -253,7 +253,7 @@ fn the_stock_matrix_leaves_night_elf_with_nothing() {
 /// The swap that was made, and the two it was made over. Kept as a test rather
 /// than a table in prose because it is the whole justification for Skirmisher
 /// being class 3, and a future edit to the chassis set should have to argue
-/// with arithmetic. ADR 0008 §10.
+/// with arithmetic. ADR 0010 §10.
 #[test]
 fn hunter_is_the_only_chassis_triple_that_strands_no_race() {
     let table = Dbc::parse(&char_base_info()).unwrap();

@@ -870,7 +870,7 @@ VALUES
 # Skirmisher is Hunter (3), not Shaman (7). Paladin x Hunter x Mage is the only
 # chassis triple in which every race has a body type at all - Night Elf has none
 # under Paladin/Shaman/Mage. Approved 2026-09-02; the other five combinations
-# are counted in docs/decisions/0008-body-type-client-patch.md section 10.
+# are counted in docs/decisions/0010-body-type-client-patch.md section 10.
 #
 # Everything server-side derives from this line: the creation class mask, the
 # generated stats and race-coverage migrations, and check_client_combos.py.

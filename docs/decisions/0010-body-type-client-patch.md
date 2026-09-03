@@ -1,4 +1,4 @@
-# ADR 0008 — Showing three body types at character creation
+# ADR 0010 — Showing three body types at character creation
 
 **Date:** 2026-09-01
 **Status:** Accepted. Recipe-over-shipped-MPQ is approved and built
@@ -487,14 +487,19 @@ either chassis.
 **Mail proficiency: unchanged.** `CanUseItem` pairs them too — both
 `ITEM_SUBCLASS_ARMOR_MAIL`.
 
-**Ranged attack power: changed, by 160 at level 80.** Hunter has its own ranged
-formula, `level×2 + Agi − 10`, where Shaman falls to the general `Agi − 10`.
-That takes the mail chassis from the worst ranged attack power of the three
-(64, below the Vanguard's 80) to nearly triple the plate chassis's (224). It is
-a real balance change that arrived with the class id and that nobody chose.
-Recorded in [BODY-TYPES §2.1](../BODY-TYPES.md) with both options; not
-implemented either way, because the swap was approved on availability grounds
-and this is a separate decision.
+**Ranged attack power: changed by 160 at level 80, and kept.** Hunter has its
+own ranged formula, `level×2 + Agi − 10`, where Shaman falls to the general
+`Agi − 10`. That takes the mail chassis from the worst ranged attack power of
+the three (64, below the Vanguard's 80) to nearly triple the plate chassis's
+(224).
+
+It arrived with the class id rather than being chosen, and it is kept anyway:
+a middle chassis described only as "between the other two" is the one nobody
+picks for a reason, and this gives it a niche — it reaches — beside the
+Vanguard's plate and the Adept's unrestricted casting. Decided 2026-09-03 and
+written up as a deliberate trait in [BODY-TYPES §2.1](../BODY-TYPES.md), not as
+an oversight to be tidied later. The alternative — answering the ranged branch
+as Shaman through `OnPlayerIsClass` — is explicitly not taken.
 
 **Pets: turned off, and that is the decision.** §10.5 flagged the pet machinery
 as needing a call. It is made: `Classless.Chassis.HunterPets = 0`.

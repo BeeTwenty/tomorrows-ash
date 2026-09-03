@@ -140,7 +140,7 @@ fn check(root: &Path, manifest_path: &Path) -> Result<bool, String> {
 
 /// Read a client's class tables and print what is actually in them.
 ///
-/// Read-only, and deliberately so: `docs/decisions/0008-body-type-client-patch.md`
+/// Read-only, and deliberately so: `docs/decisions/0010-body-type-client-patch.md`
 /// §8 asks for this before anything is built on top of it, because the
 /// race/class matrix in that document was reasoned out rather than read, and
 /// building a patch on a remembered matrix is how you ship a character creation

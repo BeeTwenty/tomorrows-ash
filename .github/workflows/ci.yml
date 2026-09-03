@@ -299,14 +299,36 @@ jobs:
               echo "  $file is unchanged"
               continue
             fi
-            new=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$file")
-            old=$(printf '%s' "$before" | python3 -c "import json,sys;print(json.load(sys.stdin)['version'])")
-            if [ "$new" -le "$old" ]; then
-              echo "  $file changed but its version is still $new (main has $old)"
-              fail=1
-            else
-              echo "  $file: $old -> $new"
-            fi
+            printf '%s' "$before" > /tmp/recipe-before.json
+            # Compare what the launcher acts on, not the bytes. `$comment`,
+            # `summary` and the CI-stamped `revision` change without changing
+            # what a player's client gets, and bumping the version for a
+            # reworded comment would rebuild every patch on every machine for
+            # nothing — a worse outcome than the drift this guards against.
+            python3 - "$file" /tmp/recipe-before.json <<'PY' || fail=1
+          import json, sys
+
+          PROSE = {"$comment", "summary", "revision"}
+
+          def meaningful(path):
+              with open(path, encoding="utf-8") as handle:
+                  doc = json.load(handle)
+              return json.dumps({k: v for k, v in doc.items() if k not in PROSE},
+                                sort_keys=True), doc["version"]
+
+          after, new_version = meaningful(sys.argv[1])
+          before, old_version = meaningful(sys.argv[2])
+          name = sys.argv[1]
+
+          if after == before:
+              print(f"  {name}: only prose changed, no bump needed (version {new_version})")
+          elif new_version > old_version:
+              print(f"  {name}: {old_version} -> {new_version}")
+          else:
+              print(f"  {name} changed what the launcher acts on, but its version "
+                    f"is still {new_version} (main has {old_version})")
+              sys.exit(1)
+          PY
           done
           if [ "$fail" -ne 0 ]; then
             echo

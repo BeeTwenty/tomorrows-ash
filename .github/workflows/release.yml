@@ -91,7 +91,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: launcher/src-tauri
+          # Two workspaces: the shell, and the core the manifest tool is built
+          # from. They have separate target directories.
+          workspaces: |
+            launcher/src-tauri
+            launcher/core
 
       # One install: launcher/package.json's postinstall runs `npm ci --prefix ui`,
       # so both lockfiles are honoured from a single command.
@@ -103,6 +107,15 @@ jobs:
       # verification logic fails here rather than on a player's machine.
       - name: Test the core before bundling it
         run: cargo test --manifest-path launcher/core/Cargo.toml
+
+      # The launcher is not the only thing a player is asked to run. `inspect-dbc`
+      # is how anyone finds out what their client's class tables actually say,
+      # and `hash` is how a manifest gets made — both jobs that need a real
+      # client, which means the machine that has one needs the binary. Shipping
+      # only the GUI made the tool available exclusively to people who could
+      # already build Rust, which is the opposite of who needs it.
+      - name: Build the manifest tool
+        run: cargo build --release --manifest-path launcher/core/Cargo.toml --bin ashmorrow-manifest
 
       - name: Build
         working-directory: launcher
@@ -163,6 +176,22 @@ jobs:
                       launcher/src-tauri/target/release/ashmorrow-launcher.exe; do
             [ -f "$bare" ] && cp "$bare" dist/
           done
+
+          # And the manifest tool, which is the half of this that runs against a
+          # real client: `inspect-dbc` to read its class tables, `hash` to make a
+          # manifest, `check` to verify one.
+          tool=""
+          for candidate in launcher/core/target/release/ashmorrow-manifest \
+                           launcher/core/target/release/ashmorrow-manifest.exe; do
+            [ -f "$candidate" ] && { cp "$candidate" dist/; tool="$candidate"; }
+          done
+          if [ -z "$tool" ]; then
+            echo "ashmorrow-manifest was not built. It shipped missing once — the"
+            echo "artifact held only the GUI, so nobody with a client could run"
+            echo "inspect-dbc without a Rust toolchain. Failing rather than"
+            echo "publishing that again."
+            exit 1
+          fi
 
           if [ -z "$(ls -A dist)" ]; then
             echo "No bundles were produced. The build reported success, so this is a"
