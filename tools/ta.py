@@ -368,6 +368,8 @@ def cmd_doctor(args):
     print(f"     mysql        : {cfg['mysql_user']}@{cfg['mysql_host']}:{cfg['mysql_port']}")
     print()
 
+    report_deployed_configs()
+
     if problems:
         print(c("  Missing prerequisites:", "red"))
         for p in problems:
@@ -840,7 +842,218 @@ VALUES
 # server configuration
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# body types
+#
+# Three body types, each built on a stock class (docs/BODY-TYPES.md 2). Every
+# other class is refused at character creation.
+#
+# The lever is CharacterCreating.Disabled.ClassMask in worldserver.conf, NOT
+# deleting playercreateinfo rows. Both stop creation, but they fail at
+# different points and only one of them fails politely:
+#
+#   classmask       -> WorldSession::HandleCharCreateOpcode (CharacterHandler.cpp:346)
+#                      returns CHAR_CREATE_DISABLED, which the client shows as a
+#                      real message. Config, so it is reversible without a
+#                      migration and survives a world database re-import.
+#   delete the rows -> Player::Create finds no PlayerInfo, returns false, and
+#                      logs "Possible hacking-attempt" for every honest player
+#                      who picked a hidden class. The client just says failed.
+#
+# Neither one removes anything from the creation SCREEN. In 3.3.5a that list is
+# drawn from the client's own CharBaseInfo.dbc and ChrClasses.dbc; there is no
+# opcode for it (Opcodes.h has only CMSG/SMSG_CHAR_CREATE, a request and its
+# answer). Hiding or renaming needs a client patch - the launcher's job.
+# --------------------------------------------------------------------------
+
+# Body type -> the class id it is built on.
+# Skirmisher is Hunter (3), not Shaman (7). Paladin x Hunter x Mage is the only
+# chassis triple in which every race has a body type at all - Night Elf has none
+# under Paladin/Shaman/Mage. Approved 2026-09-02; the other five combinations
+# are counted in docs/decisions/0010-body-type-client-patch.md section 10.
+#
+# Everything server-side derives from this line: the creation class mask, the
+# generated stats and race-coverage migrations, and check_client_combos.py.
+# Changing it makes the committed migrations stale - tools/tests/test_body_types.py
+# says so rather than letting the realm quietly offer the wrong chassis.
+BODY_TYPE_CLASSES = {"Vanguard": 2, "Skirmisher": 3, "Adept": 8}
+
+# Bit 512 is unused in 3.3.5, which is why "all classes" is 1535 and not 2047.
+CLASSMASK_ALL_PLAYABLE = 1535
+
+
+def body_type_classmask():
+    """Bits for the classes a body type is built on."""
+    mask = 0
+    for class_id in BODY_TYPE_CLASSES.values():
+        mask |= 1 << (class_id - 1)
+    return mask
+
+
+def disabled_classmask():
+    """Value for CharacterCreating.Disabled.ClassMask: everything else."""
+    return CLASSMASK_ALL_PLAYABLE & ~body_type_classmask()
+
+
 CONF_TEMPLATES = ["authserver", "worldserver"]
+
+
+def find_deployed_configs(name):
+    """Every copy of <name>.conf that a launched server could end up reading.
+
+    On Windows ConfigMgr::GetConfigPath() returns the RELATIVE string
+    "configs/" (Config.cpp:709), so the file a server reads is decided by the
+    directory it was launched from - not by the install prefix. An MSBuild
+    build also drops a second copy under build/bin/<Config>/configs/ on every
+    build (ConfigInstall.cmake), which nothing in this repo used to touch.
+
+    So "the config is correct" is not a property of one file. Find them all.
+    """
+    seen, out = set(), []
+    for root in (dist_dir(), build_dir()):
+        if not root.is_dir():
+            continue
+        for path in root.rglob(f"{name}.conf"):
+            resolved = path.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                out.append(path)
+    return sorted(out)
+
+
+# The keys whose value decides whether this realm behaves like Ashmorrow or
+# like stock AzerothCore. Checked against every config copy on disk, because
+# editing the wrong copy is indistinguishable from not editing at all.
+AUDITED_CONF_KEYS = {
+    "CharacterCreating.Disabled.ClassMask": "character creation limited to the body types",
+    "ValidateSkillLearnedBySpells":         "off-class spells survive a login",
+}
+
+
+def report_deployed_configs():
+    """Show every worldserver.conf on disk and whether it says what we think.
+
+    A realm ran a whole playtest unrestricted because the value was right in
+    one file and stock in the one the server actually read. On Windows
+    ConfigMgr::GetConfigPath() is the relative "configs/" (Config.cpp:709), so
+    which file that is depends on where the server was launched from.
+    """
+    expected = {
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+        "ValidateSkillLearnedBySpells": "0",
+    }
+    configs = find_deployed_configs("worldserver")
+
+    if not configs:
+        warn("no worldserver.conf found yet - run `ta.py conf` after a build")
+        print()
+        return
+
+    print(f"     worldserver.conf copies found: {len(configs)}")
+    bad = 0
+    for path in configs:
+        launched_from = path.parent.parent
+        print(f"       {path.relative_to(REPO)}")
+        print(f"         read by a server launched from {launched_from.relative_to(REPO) or '.'}/")
+        for key, want in expected.items():
+            got = read_conf_value(path, key)
+            if got == want:
+                print(f"         {c('OK', 'green')}   {key} = {got}")
+            else:
+                bad += 1
+                print(f"         {c('BAD', 'red')}  {key} = {got if got is not None else '(missing)'}"
+                      f"  (expected {want}) - {AUDITED_CONF_KEYS[key]}")
+    if bad:
+        warn(f"{bad} setting(s) wrong. Run `ta.py conf` to fix every copy, then restart.")
+        warn("The server logs which file it read: look for '[Classless] Config in effect:'")
+    print()
+
+
+def conf_keys(path):
+    """The setting names a config file defines, in order."""
+    keys = []
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("[") or "=" not in stripped:
+            continue
+        keys.append(stripped.split("=", 1)[0].strip())
+    return keys
+
+
+def add_missing_module_keys(dist_file, target):
+    """Append settings the .dist has and the deployed config does not.
+
+    Values are never changed - an operator's tuning is theirs. But a key added
+    to the module after their config was written would otherwise never appear,
+    and the only symptom is one line at startup:
+
+        > Config: Missing property Classless.OpenRelicSlot in config file ...
+
+    which is easy to miss in a thousand lines of boot log, and leaves the
+    setting silently on its compiled-in default.
+    """
+    have = set(conf_keys(target))
+    missing = [k for k in conf_keys(dist_file) if k not in have]
+    if not missing:
+        return []
+
+    dist_lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
+    block = ["", "#", "# Added by `ta.py conf`: present in the shipped .dist but missing here.",
+             "# Values are the shipped defaults; existing settings above were not touched.",
+             "#"]
+    for key in missing:
+        for line in dist_lines:
+            stripped = line.strip()
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                block.append(stripped)
+                break
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(block) + "\n")
+    return missing
+
+
+def apply_conf_keys(lines, replacements):
+    """Rewrite the managed keys in a config file, leaving every other line alone.
+
+    Returns (new_lines, {key: (old_value, new_value)}) for the keys that
+    actually changed, so callers can say what they did rather than claiming a
+    file is correct without looking.
+    """
+    out, changed = [], {}
+    for line in lines:
+        stripped = line.strip()
+        for key, value in replacements.items():
+            if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
+                old = stripped.split("=", 1)[1].strip().strip('"') if "=" in stripped else ""
+                new = f'{key} = "{value}"'
+                if old != str(value):
+                    changed[key] = (old, str(value))
+                out.append(new)
+                break
+        else:
+            out.append(line)
+            continue
+    return out, changed
+
+
+def read_conf_value(path, key):
+    """The value a running server would read for one key, or None if absent.
+
+    Mirrors Config.cpp: last-write-wins is NOT how it works - IsDuplicateOption
+    keeps the first - and every '"' is stripped from the value (Config.cpp:327).
+    """
+    if not Path(path).is_file():
+        return None
+    for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("["):
+            continue
+        if "=" not in stripped:
+            continue
+        name, value = stripped.split("=", 1)
+        if name.strip() == key:
+            return value.strip().replace('"', "")
+    return None
 
 
 def cmd_conf(args):
@@ -859,6 +1072,19 @@ def cmd_conf(args):
         "CharacterDatabaseInfo": conn_char,
         "DataDir": str((REPO / "data" / "client").as_posix()),
         "SourceDirectory": str(acore_dir().as_posix()),
+        # Quoting is fine for a number: Config.cpp:327 strips every '"' from a
+        # value before parsing it.
+        "CharacterCreating.Disabled.ClassMask": str(disabled_classmask()),
+
+        # MUST be 0 on a classless realm. Player::_LoadSpells calls
+        # CheckSkillLearnedBySpell on every login (PlayerStorage.cpp:6610), and
+        # that asks GetSkillRaceClassInfo whether the spell's skill line is
+        # valid for the character's race and class. Every off-class ability the
+        # broker sells fails that test, so with this on, purchased spells are
+        # DELETED from character_spell at the next login - silently, apart from
+        # one LOG_ERROR. Off-class spells are the entire point of this realm,
+        # so the guard is wrong here.
+        "ValidateSkillLearnedBySpells": "0",
     }
 
     # AzerothCore's built-in SQL updater shells out to the `mysql` client to
@@ -877,24 +1103,43 @@ def cmd_conf(args):
         if not dist_file.exists():
             warn(f"{dist_file.name} missing, skipping")
             continue
-        if target.exists() and not args.force:
-            warn(f"{target.name} already exists (use --force to regenerate)")
-            continue
-        lines = dist_file.read_text(encoding="utf-8", errors="replace").splitlines()
-        out, seen = [], set()
-        for line in lines:
-            stripped = line.strip()
-            replaced = False
-            for key, value in replacements.items():
-                if stripped.startswith(f"{key} ") or stripped.startswith(f"{key}="):
-                    out.append(f'{key} = "{value}"')
-                    seen.add(key)
-                    replaced = True
-                    break
-            if not replaced:
-                out.append(line)
+        # An existing config is NOT skipped. It used to be, and that is how a
+        # realm ended up running with CharacterCreating.Disabled.ClassMask = 0
+        # for a whole playtest: the repo grew a new managed setting, `ta.py
+        # conf` refused to touch the deployed file, and nothing said so. Only
+        # the keys ta.py owns are rewritten; every hand edit elsewhere in the
+        # file survives. --force still regenerates from the .dist.
+        source = dist_file if (args.force or not target.exists()) else target
+        lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
+        out, changed = apply_conf_keys(lines, replacements)
         target.write_text("\n".join(out) + "\n", encoding="utf-8")
-        ok(f"wrote {target.relative_to(REPO)} ({len(seen)} settings applied)")
+
+        if source is dist_file:
+            ok(f"wrote {target.relative_to(REPO)} from {dist_file.name}")
+        elif changed:
+            ok(f"updated {target.relative_to(REPO)} - {len(changed)} setting(s) were stale:")
+            for key, (old_value, new_value) in changed.items():
+                shown_old = old_value if len(old_value) < 40 else old_value[:37] + "..."
+                shown_new = new_value if len(new_value) < 40 else new_value[:37] + "..."
+                print(f"       {key}: {shown_old or '(empty)'} -> {shown_new}")
+        else:
+            ok(f"{target.relative_to(REPO)} already correct")
+
+        # Every other copy on disk gets the same keys. Writing only the one
+        # under dist/ is how a realm can be "configured" and still run on
+        # stock settings: on Windows the server resolves "configs/" against
+        # its working directory, and an MSBuild build leaves a second copy in
+        # the build tree that a double-clicked worldserver.exe reads instead.
+        for other in find_deployed_configs(name):
+            if other.resolve() == target.resolve():
+                continue
+            other_lines = other.read_text(encoding="utf-8", errors="replace").splitlines()
+            other_out, other_changed = apply_conf_keys(other_lines, replacements)
+            other.write_text("\n".join(other_out) + "\n", encoding="utf-8")
+            if other_changed:
+                warn(f"also updated {other.relative_to(REPO)} "
+                     f"({len(other_changed)} stale) - a server launched from "
+                     f"{other.parent.parent.relative_to(REPO)} reads THIS file, not dist/")
 
     # Module configs live in etc/modules/, not etc/ - that is where CMake
     # installs the .dist files and where worldserver looks for them.
@@ -906,8 +1151,26 @@ def cmd_conf(args):
             target = modules_etc / src.name.replace(".conf.dist", ".conf")
             if not target.exists() or args.force:
                 shutil.copy2(src, target)
-            ok(f"module config {src.name} -> etc/modules/")
+                ok(f"module config {src.name} -> etc/modules/")
+                continue
 
+            # The deployed config is the operator's: their tuning stays. Only
+            # settings that did not exist when they configured are appended.
+            added = add_missing_module_keys(src, target)
+            if added:
+                ok(f"module config {target.name}: added {len(added)} new setting(s)")
+                for key in added:
+                    print(f"       {key}")
+            else:
+                ok(f"module config {target.name} has every setting the module defines")
+
+    print()
+    print(f"     Character creation is limited to the three body types:")
+    for name, class_id in BODY_TYPE_CLASSES.items():
+        print(f"       {name:<11} = class {class_id}")
+    print(f"     CharacterCreating.Disabled.ClassMask = {disabled_classmask()} refuses the rest.")
+    print(f"     The client still SHOWS all ten - that list is in its own DBCs,")
+    print(f"     not something the server sends. See docs/BODY-TYPES.md section 4.")
     print()
     print(f"     Realm name lives in the DATABASE, not these files.")
     print(f"     Run `python3 tools/ta.py db realm` to set it to '{cfg['realm_name']}'.")

@@ -75,6 +75,17 @@ Do not re-derive them from memory; if you doubt one, verify it the same way.
 | Script hooks can grant permissions | **Boolean hooks can only veto** — `CALL_ENABLED_BOOLEAN_HOOKS` returns false if any script says false. **But `OnPlayerIsClass` is not one of them:** it returns `Optional<bool>`, first script with a value wins, and it may return *true* (`ScriptDefines/PlayerScript.cpp:570`, used by `Player::IsClass`, `Player.cpp:1350`). That is the one documented way to loosen a hardcoded class check without a core edit. See `docs/PHASE3-ITEMIZATION.md §4`. |
 | Class-restricted gear is gated by `AllowableClass` | **The class mask is the weaker of two gates and not the one implementing the design.** Armor proficiency is a *skill* granted by a spell, checked separately (`PlayerStorage.cpp:2339`), and plate is sold only by Warrior and Paladin class trainers — `Trainer::IsTrainerValidForPlayer` compares `getClass()` with no hook. Clear the mask and the ladder still holds. The mask **is** cleared on this realm as of Phase 3 — 4,746 gear rows, `classless_item_class_backup` holds the originals. |
 | Relics are gear like any other | **They are the one category no SQL can reach.** `Player::FindEquipSlot` picks the relic slot with a hardcoded `IsClass`, so `AllowableClass` never gets a say. Opened via the `OnPlayerIsClass` hook in `ClasslessRelics.cpp`, behind `Classless.OpenRelicSlot`, default off until a client confirms the slot draws. |
+| The server controls what the character-creation screen offers | **It controls nothing there.** In 3.3.5a the class list, race/class pairs and class names come from the client's `CharBaseInfo.dbc` and `ChrClasses.dbc`; there is no opcode for any of it. The server can only *refuse* a creation (`CharacterCreating.Disabled.ClassMask`, `CharacterHandler.cpp:346`). Hiding or renaming is a client patch. |
+| Limiting classes means deleting `playercreateinfo` rows | **Use the classmask config instead.** Deleting rows makes `Player::Create` return false and log `Possible hacking-attempt` for every honest player who picked a still-listed class. The config returns a real "disabled" response, needs no migration, and survives a world DB re-import. |
+| `CharacterCreating.Disabled.ClassMask` restricts everyone | **Not GMs.** The check is skipped for accounts holding RBAC permission 15, which stock AzerothCore attaches to `Role: Sec Level Moderator` — and the roles nest, so **every account at gmlevel 1+ bypasses it** while gmlevel 0 is blocked correctly. On a realm run by its owner, the tester is the one account exempt. `db-auth/2026_09_01_00_classless_creation_rbac.sql` removes the link; the module warns at startup if it comes back. |
+| One `worldserver.conf` is the config | **There can be several, and Windows picks by working directory.** `ConfigMgr::GetConfigPath()` returns the *relative* `"configs/"` on Windows (`Config.cpp:709`), and an MSBuild build drops a second copy under `build/bin/<Config>/configs/` on every build. Editing the wrong one is indistinguishable from editing nothing. `ta.py conf` writes them all; `ta.py doctor` lists them; the server logs `[Classless] Config in effect:` with the absolute path it read. |
+| A setting being right in the repo means the realm has it | **No.** `ta.py conf` used to skip an existing config entirely, so a key added later never reached a configured realm — a whole playtest ran with character creation unrestricted. It now rewrites its own keys in place. When a config matters, check the deployed file or the startup log, never the generator. |
+| `PSendSysMessage` takes printf format strings | **No — it is fmt.** It forwards to `Acore::StringFormat` (`Chat.h:140`), so the placeholder is `{}`; a `%s` prints literally and the arguments are dropped, with no compile error. A whole playtest saw `You are playing as: %s (%s armor)`. Also cast `uint8` at the call site or fmt prints it as a character. `tools/tests/test_format_strings.py` guards it. |
+| Off-class spells stay learned | **Not with `ValidateSkillLearnedBySpells = 1`.** `Player::_LoadSpells` (`PlayerStorage.cpp:6610`) deletes any spell whose skill line is invalid for the character's race/class, at every login. That is every ability the broker sells. It must be 0 on this realm; `ta.py conf` now forces it and the module warns at startup. |
+| `DBCStructure.h` says where a DBC column is | **The format string is the authority, and they disagree.** `ChrClassesEntry` comments `name[16]` as fields 5-20; `ChrClassesEntryfmt` in `src/server/shared/DataStores/DBCfmt.h` reads `nxix` then sixteen `s`, putting `Name_Lang` at **4-19** with its flags word at 20. The loader parses the format string. The recipe said 5 for a week: it would have left the enUS name untouched and overwritten the flags word — a corruption that looks like "the patch did nothing". |
+| A DBC string offset of 0 points at the start of the string block | **It means "no string", and must be treated as empty without reading.** Blizzard's files open the block with a NUL so the two cannot collide; a repacked table need not, and then every empty reference reads as whatever string is first. Defensive — the measured client does keep the NUL. |
+| The first string column in `ChrClasses` is the name | **`PetNameToken` at field 3 comes first, and a real client fills it on every row** — nine `PET` and the Warlock's `DEMON`, pets or not. So "the first column holding text" finds ten plausible names in the wrong column. Identify a `_Lang` field by its shape — sixteen columns of which a single-locale client populates exactly one — not by its content. |
+| `CharBaseInfo` has 52 rows | **62.** A list written from memory omits the ten Death Knight rows Wrath gave every race. They change no body-type arithmetic, but a fixture that lacks them is not the client's table. |
 | Cloth chest pieces are `INVTYPE_CHEST` | **They are `INVTYPE_ROBE` (20).** Any query comparing armor classes by slot that filters on 5 alone drops cloth entirely and looks like it worked. |
 
 ---
@@ -168,6 +179,15 @@ Coordinate, do not collide:
   array, while `validate()` rejects any schema that is not exactly 1. Bumping
   would break every launcher in a player's hands to announce a field they
   ignore.
+  panel, 0009–0010 launcher again). Check the directory before claiming a
+  number, and never renumber someone else's ADR.
+
+  This has already gone wrong once: the launcher session wrote its body-type ADR
+  as 0008 while the website session was writing the admin panel as 0008, and the
+  collision only surfaced at a merge. It was resolved by moving the *later*
+  claim — the body-type patch is now 0010 — because the admin panel's number was
+  the one this list had already promised. `ls docs/decisions/` costs nothing and
+  is the whole check.
 - **The admin panel needs one thing from the server branch.** `classless_config`
   in the world database, holding `Points.FirstLevel`, `Points.PerLevel` and
   `Points.Bonus`, read by the module at load with `mod_classless.conf` as the
@@ -188,11 +208,13 @@ Coordinate, do not collide:
 | `tools/gen_trees.py` | generates tree SQL, verifies every spell |
 | `tools/spell_cascade.py` | what does granting this spell drag in? |
 | `tools/audit_items.py` | class restrictions on gear, measured; generates the unlock SQL |
+| `tools/gen_body_types.py` | body-type stat curves and race coverage; refuses to emit if it misses an approved anchor |
 | `docs/CLASS-RESTRICTIONS.md` | how AzerothCore enforces class rules, with file:line |
 | `docs/ARCHITECTURE.md` | repo model, module rules |
 | `docs/BODY-TYPES.md` | the three body types, final |
 | `docs/PHASE2-BUDGET.md` | budget design, respec semantics, pricing |
 | `docs/PHASE3-ITEMIZATION.md` | class restrictions on gear: what they cost, the pass, what needs sign-off |
+| `docs/TRAINING-SYSTEM.md` | mastery points: design signed off, schema applied, runtime not written |
 | `docs/ROADMAP.md` | phase status and open questions |
 | `docs/decisions/` | ADRs — read before re-opening a settled question |
 | `web/` | the public site (§9) |
@@ -209,6 +231,20 @@ decides they should. Promoting one is a `git mv` into `data/sql/db-world/`.
 ---
 
 ## 8. Working style that has served this project
+
+**A check that cannot fail reports safety.** This shipped four times in four
+unrelated places — a docs check that matched anywhere in the file, a "no error
+in the log" check run against a server that had died before reading config, an
+RBAC query against the wrong column whose empty result was read as proof, and a
+regex looking for `class` where the SQL writes `Class`. Every one passed while
+the thing it guarded was broken, and a broken check is worse than none because
+it looks like evidence.
+
+So: **every test in `tools/tests/` must run its own detector against known-bad
+input and print a line containing `self-test`.** `test_tests_can_fail.py`
+enforces it in CI and is itself proven to fail when a self-test is removed. It
+proves a self-test ran, not that it is a good one — that still takes judgement
+— but the omission can no longer happen by accident.
 
 - **Verify, don't recall.** Spell IDs, formulas and schemas are all checkable
   against the source tree or the database. Several confident memories here were

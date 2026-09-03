@@ -28,7 +28,9 @@ impl Network {
     pub fn new() -> Network {
         Network {
             agent: ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(10))
+                // Short. A host that does not exist is the normal case before a
+                // realm is deployed, and the interface must not sit on it.
+                .timeout_connect(Duration::from_secs(5))
                 .timeout_read(Duration::from_secs(120))
                 .build(),
             user_agent: format!("AshmorrowLauncher/{}", crate::VERSION),

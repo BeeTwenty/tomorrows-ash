@@ -74,9 +74,31 @@ public:
 
         if (sClasslessConfig.Announce)
         {
-            ChatHandler(player->GetSession()).SendSysMessage(
+            ChatHandler handler(player->GetSession());
+            handler.SendSysMessage(
                 "|cff00ff00[Ashmorrow]|r This realm runs the |cffffcc00classless|r ruleset. "
                 "Seek an Ability Broker to learn from any discipline.");
+
+            // The client shows the underlying class - Paladin, Shaman, Mage -
+            // and nothing server-side can change that (docs/BODY-TYPES.md 4).
+            // So say it, every login, rather than making anyone cross-reference
+            // a table to find out what they are playing.
+            if (ClasslessBodyType const* body = sClasslessMgr.GetBodyType(player))
+            {
+                handler.PSendSysMessage(
+                    "|cff00ff00[Ashmorrow]|r You are playing as: |cffffcc00{}|r ({} armor). {}",
+                    body->Name, body->Armor, body->Description);
+            }
+            else
+            {
+                // Not one of the three. A character made before the creation
+                // restriction existed, or by a GM who bypassed it - and it has
+                // no body type, so nothing in the design applies to it.
+                handler.SendSysMessage(
+                    "|cffff2020[Ashmorrow]|r This character's class is not one of the three "
+                    "body types. It has no armor ladder and no chassis stats - expect the "
+                    "classless rules to behave oddly.");
+            }
         }
     }
 
@@ -100,6 +122,7 @@ public:
 void AddClasslessBrokerScripts();
 void AddClasslessCommandScripts();
 void AddClasslessRelicScripts();
+void AddClasslessChassisScripts();
 
 void Addmod_classlessScripts()
 {
@@ -108,4 +131,5 @@ void Addmod_classlessScripts()
     AddClasslessBrokerScripts();
     AddClasslessCommandScripts();
     AddClasslessRelicScripts();
+    AddClasslessChassisScripts();
 }

@@ -59,6 +59,26 @@ while those await sign-off.
 - [x] Blizzard talent suppression wired (still defaulted off)
 - [x] **Body-type stat deltas approved** — three body types, armor proficiency
       locked to body type. Final numbers in [BODY-TYPES.md](BODY-TYPES.md)
+- [x] **…and applied**, five days later than it should have been. Approving the
+      numbers and writing the migration had been treated as one step, so until
+      2026-08-31 the realm was still stock and the three body types were
+      numerically identical to Paladin / Shaman / Mage under new names.
+      (Skirmisher moved from Shaman to Hunter on 2026-09-02 — ADR 0010 §10.)
+      `tools/gen_body_types.py` now generates the full 1–80 curve from the
+      approved level 60 and 80 anchors and refuses to emit if it misses either.
+- [x] **The server accepts every race/body-type pair** — 16 `playercreateinfo`
+      rows. Only Draenei could be all three before; Night Elf could be none.
+- [ ] **…but the client still refuses them**, and that was reported as done
+      once already. The creation screen reads `CharBaseInfo.dbc` and validates
+      locally, so a Human selecting Skirmisher never reaches the server. Needs
+      the client patch; `tools/check_client_combos.py` reports the gap per race
+      from extracted client data.
+- [x] **Character creation limited to the three body types** —
+      `CharacterCreating.Disabled.ClassMask = 1341`, written by `ta.py conf`
+      and checked by `tools/tests/test_body_types.py`. The seven other classes
+      are refused. They are still **listed** by the client, which reads that
+      menu from its own DBCs; hiding or renaming them needs a client patch.
+      See [BODY-TYPES.md §4](BODY-TYPES.md).
 - [x] **Real tree data** — 10 trees, 50 abilities, 200 points (36% affordable at
       level 80, inside the approved 30–50% band). Every spell verified against
       the world DB by `tools/gen_trees.py`, which refuses to emit SQL otherwise.
@@ -113,6 +133,58 @@ number with `python3 tools/audit_items.py`.
       ranged-weapon slot. [Checklist §9](PHASE3-ITEMIZATION.md).
 - [ ] Glyphs — 246 dead rows, **out of scope by decision**; revisit at content
       scoping before launch.
+
+---
+
+## Chassis swap — Skirmisher is Hunter ✅ closed
+
+- [x] **Migrations regenerated** against a live world DB and applied: race
+      coverage now adds 3 Hunter pairs (Hunter natively covers 7 of 10 races),
+      the stat migration writes only class 8, and a cleanup migration reverts
+      what the Shaman-era versions did — Shaman's stats back to stock, the six
+      added Shaman race rows removed, stock rows untouched.
+- [x] **`test_migrations_match_chassis.py` wired into CI**, after fixing a
+      case-sensitivity bug that made its class-stats check match nothing and
+      report "skipped". It now carries self-tests proving both detectors catch
+      the real stale content they missed.
+- [x] **Skirmisher anchor approved and applied** — Stamina 105 at 60, 148 at
+      80, by the rule "total equals the Adept's, difference to Stamina".
+      Totals 587 / 590 / 590. Ranged AP kept at the corrected 331.
+- [x] **Both generator halves were diffing against the live realm, not stock**,
+      so re-running after applying emitted an empty race migration and dropped
+      the Adept's whole curve. A fresh install would have got stock stats and
+      four missing race pairs. Both now reconstruct stock from the backup
+      tables; verified by applying to a stock-like copy and reading back
+      30 pairs and 587/590/590.
+
+---
+
+## Training system — reopened by the first playtest
+
+Full write-up: [TRAINING-SYSTEM.md](TRAINING-SYSTEM.md).
+
+- [x] **Character creation restriction verified in play** (2026-09-01): Warrior
+      refused, Paladin created. Took three attempts — the deployed config was
+      never rewritten, then the check turned out to be skipped for every
+      account at gmlevel 1+, which is the account an owner tests with.
+- [x] **Two bugs fixed.** Character creation was never restricted on the realm
+      (the config existed in the repo but `ta.py conf` skipped the deployed
+      file), and `ValidateSkillLearnedBySpells = 1` was deleting every
+      broker-taught ability at the player's next login. Both are managed
+      settings now, and worldserver audits them at every start.
+- [x] **Mastery points signed off; schema and trainer strip applied.** Ranks
+      priced by their stock level gate. The quest grant is capped per character
+      level — validation measured 5,786 reachable quests against 1,250 to max
+      everything, so an uncapped grant would have overshot the ceiling by more
+      than double. 419 trainer rows stripped so ranks cannot be bought with
+      gold; Plate Mail survives, so the armor ladder is untouched.
+- [ ] **The mastery runtime is not written** — earning hooks, broker rank
+      pages, respec integration, `.classless mastery`. Schema is settled.
+- [x] **Body type is now shown in game** — login message and `.classless
+      status`, names in `classless_body_type` so they stay renameable.
+- [ ] **Spellbook tabs** — broker spells land under General because the client
+      builds tabs from skill lines the character has. Possible server-side fix
+      is unverified and cosmetic; last of the four.
 
 ---
 

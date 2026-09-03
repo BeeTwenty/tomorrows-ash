@@ -1,0 +1,279 @@
+name: Launcher build
+
+# Builds the launcher for Windows and Linux.
+#
+# On a push or PR that touches launcher/, it builds and leaves the installers
+# as downloadable workflow artifacts — so a testable .exe exists without anyone
+# having to own a Windows machine or compile anything.
+#
+# On a `launcher-v*` tag it does the same and additionally opens a draft
+# release with SHA-256 sums.
+#
+# The binaries are deliberately UNSIGNED (docs/decisions/0005-client-distribution.md
+# §6), so the sums are how anyone checks what they downloaded. Publishing them
+# is part of the release, not an extra.
+#
+# Cross-compiling a Windows launcher from Linux is not realistically supported
+# by Tauri, so each platform is built on its own runner. That is the whole
+# reason this workflow exists rather than a line in a README.
+
+on:
+  push:
+    tags:
+      - "launcher-v*"
+    branches:
+      - "**"
+    # Deliberately NO `paths` filter on push. A path filter is ANDed with the
+    # ref filter and is evaluated against the pushed commit range, which for a
+    # tag placed on an already-pushed commit can be empty — so a release tag
+    # would silently build nothing. A wasted build on a docs commit is cheaper
+    # than a release that does not happen. The PR trigger below can filter
+    # safely, because a pull request always has a diff.
+  pull_request:
+    paths:
+      - "launcher/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+# On a pull request `github.sha` is the ephemeral merge commit GitHub makes for
+# the run. It is not in anyone's clone, so a build stamped or named with it is a
+# build nobody can look up — which is exactly the failure the stamp exists to
+# prevent. The pull request's head commit is the one that was actually written.
+env:
+  ASHMORROW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+# A second push to the same branch makes the first build irrelevant.
+concurrency:
+  group: launcher-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (.exe, .msi)
+            # NSIS produces the .exe installer; msi is the enterprise-friendly one.
+            bundles: nsis,msi
+          # 22.04 rather than latest: an AppImage inherits the glibc of the
+          # machine that built it, so building on the newest Ubuntu produces a
+          # bundle that will not start on a slightly older distribution.
+          - os: ubuntu-22.04
+            label: Linux (.AppImage, .deb)
+            bundles: appimage,deb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            build-essential \
+            curl \
+            file \
+            patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            launcher/package-lock.json
+            launcher/ui/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Two workspaces: the shell, and the core the manifest tool is built
+          # from. They have separate target directories.
+          workspaces: |
+            launcher/src-tauri
+            launcher/core
+
+      # One install: launcher/package.json's postinstall runs `npm ci --prefix ui`,
+      # so both lockfiles are honoured from a single command.
+      - name: Install exactly what the lockfiles say
+        working-directory: launcher
+        run: npm ci
+
+      # The core's tests need no webview, so a release that would ship broken
+      # verification logic fails here rather than on a player's machine.
+      - name: Test the core before bundling it
+        run: cargo test --manifest-path launcher/core/Cargo.toml
+
+      # The launcher is not the only thing a player is asked to run. `inspect-dbc`
+      # is how anyone finds out what their client's class tables actually say,
+      # and `hash` is how a manifest gets made — both jobs that need a real
+      # client, which means the machine that has one needs the binary. Shipping
+      # only the GUI made the tool available exclusively to people who could
+      # already build Rust, which is the opposite of who needs it.
+      - name: Build the manifest tool
+        run: cargo build --release --manifest-path launcher/core/Cargo.toml --bin ashmorrow-manifest
+
+      - name: Build
+        working-directory: launcher
+        env:
+          # Stamped into the interface so a screenshot says which commit it is.
+          # Two bug reports have now been impossible to place against a build.
+          ASHMORROW_BUILD: ${{ env.ASHMORROW_SHA }}
+        run: npm run build -- --bundles ${{ matrix.bundles }}
+
+      # Actually run it. The launcher has shipped broken twice with every other
+      # check green, both times because nothing anywhere started the binary:
+      # `cargo test` cannot (the shell needs a webview) and the interface
+      # harness stubs the bridge it is meant to be testing. This starts the real
+      # binary under a real webview and a real ACL, drives it to a launch, and
+      # asserts on what it did to the filesystem. Windows has no equivalent yet,
+      # so a Windows-only regression is still on the player to find.
+      - name: The launcher starts, verifies a client and runs the game
+        if: runner.os == 'Linux'
+        env:
+          SMOKE_ARTIFACTS: ${{ runner.temp }}/smoke
+        run: |
+          sudo apt-get install -y xvfb xdotool imagemagick
+          launcher/test/smoke-linux.sh
+
+      # The two failures players reported were both on Windows, and both times
+      # nothing here had ever started the .exe. Now something does. It cannot
+      # prove a game launch — that needs a real Wow.exe — but the interface
+      # reports on its own startup, which is where both bugs actually were.
+      - name: The .exe starts and its interface comes up
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: launcher/test/smoke-windows.ps1
+
+      # What the window looked like when it gave up, which is the one thing a
+      # log of a GUI failure never tells you.
+      - uses: actions/upload-artifact@v4
+        if: failure() && runner.os == 'Linux'
+        with:
+          name: smoke-failure-${{ env.ASHMORROW_SHA }}
+          path: ${{ runner.temp }}/smoke
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Collect the bundles and sum them
+        id: collect
+        shell: bash
+        run: |
+          mkdir -p dist
+          # Copy out of the bundle tree rather than uploading it whole: the
+          # tree also holds intermediate directories nobody wants to download.
+          find launcher/src-tauri/target/release/bundle \
+            -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.AppImage' -o -name '*.deb' \) \
+            -exec cp {} dist/ \;
+
+          # The bare executable too. For testing a change it beats the
+          # installer: no install, no uninstall, no shortcut left behind.
+          for bare in launcher/src-tauri/target/release/ashmorrow-launcher \
+                      launcher/src-tauri/target/release/ashmorrow-launcher.exe; do
+            [ -f "$bare" ] && cp "$bare" dist/
+          done
+
+          # And the manifest tool, which is the half of this that runs against a
+          # real client: `inspect-dbc` to read its class tables, `hash` to make a
+          # manifest, `check` to verify one.
+          tool=""
+          for candidate in launcher/core/target/release/ashmorrow-manifest \
+                           launcher/core/target/release/ashmorrow-manifest.exe; do
+            [ -f "$candidate" ] && { cp "$candidate" dist/; tool="$candidate"; }
+          done
+          if [ -z "$tool" ]; then
+            echo "ashmorrow-manifest was not built. It shipped missing once — the"
+            echo "artifact held only the GUI, so nobody with a client could run"
+            echo "inspect-dbc without a Rust toolchain. Failing rather than"
+            echo "publishing that again."
+            exit 1
+          fi
+
+          if [ -z "$(ls -A dist)" ]; then
+            echo "No bundles were produced. The build reported success, so this is a"
+            echo "packaging problem rather than a compile error — check the bundle"
+            echo "targets in launcher/src-tauri/tauri.conf.json."
+            exit 1
+          fi
+
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          echo "--- produced ---"
+          cat SHA256SUMS.txt
+
+      # Named with the short SHA so several builds in the Actions list are
+      # tellable apart at a glance.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ runner.os }}-${{ env.ASHMORROW_SHA }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag publishes. A manual run builds and leaves the artifacts on the
+    # workflow run, which is what you want when checking a build before tagging.
+    if: startsWith(github.ref, 'refs/tags/launcher-v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+          merge-multiple: false
+
+      - name: Gather everything into one directory
+        run: |
+          mkdir -p dist
+          find incoming -type f -not -name 'SHA256SUMS.txt' -exec cp {} dist/ \;
+          # One combined sums file across both platforms, rather than two that
+          # each cover half of what the release page offers.
+          cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: true
+          generate_release_notes: true
+          body: |
+            ## Ashmorrow launcher
+
+            Verifies a World of Warcraft 3.3.5a client **you already own**, points
+            it at the realm, and starts the game. It does not download a game
+            client — see the [distribution decision](https://github.com/BeeTwenty/tomorrows-ash/blob/main/docs/decisions/0005-client-distribution.md).
+
+            ### Which file
+
+            | You are on | Download |
+            |---|---|
+            | Windows | `Ashmorrow_*_x64-setup.exe` — or the `.msi` if you deploy by policy |
+            | Linux | `Ashmorrow_*.AppImage` (any distribution) or the `.deb` |
+
+            ### These binaries are unsigned
+
+            On purpose — signing needs a certificate bound to a verified legal
+            identity, which is a decision to take deliberately rather than by
+            default. Expect a SmartScreen warning on Windows. `SHA256SUMS.txt`
+            is how you check what you downloaded:
+
+            ```
+            sha256sum -c SHA256SUMS.txt          # Linux
+            certutil -hashfile <file> SHA256     # Windows
+            ```
+
+            ### Linux
+
+            Install Wine from your distribution first; the launcher does
+            everything after that, including the Wine prefix and DXVK.

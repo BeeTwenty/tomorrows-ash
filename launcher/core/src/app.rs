@@ -127,10 +127,27 @@ impl App {
      * Manifest
      * ----------------------------------------------------------------- */
 
+    /// Where the manifest is fetched from: the player's setting, else the
+    /// address this binary was built with.
+    ///
+    /// A setting rather than only a constant because a player running their own
+    /// realm has their own site, and because the built-in default may point at
+    /// a deployment that does not exist yet — which has to be fixable from the
+    /// interface rather than being a reason the launcher is useless.
+    pub fn base_url(&self) -> String {
+        self.settings
+            .realm_site
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| !url.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.base_url.clone())
+    }
+
     pub fn refresh_manifest(&mut self, http: &dyn Http) -> Result<()> {
         let url = format!(
             "{}/api/launcher/manifest",
-            self.base_url.trim_end_matches('/')
+            self.base_url().trim_end_matches('/')
         );
         let bytes = http.get(&url)?;
         self.manifest = Some(Manifest::parse(&bytes)?);
@@ -359,7 +376,7 @@ impl App {
     pub fn login(&mut self, http: &dyn Http, username: &str, password: &str) -> Result<Account> {
         let url = format!(
             "{}/api/launcher/session",
-            self.base_url.trim_end_matches('/')
+            self.base_url().trim_end_matches('/')
         );
         let body = serde_json::json!({ "username": username, "password": password }).to_string();
 
@@ -490,12 +507,14 @@ impl App {
             None => {
                 rows.push(row(
                     "REALMLIST",
-                    "waiting for the realm",
-                    RowState::Busy,
-                    "",
+                    "no realm address",
+                    RowState::Warn,
+                    "set one in Settings, or point the launcher at your realm's website",
                 ));
                 if blocked.is_empty() {
-                    blocked = "could not reach the realm for its configuration".into();
+                    blocked = "no realm address yet — set one in Settings, or point the \
+                               launcher at your realm's website so it can fetch one"
+                        .into();
                 }
             }
         }
@@ -818,6 +837,32 @@ mod tests {
 
         let restarted = app_in(dir.path());
         assert_eq!(restarted.client().map(|c| c.root.clone()), Some(client_dir));
+    }
+
+    /// The website address is a setting the interface writes. Nothing checked
+    /// that the Rust actually *read* it, and for one commit it did not — the
+    /// field existed, the interface saved it, and the fetch ignored it.
+    #[test]
+    fn the_site_setting_is_what_the_manifest_is_fetched_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_in(dir.path());
+        assert_eq!(app.base_url(), "https://ashmorrow.example");
+
+        app.settings.realm_site = Some("  https://my-realm.example/  ".into());
+        assert_eq!(app.base_url(), "https://my-realm.example/");
+
+        // Blank is not an override; it means "use what shipped".
+        app.settings.realm_site = Some("   ".into());
+        assert_eq!(app.base_url(), "https://ashmorrow.example");
+
+        // And it is the URL actually requested.
+        app.settings.realm_site = Some("https://my-realm.example".into());
+        let http = FakeHttp::new(&[(
+            "https://my-realm.example/api/launcher/manifest",
+            &manifest_json(),
+        )]);
+        app.refresh_manifest(&http)
+            .expect("should fetch from the setting");
     }
 
     #[test]

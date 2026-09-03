@@ -172,6 +172,13 @@ mod tests {
 }
 "#;
 
+    /// Unix-only, and deliberately so: `discover()` returns early on Windows,
+    /// so Steam library parsing never runs there and Unix path semantics are
+    /// the only ones that matter. `Path::is_absolute` disagrees across
+    /// platforms — `/home/player` is not absolute to Windows, which has no
+    /// drive letter to anchor it — and asserting otherwise would be asserting
+    /// about a code path that cannot execute.
+    #[cfg(unix)]
     #[test]
     fn reads_every_library_path_and_nothing_else() {
         let paths = parse_library_folders(VDF);
@@ -184,6 +191,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn ignores_relative_and_malformed_entries() {
         let vdf = "\t\"path\"\t\t\"not/absolute\"\n\t\"label\"\t\t\"/absolute/but/not/a/path/key\"\n\"path\"\n";
