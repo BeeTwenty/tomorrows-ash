@@ -31,6 +31,36 @@ CREATE TABLE IF NOT EXISTS `classless_createinfo_added` (
   COMMENT='mod-classless: race/class pairs this realm added, so they can be removed again';
 
 
+-- Orc Vanguard (race 2, class 2), action bar from Blood Elf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (2, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (2, 2, 1, 14, -618.518, -4251.67, 38.718, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 2, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 10 AND `class` = 2;
+
+-- Night Elf Vanguard (race 4, class 2), action bar from Human
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (4, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (4, 2, 1, 141, 10311.3, 832.463, 1326.41, 5.69632);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 4, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 1 AND `class` = 2;
+
+-- Undead Vanguard (race 5, class 2), action bar from Blood Elf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (5, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (5, 2, 0, 85, 1676.71, 1678.31, 121.67, 2.70526);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 5, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 10 AND `class` = 2;
+
+-- Tauren Vanguard (race 6, class 2), action bar from Blood Elf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (6, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (6, 2, 1, 215, -2917.58, -257.98, 52.9968, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 6, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 10 AND `class` = 2;
+
+-- Gnome Vanguard (race 7, class 2), action bar from Human
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (7, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (7, 2, 0, 1, -6240.32, 331.033, 382.758, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 7, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 1 AND `class` = 2;
+
+-- Troll Vanguard (race 8, class 2), action bar from Blood Elf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (8, 2);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (8, 2, 1, 14, -618.518, -4251.67, 38.718, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 8, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 10 AND `class` = 2;
+
 -- Human Skirmisher (race 1, class 3), action bar from Dwarf
 INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (1, 3);
 INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (1, 3, 0, 12, -8949.95, -132.493, 83.5312, 0);
@@ -45,3 +75,23 @@ INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action
 INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (7, 3);
 INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (7, 3, 0, 1, -6240.32, 331.033, 382.758, 0);
 INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 7, 3, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 3 AND `class` = 3;
+
+-- Orc Adept (race 2, class 8), action bar from Undead
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (2, 8);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (2, 8, 1, 14, -618.518, -4251.67, 38.718, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 2, 8, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 5 AND `class` = 8;
+
+-- Dwarf Adept (race 3, class 8), action bar from Human
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (3, 8);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (3, 8, 0, 1, -6240.32, 331.033, 382.758, 6.17716);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 3, 8, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 1 AND `class` = 8;
+
+-- Night Elf Adept (race 4, class 8), action bar from Human
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (4, 8);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (4, 8, 1, 141, 10311.3, 832.463, 1326.41, 5.69632);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 4, 8, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 1 AND `class` = 8;
+
+-- Tauren Adept (race 6, class 8), action bar from Undead
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (6, 8);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (6, 8, 1, 215, -2917.58, -257.98, 52.9968, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 6, 8, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 5 AND `class` = 8;

@@ -136,7 +136,7 @@ number with `python3 tools/audit_items.py`.
 
 ---
 
-## Chassis swap — Skirmisher is Hunter
+## Chassis swap — Skirmisher is Hunter ✅ closed
 
 - [x] **Migrations regenerated** against a live world DB and applied: race
       coverage now adds 3 Hunter pairs (Hunter natively covers 7 of 10 races),
@@ -147,11 +147,15 @@ number with `python3 tools/audit_items.py`.
       case-sensitivity bug that made its class-stats check match nothing and
       report "skipped". It now carries self-tests proving both detectors catch
       the real stale content they missed.
-- [ ] **The Skirmisher has no approved stat anchor.** Class 3 is stock and
-      un-tuned; the Shaman-derived numbers do not transfer. Three questions in
-      [BODY-TYPES.md §2.3](BODY-TYPES.md).
-- [ ] **Ranged attack power** — 331 against the Vanguard's 80, arrived with the
-      class id. Keep or neutralise; [§2.1](BODY-TYPES.md).
+- [x] **Skirmisher anchor approved and applied** — Stamina 105 at 60, 148 at
+      80, by the rule "total equals the Adept's, difference to Stamina".
+      Totals 587 / 590 / 590. Ranged AP kept at the corrected 331.
+- [x] **Both generator halves were diffing against the live realm, not stock**,
+      so re-running after applying emitted an empty race migration and dropped
+      the Adept's whole curve. A fresh install would have got stock stats and
+      four missing race pairs. Both now reconstruct stock from the backup
+      tables; verified by applying to a stock-like copy and reading back
+      30 pairs and 587/590/590.
 
 ---
 

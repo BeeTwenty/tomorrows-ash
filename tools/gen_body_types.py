@@ -47,20 +47,30 @@ APPROVED = {
     # class: {level: {column: approved value}}
     2: {},                                     # Vanguard: the reference, untouched
 
-    # Skirmisher: NO APPROVED ANCHOR YET.
+    # Skirmisher: approved 2026-09-02, after the Hunter chassis swap.
     #
-    # The chassis moved from Shaman (7) to Hunter (3), and the anchors this
-    # file used to hold were derived against Shaman's stat line. They do not
-    # transfer: Hunter's stock spread is a different shape entirely - Agility
-    # 181 against Shaman's 74, Strength 74 against 120 - and its stat total at
-    # 80 is 570 where Shaman's was 601. The old target was "trim 6 Stamina to
-    # land on 595"; the equivalent for Hunter would be to ADD about 20, and
-    # where to put it is a balance decision, not arithmetic.
+    # The rule is one line: the Skirmisher's stat total equals the ADEPT's at
+    # each anchor, and the whole difference goes to Stamina. The Adept is the
+    # other tuned chassis; the Vanguard is the untouched reference, so matching
+    # it would mean chasing a number nobody set deliberately.
     #
-    # An empty dict means "leave this class on stock", which is honest: the
-    # Skirmisher is currently un-tuned and the generator says so rather than
-    # inventing numbers nobody approved. See docs/BODY-TYPES.md section 2.3.
-    3: {},
+    #            Str  Agi  Sta  Int  Spi   total
+    #   L60      55  125   90   65   70     405  stock Hunter
+    #            55  125  105   65   70     420  +15 Stamina, equals the Adept
+    #   L80      74  181  128   90   97     570  stock Hunter
+    #            74  181  148   90   97     590  +20 Stamina, equals the Adept
+    #
+    # Stamina rather than Agility on purpose: the chassis already gained 331
+    # ranged attack power from the swap (BODY-TYPES.md 2.1), and the free
+    # points go to surviving rather than compounding that. Same reasoning as
+    # the Adept's Stamina bump.
+    #
+    # Note this puts Skirmisher Stamina slightly ABOVE the Vanguard's - 148
+    # against 143 at 80, 105 against 100 at 60. About 50 HP at level 80. The
+    # plate chassis keeps a large armour lead, so it is not a tanking
+    # inversion, but it is a consequence of the rule rather than a choice.
+    3: {60: {"Stamina": 105},
+        80: {"Stamina": 148}},
 
     8: {60: {"BaseHP": 1400, "BaseMana": 1500, "Strength": 45, "Agility": 45,
              "Stamina": 70, "Intellect": 130, "Spirit": 130},
@@ -112,7 +122,18 @@ def interpolate(delta_60, delta_80, level):
 
 
 def stock_curve(cfg):
-    """{class: {level: {column: value}}} straight from the realm."""
+    """{class: {level: {column: value}}} as STOCK, not as the realm reads now.
+
+    Same trap as build_races, and found the same way. The realm's live values
+    are whatever this migration last wrote, so diffing against them makes an
+    already-tuned class look unchanged and emits no UPDATE for it at all. Run
+    the generator twice and the second file silently drops every class that was
+    already correct - it still applies, still passes the chassis test, and a
+    fresh realm gets stock stats.
+
+    classless_class_stats_backup holds the pre-tuning rows, so where it has a
+    row it IS stock and overrides the live value.
+    """
     wanted = ",".join(str(c) for c in sorted(BODY_TYPE_CLASSES.values()))
     rows = query(cfg, "SELECT Class, Level, " + ", ".join(STAT_COLUMNS) +
                       f" FROM player_class_stats WHERE Class IN ({wanted}) ORDER BY Class, Level")
@@ -122,6 +143,18 @@ def stock_curve(cfg):
         out.setdefault(class_id, {})[level] = {
             col: int(value) for col, value in zip(STAT_COLUMNS, row[2:])
         }
+
+    has_backup = query(cfg, "SELECT COUNT(*) FROM information_schema.tables "
+                            f"WHERE table_schema = '{cfg['db_world']}' "
+                            "AND table_name = 'classless_class_stats_backup'")
+    if has_backup and has_backup[0][0] != "0":
+        for row in query(cfg, "SELECT Class, Level, " + ", ".join(STAT_COLUMNS) +
+                              " FROM classless_class_stats_backup"):
+            class_id, level = int(row[0]), int(row[1])
+            if class_id in out and level in out[class_id]:
+                out[class_id][level] = {
+                    col: int(value) for col, value in zip(STAT_COLUMNS, row[2:])
+                }
     return out
 
 
@@ -240,9 +273,28 @@ FROM `player_class_stats` WHERE `Class` IN (TUNED_CLASSES);
 # --------------------------------------------------------------------------
 
 def build_races(cfg):
-    """Missing (race, body type) pairs, with a start position and a donor."""
+    """Missing (race, body type) pairs, with a start position and a donor.
+
+    "Missing" means missing from STOCK, not missing from the database right
+    now. Rows this project added are tracked in classless_createinfo_added and
+    subtracted back out before the comparison.
+
+    Without that, the generator is not idempotent against its own output: run
+    it once, apply the migration, run it again, and it finds nothing missing
+    and writes an EMPTY file - which still applies cleanly, still passes the
+    chassis test, and quietly leaves a fresh realm with no rows at all. Caught
+    exactly that way on 2026-09-02.
+    """
     existing = {(int(r), int(c_)) for r, c_ in
                 query(cfg, "SELECT race, class FROM playercreateinfo")}
+
+    ours = set()
+    if query(cfg, "SELECT COUNT(*) FROM information_schema.tables "
+                  f"WHERE table_schema = '{cfg['db_world']}' "
+                  "AND table_name = 'classless_createinfo_added'")[0][0] != "0":
+        ours = {(int(r), int(c_)) for r, c_ in
+                query(cfg, "SELECT race, class FROM classless_createinfo_added")}
+    existing -= ours
 
     # A race's start position is a property of the race, not the class - every
     # class of a race shares it, except the Death Knight, who starts in Ebon

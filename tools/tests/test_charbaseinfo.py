@@ -58,21 +58,21 @@ try:
     read_char_base_info(write(b"NOPE" + bytes(64)))
     fails.append("a non-WDBC file was accepted")
 except ValueError as exc:
-    print(f"3. wrong magic          -> refused ({str(exc).split(':')[-1].strip()[:40]})")
+    print(f"3. self-test (bad magic) -> refused ({str(exc).split(':')[-1].strip()[:40]})")
 
 # --- 4. truncated file: header promises more than exists ---
 try:
     read_char_base_info(write(build(sorted(stock), lie_about_count=99)))
     fails.append("a truncated file was accepted")
 except ValueError as exc:
-    print("4. truncated file       -> refused")
+    print("4. self-test (truncated) -> refused")
 
 # --- 5. a record too small to hold a race/class pair ---
 try:
     read_char_base_info(write(b"WDBC" + struct.pack("<4I", 1, 1, 1, 0) + b"\x01"))
     fails.append("a 1-byte record size was accepted")
 except ValueError:
-    print("5. record size 1        -> refused")
+    print("5. self-test (bad size)  -> refused")
 
 # --- 6. an empty but valid file reads as empty, and does NOT throw ---
 # This is the case that would masquerade as a finding, so it must be explicit.
@@ -80,7 +80,7 @@ pairs, count, _, _ = read_char_base_info(write(b"WDBC" + struct.pack("<4I", 0, 2
 if pairs or count:
     fails.append("an empty file did not read as empty")
 else:
-    print("6. empty but valid      -> reads as empty, no exception")
+    print("6. self-test (empty)     -> reads as empty and does NOT throw, so an\n                              empty result is distinguishable from a parse failure")
 
 print()
 print("FAILURES:" if fails else "all CharBaseInfo parser tests passed")

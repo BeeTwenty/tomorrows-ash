@@ -218,42 +218,41 @@ It matters mainly to §5's claim of a "20× AP spread": 522 ÷ 45 is **11.6×**,
 20×. The design point survives — an Adept still cannot melee — but the gap it
 rests on is about half as wide as stated.
 
-### 2.3 The Skirmisher has no approved stat anchor — open
+### 2.3 The Skirmisher's anchor — approved 2026-09-02
 
-The stat migration is regenerated and now writes **only class 8**. Class 3 is
-left on stock, deliberately, because the approved numbers do not transfer and
-inventing replacements is not mine to do.
+One rule: **the Skirmisher's stat total equals the Adept's at each anchor, and
+the whole difference goes to Stamina.** The Adept is the other tuned chassis;
+the Vanguard is the untouched reference, so matching it would mean chasing a
+number nobody set deliberately.
 
-Measured at level 80:
-
-| | Str | Agi | Sta | Int | Spi | **total** |
+| level 80 | Str | Agi | Sta | Int | Spi | **total** |
 |---|---:|---:|---:|---:|---:|---:|
 | Vanguard — Paladin (2) | 151 | 90 | 143 | 98 | 105 | **587** |
-| Adept — Mage (8), tuned | 55 | 55 | 110 | 190 | 180 | **590** |
-| Skirmisher — **Hunter (3), stock** | 74 | 181 | 128 | 90 | 97 | **570** |
-| *(old Shaman (7) as shipped)* | *120* | *74* | *130* | *128* | *143* | *595* |
+| Skirmisher — Hunter (3) | 74 | 181 | **148** *(+20)* | 90 | 97 | **590** |
+| Adept — Mage (8) | 55 | 55 | 110 | 190 | 180 | **590** |
 
-The old anchor was "trim 6 Stamina to land on 595". Hunter starts at **570**,
-so the equivalent move is to **add about 20**, not remove six — the opposite
-direction. And the shape is different in a way arithmetic cannot resolve:
-Hunter's Agility is 181 against Shaman's 74, its Strength 74 against 120. The
-middle chassis has gone from a Strength/Spirit build to an Agility one.
+| level 60 | Str | Agi | Sta | Int | Spi | **total** |
+|---|---:|---:|---:|---:|---:|---:|
+| Vanguard | 105 | 65 | 100 | 70 | 75 | **415** |
+| Skirmisher | 55 | 125 | **105** *(+15)* | 65 | 70 | **420** |
+| Adept | 45 | 45 | 70 | 130 | 130 | **420** |
 
-Three things need a decision, and the first mandate for this project asked to
-approve actual numbers rather than a strategy name:
+Stamina rather than Agility on purpose: the chassis already gained 331 ranged
+attack power from the swap (§2.1), and the free points go to surviving rather
+than compounding a strength it did not ask for. Same reasoning as the Adept's
+Stamina bump.
 
-1. **Does the ~590 parity target still hold?** Hunter is 20 short. Adding it
-   keeps "near-identical budgets, the differentiator is armor and
-   distribution".
-2. **Where does it go?** Stamina is the safe answer and the one the Adept's
-   rationale used. Intellect/Spirit would push the Skirmisher back toward the
-   caster half it occupied as a Shaman.
-3. **Does the ranged attack power stay?** §2.1: 331 against the Vanguard's 80.
-   Keeping it gives the middle chassis an identity; neutralising it via
-   `OnPlayerIsClass` makes the swap a pure availability change.
+**One consequence worth naming:** this puts the Skirmisher's Stamina slightly
+*above* the Vanguard's — 148 against 143 at 80, 105 against 100 at 60, about
+50 HP. The plate chassis keeps a large armour lead so it is not a tanking
+inversion, but the mail chassis is now marginally the beefier of the two on
+paper. It falls out of the rule rather than being chosen; capping Stamina at
+the Vanguard's and putting the remainder in Spirit is a one-line change if it
+plays badly.
 
-Until 1 and 2 are answered, the Skirmisher is playable and un-tuned: stock
-Hunter, which is a coherent chassis, just not one anybody signed off.
+**Ranged attack power stays**, re-approved at the corrected 331 (§2.1). A mail
+chassis with real ranged power is a coherent niche, and the same argument that
+carried at 224 carries at 331.
 
 ---
 

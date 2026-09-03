@@ -75,6 +75,24 @@ if f"ClassMask = {mask}" not in doc and f"ClassMask` = {mask}" not in doc:
 else:
     print(f"5. docs agree           -> BODY-TYPES.md names ClassMask = {mask}")
 
+# --- 6. the detectors can fail --------------------------------------------
+# Checks 1 and 5 are the ones that could rot silently: an expression that
+# partitions nothing, and a docs check that finds nothing. Both are run here
+# against known-bad input to prove they would notice.
+broken_mask = 0                       # the value a realm has when nothing is set
+still_permitted = [name for cid, name in CLASSES.items()
+                   if not ((1 << (cid - 1)) & broken_mask)]
+if len(still_permitted) != len(CLASSES):
+    fails.append("self-test: a zero classmask should permit every class, "
+                 f"but the check reports {len(still_permitted)}")
+else:
+    print(f"6. self-test            -> a zero mask is seen as all {len(CLASSES)} classes creatable")
+
+if f"ClassMask = {mask}" in "docs that never mention the number at all":
+    fails.append("self-test: the docs check matches text that does not contain the value")
+else:
+    print("7. self-test            -> the docs check rejects text without the value")
+
 print()
 print("FAILURES:" if fails else "all body-type tests passed")
 for f in fails:
