@@ -96,9 +96,9 @@ try:
     p.choice("x", [("a","A","d"),("b","B","d")], override="nope")
     fails.append("invalid --db value was accepted")
 except SystemExit:
-    print("6. bad flag value       -> rejected")
+    print("6. self-test (bad flag)  -> rejected")
 except ta.Fail:
-    print("6. bad flag value       -> rejected")
+    print("6. self-test (bad flag)  -> rejected")
 
 # --- 7. choosing Docker with a dead daemon warns and stops ---
 (ta.REPO / "tools" / "local.json").unlink(missing_ok=True)
@@ -109,7 +109,7 @@ except ta.Fail as exc:
     if "daemon" not in str(exc).lower():
         fails.append(f"dead Docker daemon: unexpected message {exc!r}")
     else:
-        print("7. docker daemon down   -> refused, with a message naming the daemon")
+        print("7. self-test (dead docker) -> refused, message names the daemon")
 except StopIteration:
     fails.append("dead Docker daemon: asked more questions than expected")
 
@@ -136,7 +136,7 @@ with tempfile.TemporaryDirectory() as tmp:
     if names != ["Boost_INCLUDE_DIR"]:
         fails.append(f"stale cache detection returned {names}, expected only Boost_INCLUDE_DIR")
     else:
-        print("8. stale cmake cache    -> the dead Boost path found, NOTFOUND/relative ignored")
+        print("8. self-test (stale cache) -> dead Boost path found; NOTFOUND and relative ignored")
 
     ta.clear_cmake_cache(bdir, "test")
     if (bdir / "CMakeCache.txt").exists() or (bdir / "CMakeFiles").exists():
@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory() as tmp:
     if ta.stale_cache_entries(bdir):
         fails.append("a cache whose paths all exist was reported stale")
     else:
-        print("10. healthy cache       -> left alone")
+        print("10. self-test (healthy cache) -> not flagged, so the detector is not\n                                just matching everything")
 
 # --- 11/12. the mysql client is used from wherever it is installed ---
 # The Windows MySQL installer does not put bin/ on PATH. `doctor` searched the

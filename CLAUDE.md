@@ -205,6 +205,20 @@ decides they should. Promoting one is a `git mv` into `data/sql/db-world/`.
 
 ## 8. Working style that has served this project
 
+**A check that cannot fail reports safety.** This shipped four times in four
+unrelated places — a docs check that matched anywhere in the file, a "no error
+in the log" check run against a server that had died before reading config, an
+RBAC query against the wrong column whose empty result was read as proof, and a
+regex looking for `class` where the SQL writes `Class`. Every one passed while
+the thing it guarded was broken, and a broken check is worse than none because
+it looks like evidence.
+
+So: **every test in `tools/tests/` must run its own detector against known-bad
+input and print a line containing `self-test`.** `test_tests_can_fail.py`
+enforces it in CI and is itself proven to fail when a self-test is removed. It
+proves a self-test ran, not that it is a good one — that still takes judgement
+— but the omission can no longer happen by accident.
+
 - **Verify, don't recall.** Spell IDs, formulas and schemas are all checkable
   against the source tree or the database. Several confident memories here were
   wrong.

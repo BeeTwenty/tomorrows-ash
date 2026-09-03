@@ -61,35 +61,20 @@ INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (8, 2);
 INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (8, 2, 1, 14, -618.518, -4251.67, 38.718, 0);
 INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 8, 2, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 10 AND `class` = 2;
 
--- Human Skirmisher (race 1, class 7), action bar from Draenei
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (1, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (1, 7, 0, 12, -8949.95, -132.493, 83.5312, 0);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 1, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 11 AND `class` = 7;
+-- Human Skirmisher (race 1, class 3), action bar from Dwarf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (1, 3);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (1, 3, 0, 12, -8949.95, -132.493, 83.5312, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 1, 3, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 3 AND `class` = 3;
 
--- Dwarf Skirmisher (race 3, class 7), action bar from Draenei
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (3, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (3, 7, 0, 1, -6240.32, 331.033, 382.758, 6.17716);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 3, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 11 AND `class` = 7;
+-- Undead Skirmisher (race 5, class 3), action bar from Orc
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (5, 3);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (5, 3, 0, 85, 1676.71, 1678.31, 121.67, 2.70526);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 5, 3, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 2 AND `class` = 3;
 
--- Night Elf Skirmisher (race 4, class 7), action bar from Draenei
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (4, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (4, 7, 1, 141, 10311.3, 832.463, 1326.41, 5.69632);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 4, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 11 AND `class` = 7;
-
--- Undead Skirmisher (race 5, class 7), action bar from Orc
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (5, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (5, 7, 0, 85, 1676.71, 1678.31, 121.67, 2.70526);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 5, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 2 AND `class` = 7;
-
--- Gnome Skirmisher (race 7, class 7), action bar from Draenei
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (7, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (7, 7, 0, 1, -6240.32, 331.033, 382.758, 0);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 7, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 11 AND `class` = 7;
-
--- Blood Elf Skirmisher (race 10, class 7), action bar from Orc
-INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (10, 7);
-INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (10, 7, 530, 3431, 10349.6, -6357.29, 33.4026, 5.31605);
-INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 10, 7, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 2 AND `class` = 7;
+-- Gnome Skirmisher (race 7, class 3), action bar from Dwarf
+INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (7, 3);
+INSERT IGNORE INTO `playercreateinfo` (`race`, `class`, `map`, `zone`, `position_x`, `position_y`, `position_z`, `orientation`) VALUES (7, 3, 0, 1, -6240.32, 331.033, 382.758, 0);
+INSERT IGNORE INTO `playercreateinfo_action` (`race`, `class`, `button`, `action`, `type`) SELECT 7, 3, `button`, `action`, `type` FROM `playercreateinfo_action` WHERE `race` = 3 AND `class` = 3;
 
 -- Orc Adept (race 2, class 8), action bar from Undead
 INSERT IGNORE INTO `classless_createinfo_added` (`race`, `class`) VALUES (2, 8);
