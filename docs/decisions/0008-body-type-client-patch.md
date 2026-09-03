@@ -1,11 +1,11 @@
 # ADR 0008 — Showing three body types at character creation
 
 **Date:** 2026-09-01
-**Status:** Partly accepted, and one question open.
-Recipe-over-shipped-MPQ is **approved** and built (`launcher/core/src/recipe.rs`).
-`inspect-dbc` is **built** and awaits a run against a real client. The race
-matrix is **confirmed** — §10. The chassis question is **open**, and §10 is the
-proposal that was asked for.
+**Status:** Accepted. Recipe-over-shipped-MPQ is approved and built
+(`launcher/core/src/recipe.rs`). `inspect-dbc` is built and awaits a run against
+a real client. The race matrix is confirmed (§10.1). **The chassis swap to
+Hunter is approved** (§10.7), and what it actually cost is re-derived in §10.8 —
+less than quoted, and one thing more.
 
 > **Nothing here has been checked against a real client.** There is no 3.3.5a
 > client in this sandbox, so every claim about DBC layout, MPQ load order and
@@ -459,3 +459,62 @@ hiding in the table.
 Whichever way this goes, it changes `char_base_info.add` in the recipe and
 nothing else in the launcher: the recipe is data, and this is exactly the kind
 of change it exists to make cheap.
+
+### 10.7 Decided: Hunter
+
+Approved. Skirmisher is class 3.
+
+Rebuilding the classes from scratch instead was considered and rejected: it is a
+different scale of project, and it breaks the pattern that has kept every phase
+of this maintainable — reuse Blizzard's systems, relabel through data.
+
+The recipe changed and nothing else in the launcher did, which was the claim
+made for it: `keep_classes` is `[2, 3, 8]`, the rename targets class 3, and the
+sixteen added race rows became thirteen.
+
+### 10.8 What the swap actually cost
+
+Re-derived against `Entities/Unit/StatSystem.cpp` and `PlayerStorage.cpp` at the
+pinned commit, rather than from the recollection §10.5 was written from. Two of
+the three costs quoted there are zero, and one thing nobody quoted is not.
+
+**Melee attack power: unchanged.** `Player::UpdateAttackPowerAndDamage` puts
+Hunter and Shaman in the *same arm* of the same branch —
+`level×2 + Str + Agi − 20`. §10.5 said the figure "should be re-derived rather
+than assumed to carry over"; re-derived, it carries over exactly. 334 at 80,
+either chassis.
+
+**Mail proficiency: unchanged.** `CanUseItem` pairs them too — both
+`ITEM_SUBCLASS_ARMOR_MAIL`.
+
+**Ranged attack power: changed, by 160 at level 80.** Hunter has its own ranged
+formula, `level×2 + Agi − 10`, where Shaman falls to the general `Agi − 10`.
+That takes the mail chassis from the worst ranged attack power of the three
+(64, below the Vanguard's 80) to nearly triple the plate chassis's (224). It is
+a real balance change that arrived with the class id and that nobody chose.
+Recorded in [BODY-TYPES §2.1](../BODY-TYPES.md) with both options; not
+implemented either way, because the swap was approved on availability grounds
+and this is a separate decision.
+
+**Pets: turned off, and that is the decision.** §10.5 flagged the pet machinery
+as needing a call. It is made: `Classless.Chassis.HunterPets = 0`.
+
+The reasoning is availability rather than taste. Before the swap the mail
+chassis was Shaman and nobody on this realm could tame anything; the swap was
+made so that Night Elves have a body type, not to hand one third of the
+playerbase a companion the other two thirds cannot get. **A pet only Skirmishers
+have is a class wearing a different word**, which is the one thing the body-type
+design exists to prevent.
+
+Implemented in `modules/mod-classless/src/ClasslessChassis.cpp` through
+`OnPlayerIsClass` against `CLASS_CONTEXT_PET` — so no core modification, the
+same property the rest of the module has. Taming fails and the stable master
+declines. If pets should exist on Ashmorrow they belong in the ability trees for
+every body type; that is a deliberate decision, a tree entry, and this one
+config line.
+
+One honest limit: the option governs *acquiring* a pet, not loading one that
+already exists. `Player::LoadFromDB` reads the raw class id there, so a
+character saved with a pet keeps it. On a realm where no Skirmisher has ever had
+one that case cannot arise, and it is cheaper to say so than to chase it.
+

@@ -47,8 +47,15 @@ change.
 ## 2. The actual bug is dead loot, and it is bigger than it looks
 
 Ashmorrow has three body types, and each one *is* a stock class underneath
-(`docs/BODY-TYPES.md §2`): Vanguard = Paladin (2), Skirmisher = Shaman (7),
+(`docs/BODY-TYPES.md §2`): Vanguard = Paladin (2), Skirmisher = **Hunter (3)**,
 Adept = Mage (8). The other seven classes are removed at character creation.
+
+Skirmisher was Shaman (7) when this document was written; it moved on
+2026-09-02 so that every race has a body type ([ADR 0008 §10](decisions/0008-body-type-client-patch.md)).
+That changes which class *bit* the pass keeps — 4, not 64 — and
+`tools/audit_items.py` now derives it from `BODY_TYPE_CLASSES` rather than
+naming it, so this cannot drift again. Any number written out below should be
+read against that.
 
 `AllowableClass` is still enforced, in `Player::CanUseItem`
 (`PlayerStorage.cpp:2372`):

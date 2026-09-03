@@ -117,3 +117,36 @@ Classless.Respec.Cost = 0
 #                     1 - (Enabled)
 
 Classless.OpenRelicSlot = 0
+
+#    Classless.Chassis.HunterPets
+#        Description: May the Skirmisher body type tame and keep a hunter pet?
+#
+#                     Skirmisher is built on the Hunter class id (3) rather
+#                     than Shaman (7), because that is the only chassis triple
+#                     in which every playable race has at least one body type
+#                     available - Night Elf has none otherwise. See
+#                     docs/decisions/0008-body-type-client-patch.md §10.
+#
+#                     That swap must not hand one body type a companion the
+#                     other two cannot have. Before it, nobody on this realm
+#                     could tame anything; leaving this at 0 keeps it that way,
+#                     so the swap changes who can play what and nothing else.
+#
+#                     Applied through the OnPlayerIsClass hook against
+#                     CLASS_CONTEXT_PET, so it needs no core modification: the
+#                     stable master declines, and taming fails.
+#
+#                     Set to 1 only alongside a decision that pets belong to
+#                     EVERY body type, with the taming abilities placed in the
+#                     ability trees. A pet only Skirmishers can have is a class
+#                     wearing a different word.
+#
+#                     Note: this governs acquiring a pet, not loading one that
+#                     already exists. A character saved with a pet before this
+#                     was turned off still logs in with it, because the core
+#                     reads the raw class id there. On a realm where no
+#                     Skirmisher has ever had one, that case cannot arise.
+#        Default:     0 - (No body type has a pet)
+#                     1 - (Skirmishers may tame, as a stock hunter does)
+
+Classless.Chassis.HunterPets = 0

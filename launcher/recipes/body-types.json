@@ -1,25 +1,30 @@
 {
   "$comment": [
     "The body-type client patch. NOT PUBLISHED: it is deliberately absent from",
-    "launcher/patch-manifest.json, so no launcher applies it yet.",
+    "launcher/patch-manifest.json, so no launcher applies it.",
     "",
-    "Two things have to happen first, in this order (ADR 0009 §6):",
+    "Skirmisher is class 3 (Hunter), not 7 (Shaman). Paladin x Hunter x Mage is",
+    "the only chassis triple in which every playable race has at least one body",
+    "type — Night Elf has none under Paladin/Shaman/Mage. Approved; the",
+    "reasoning and the other five combinations are in ADR 0008 §10.",
+    "",
+    "`add` is the thirteen race/body-type pairs the client blocks and the server",
+    "will accept. Race ids: 1 Human, 2 Orc, 3 Dwarf, 4 Night Elf, 5 Undead,",
+    "6 Tauren, 7 Gnome, 8 Troll, 10 Blood Elf, 11 Draenei. Blood Elf and Draenei",
+    "need nothing: they can already reach all three.",
+    "",
+    "Still to happen before this is listed in patch-manifest.json (ADR 0009 §6):",
     "  1. `ashmorrow-manifest inspect-dbc <client>` against a real 3.3.5a client,",
-    "     to confirm name_field below and the race rows in `add`.",
-    "  2. The chassis decision (ADR 0008 §10). If Skirmisher moves from Shaman(7)",
-    "     to Hunter(3), `keep_classes` and `add` both change — and nothing else in",
-    "     the launcher does, which is the point of shipping a recipe.",
-    "And the server must reject the create packet before this hides anything, or",
-    "the screen offers combinations the realm then refuses.",
-    "",
-    "`add` is the sixteen race/body-type pairs Blizzard never shipped, as",
-    "confirmed against a real client. Race ids: 1 Human, 2 Orc, 3 Dwarf,",
-    "4 Night Elf, 5 Undead, 6 Tauren, 7 Gnome, 8 Troll, 10 Blood Elf, 11 Draenei.",
-    "Night Elf needs all three: it is the race with no body type at all."
+    "     to confirm name_field and the stock matrix these thirteen rows are the",
+    "     complement of.",
+    "  2. The server-side race data — playercreateinfo and friends — for the",
+    "     thirteen new pairs, and the create-packet rule. Publishing sooner would",
+    "     offer players combinations the realm then refuses, which is worse than",
+    "     the screen being honest about what it will accept."
   ],
   "schema": 1,
   "id": "body-types",
-  "version": 1,
+  "version": 2,
   "revision": "",
   "output": "Data/patch-4.MPQ",
   "summary": "Shows the three Ashmorrow body types at character creation instead of ten stock classes.",
@@ -28,29 +33,26 @@
     "name_field": 5,
     "rename": [
       { "class": 2, "to": "Vanguard" },
-      { "class": 7, "to": "Skirmisher" },
+      { "class": 3, "to": "Skirmisher" },
       { "class": 8, "to": "Adept" }
     ]
   },
   "char_base_info": {
-    "keep_classes": [2, 7, 8],
+    "keep_classes": [2, 3, 8],
     "add": [
-      { "race": 1, "class": 7 },
+      { "race": 1, "class": 3 },
       { "race": 2, "class": 2 },
       { "race": 2, "class": 8 },
-      { "race": 3, "class": 7 },
       { "race": 3, "class": 8 },
       { "race": 4, "class": 2 },
-      { "race": 4, "class": 7 },
       { "race": 4, "class": 8 },
       { "race": 5, "class": 2 },
-      { "race": 5, "class": 7 },
+      { "race": 5, "class": 3 },
       { "race": 6, "class": 2 },
       { "race": 6, "class": 8 },
       { "race": 7, "class": 2 },
-      { "race": 7, "class": 7 },
-      { "race": 8, "class": 2 },
-      { "race": 10, "class": 7 }
+      { "race": 7, "class": 3 },
+      { "race": 8, "class": 2 }
     ]
   }
 }

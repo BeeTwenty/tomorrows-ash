@@ -1,7 +1,7 @@
 --
 -- Body types, as rows.
 --
--- The client shows the underlying class name - Paladin, Shaman, Mage - and has
+-- The client shows the underlying class name - Paladin, Hunter, Mage - and has
 -- no idea the realm calls those Vanguard, Skirmisher and Adept. Nothing
 -- server-side can change the class name in the UI (docs/BODY-TYPES.md 4), so
 -- the realm has to say it out loud instead.
@@ -24,5 +24,5 @@ CREATE TABLE `classless_body_type` (
 
 INSERT INTO `classless_body_type` (`class_id`, `name`, `armor`, `description`) VALUES
   (2, 'Vanguard',   'plate', 'Stands in front. The heaviest armor and the only real melee.'),
-  (7, 'Skirmisher', 'mail',  'Trades blows and casts. Mail, and a shield if you want one.'),
+  (3, 'Skirmisher', 'mail',  'Trades blows and casts. Mail, and a shield if you want one.'),
   (8, 'Adept',      'cloth', 'Glass, but unrestricted. Cloth only, and no melee to speak of.');

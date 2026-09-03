@@ -53,6 +53,7 @@ namespace TomorrowsAsh
         PointsBonus              = sConfigMgr->GetOption<uint32>("Classless.Points.Bonus", 0);
         RespecCost               = sConfigMgr->GetOption<uint32>("Classless.Respec.Cost", 0);
         OpenRelicSlot            = sConfigMgr->GetOption<bool>("Classless.OpenRelicSlot", false);
+        ChassisHunterPets        = sConfigMgr->GetOption<bool>("Classless.Chassis.HunterPets", false);
 
         // Not ours - this is a core setting, read here only so the module can
         // report whether it is actually in effect. See CheckCreationClassMask.
@@ -65,9 +66,9 @@ namespace TomorrowsAsh
         {
             LOG_INFO("module.classless",
                      "[Classless] Enabled. Budget: {} point(s)/level from level {}, +{} bonus. "
-                     "SuppressBlizzardTalents={} OpenRelicSlot={}",
+                     "SuppressBlizzardTalents={} OpenRelicSlot={} ChassisHunterPets={}",
                      PointsPerLevel, PointsFirstLevel, PointsBonus, SuppressBlizzardTalents,
-                     OpenRelicSlot);
+                     OpenRelicSlot, ChassisHunterPets);
         }
         else
         {

@@ -122,6 +122,7 @@ public:
 void AddClasslessBrokerScripts();
 void AddClasslessCommandScripts();
 void AddClasslessRelicScripts();
+void AddClasslessChassisScripts();
 
 void Addmod_classlessScripts()
 {
@@ -130,4 +131,5 @@ void Addmod_classlessScripts()
     AddClasslessBrokerScripts();
     AddClasslessCommandScripts();
     AddClasslessRelicScripts();
+    AddClasslessChassisScripts();
 }

@@ -867,7 +867,16 @@ VALUES
 # --------------------------------------------------------------------------
 
 # Body type -> the class id it is built on.
-BODY_TYPE_CLASSES = {"Vanguard": 2, "Skirmisher": 7, "Adept": 8}
+# Skirmisher is Hunter (3), not Shaman (7). Paladin x Hunter x Mage is the only
+# chassis triple in which every race has a body type at all - Night Elf has none
+# under Paladin/Shaman/Mage. Approved 2026-09-02; the other five combinations
+# are counted in docs/decisions/0008-body-type-client-patch.md section 10.
+#
+# Everything server-side derives from this line: the creation class mask, the
+# generated stats and race-coverage migrations, and check_client_combos.py.
+# Changing it makes the committed migrations stale - tools/tests/test_body_types.py
+# says so rather than letting the realm quietly offer the wrong chassis.
+BODY_TYPE_CLASSES = {"Vanguard": 2, "Skirmisher": 3, "Adept": 8}
 
 # Bit 512 is unused in 3.3.5, which is why "all classes" is 1535 and not 2047.
 CLASSMASK_ALL_PLAYABLE = 1535

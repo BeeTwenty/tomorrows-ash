@@ -63,10 +63,10 @@ else:
 # --- 4. the three body types are the ones the docs say ---
 # Cheap, but this is the mapping every other document depends on, and a typo
 # here would silently re-point a body type at the wrong chassis.
-if ta.BODY_TYPE_CLASSES != {"Vanguard": 2, "Skirmisher": 7, "Adept": 8}:
+if ta.BODY_TYPE_CLASSES != {"Vanguard": 2, "Skirmisher": 3, "Adept": 8}:
     fails.append(f"body type mapping changed: {ta.BODY_TYPE_CLASSES}")
 else:
-    print("4. body type mapping    -> Vanguard=Paladin(2), Skirmisher=Shaman(7), Adept=Mage(8)")
+    print("4. body type mapping    -> Vanguard=Paladin(2), Skirmisher=Hunter(3), Adept=Mage(8)")
 
 # --- 5. BODY-TYPES.md agrees with the code ---
 doc = (Path("docs") / "BODY-TYPES.md").read_text(encoding="utf-8")

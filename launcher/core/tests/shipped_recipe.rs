@@ -34,6 +34,10 @@ fn the_shipped_recipe_parses() {
 /// The three body types, and only those three. If BODY-TYPES.md and this file
 /// ever disagree about which classes are the chassis, the character creation
 /// screen believes this one.
+///
+/// Skirmisher is Hunter (3), not Shaman (7) — ADR 0008 §10. Changing that back
+/// without also changing `add` would strand Night Elf again, which is the whole
+/// reason the swap happened.
 #[test]
 fn the_recipe_renames_exactly_the_three_body_types() {
     let recipe = shipped();
@@ -48,7 +52,7 @@ fn the_recipe_renames_exactly_the_three_body_types() {
         renamed,
         vec![
             (2, "Vanguard".to_string()),
-            (7, "Skirmisher".to_string()),
+            (3, "Skirmisher".to_string()),
             (8, "Adept".to_string()),
         ]
     );
@@ -57,18 +61,23 @@ fn the_recipe_renames_exactly_the_three_body_types() {
     keep.sort_unstable();
     assert_eq!(
         keep,
-        vec![2, 7, 8],
+        vec![2, 3, 8],
         "the classes kept must be the classes renamed, or the screen shows a \
          body type with no rows or a row with a stock name"
     );
 }
 
-/// ADR 0008 §3 and §10: sixteen pairs are missing, Night Elf needs all three.
+/// ADR 0008 §10: with Hunter as Skirmisher, thirteen pairs are missing rather
+/// than sixteen, and no race is left without one.
 #[test]
-fn the_recipe_adds_the_sixteen_missing_pairs() {
+fn the_recipe_adds_the_thirteen_missing_pairs() {
     let recipe = shipped();
     let add = &recipe.char_base_info.add;
-    assert_eq!(add.len(), 16, "ADR 0008 §10.1 confirmed sixteen");
+    assert_eq!(
+        add.len(),
+        13,
+        "Paladin/Hunter/Mage leaves thirteen gaps, not sixteen"
+    );
 
     let mut seen: Vec<(u8, u8)> = add.iter().map(|r| (r.race, r.class)).collect();
     seen.sort_unstable();
@@ -85,15 +94,60 @@ fn the_recipe_adds_the_sixteen_missing_pairs() {
         );
     }
 
-    let night_elf: Vec<u8> = add
+    // Night Elf is the race the swap was made for: it has Hunter natively, so
+    // it now needs only the other two rather than all three.
+    let mut night_elf: Vec<u8> = add
         .iter()
         .filter(|r| r.race == 4)
         .map(|r| r.class)
         .collect();
+    night_elf.sort_unstable();
+    assert_eq!(night_elf, vec![2, 8]);
+
+    // Blood Elf and Draenei reach all three in a stock client, so a row for
+    // either is a row that does nothing.
+    for race in [10u8, 11] {
+        assert!(
+            !add.iter().any(|r| r.race == race),
+            "race {race} already has every body type"
+        );
+    }
+}
+
+/// The recipe and the design document have to name the same three classes.
+///
+/// They are edited by different people for different reasons — one is balance,
+/// the other is a character-creation screen — and this swap is exactly the
+/// change that moves both. A divergence here shows up as a body type wearing
+/// the wrong armour, which is a slow and confusing bug to find from play.
+#[test]
+fn the_recipe_agrees_with_body_types_about_which_classes_the_chassis_are() {
+    let doc = launcher()
+        .parent()
+        .expect("the repository root")
+        .join("docs/BODY-TYPES.md");
+    let text = std::fs::read_to_string(&doc).expect("docs/BODY-TYPES.md is missing");
+    let row = text
+        .lines()
+        .find(|line| line.starts_with("| Underlying class"))
+        .expect("BODY-TYPES.md has an 'Underlying class' row");
+
+    // "| Underlying class | Paladin (2) | **Hunter (3)** | Mage (8) |"
+    let mut documented: Vec<u8> = row
+        .split('(')
+        .skip(1)
+        .filter_map(|rest| rest.split(')').next())
+        .filter_map(|id| id.trim().parse::<u8>().ok())
+        .collect();
+    documented.sort_unstable();
+    assert_eq!(documented.len(), 3, "expected three chassis in {row:?}");
+
+    let mut keep = shipped().char_base_info.keep_classes.clone();
+    keep.sort_unstable();
     assert_eq!(
-        night_elf.len(),
-        3,
-        "Night Elf has no body type at all in a stock client, so it needs all three"
+        keep, documented,
+        "the recipe keeps classes {keep:?} but BODY-TYPES.md says the body types \
+         are {documented:?}"
     );
 }
 

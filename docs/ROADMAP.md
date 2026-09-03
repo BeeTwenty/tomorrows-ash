@@ -63,6 +63,7 @@ while those await sign-off.
       numbers and writing the migration had been treated as one step, so until
       2026-08-31 the realm was still stock and the three body types were
       numerically identical to Paladin / Shaman / Mage under new names.
+      (Skirmisher moved from Shaman to Hunter on 2026-09-02 — ADR 0008 §10.)
       `tools/gen_body_types.py` now generates the full 1–80 curve from the
       approved level 60 and 80 anchors and refuses to emit if it misses either.
 - [x] **The server accepts every race/body-type pair** — 16 `playercreateinfo`

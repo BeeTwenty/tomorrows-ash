@@ -71,6 +71,15 @@ namespace TomorrowsAsh
         // Core setting that deletes off-class spells on login. Must be off.
         bool ValidateSkillLearnedBySpells = true;
 
+        // May the Skirmisher chassis tame and keep a hunter pet?
+        //
+        // Off by default, and the reason is that the chassis must not be a
+        // class: before the swap from Shaman to Hunter nobody on this realm
+        // could tame anything, and a body type that alone grants a companion
+        // is a class wearing a different word. See
+        // docs/decisions/0008-body-type-client-patch.md §10.
+        bool ChassisHunterPets = false;
+
         // Points a character of this level is entitled to in total.
         [[nodiscard]] uint32 BudgetForLevel(uint8 level) const;
 
