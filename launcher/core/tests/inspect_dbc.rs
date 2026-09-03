@@ -312,3 +312,59 @@ fn hunter_is_the_only_chassis_triple_that_strands_no_race() {
     // two that manage that it is the better.
     assert_eq!(count(&[2, 3, 8]), (17, 0));
 }
+
+/// The two ways this was actually got wrong on a real machine, both of which
+/// printed the usage text and nothing else.
+///
+/// `inspect--dbc` is a typo the tool can resolve, and `D:\wow\TheraWoW wotlk`
+/// unquoted is one path arriving as two arguments. Neither is worth a second
+/// download, so both are handled — and the fake client here is named with a
+/// space in it so the second one is exercised the way it happens.
+#[test]
+fn the_tool_survives_a_typo_and_an_unquoted_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = dir.path().join("TheraWoW wotlk");
+    std::fs::create_dir_all(&client).unwrap();
+    fake_client(&client);
+
+    let split_path = dir.path().join("TheraWoW").to_string_lossy().into_owned();
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspect--dbc", &split_path, "wotlk"])
+        .output()
+        .expect("the tool should run");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert!(
+        output.status.success(),
+        "a typo and a missing pair of quotes should not cost a run\n\
+         stdout:\n{text}\nstderr:\n{errors}"
+    );
+    assert!(
+        errors.contains("reading 'inspect--dbc' as 'inspect-dbc'"),
+        "it should say what it assumed:\n{errors}"
+    );
+    assert!(text.contains("race x class"), "no matrix:\n{text}");
+
+    // A genuinely unknown command still fails, and says which word it choked on.
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspekt", &client.to_string_lossy()])
+        .output()
+        .expect("the tool should run");
+    assert!(!output.status.success());
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(errors.contains("unknown command 'inspekt'"), "{errors}");
+
+    // And a locale the client does not have is named as such, rather than
+    // failing later with something about MPQ archives.
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspect-dbc", &client.to_string_lossy(), "frFR"])
+        .output()
+        .expect("the tool should run");
+    assert!(!output.status.success());
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        errors.contains("not a locale this client has") && errors.contains("enUS"),
+        "{errors}"
+    );
+}

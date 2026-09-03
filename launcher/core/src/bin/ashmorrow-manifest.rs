@@ -3,7 +3,7 @@
 //! ```text
 //! ashmorrow-manifest hash        <client-dir> [--all]   # emit the client.files array
 //! ashmorrow-manifest check       <client-dir> <manifest.json>
-//! ashmorrow-manifest inspect-dbc <client-dir>           # read the class tables
+//! ashmorrow-manifest inspect-dbc <client-dir> [locale]  # read the class tables
 //! ```
 //!
 //! Written in Rust rather than as a script beside the other tools for one
@@ -151,7 +151,24 @@ fn check(root: &Path, manifest_path: &Path) -> Result<bool, String> {
 fn inspect_dbc(root: &Path, locale: Option<&str>) -> Result<bool, String> {
     let client = Client::detect(root).map_err(|e| e.to_string())?;
     let locale = match locale {
-        Some(given) => given.to_string(),
+        // Checked against the client rather than taken on trust: an argument
+        // that is not one of this client's locales is nearly always the tail of
+        // a path somebody forgot to quote, and saying so here is the difference
+        // between one more run and a confused half hour.
+        Some(given) => match client
+            .locales
+            .iter()
+            .find(|known| known.eq_ignore_ascii_case(given))
+        {
+            Some(known) => known.clone(),
+            None => {
+                return Err(format!(
+                    "'{given}' is not a locale this client has; it has {}. \
+                     (If it is part of the path, the path needs quotes.)",
+                    client.locales.join(", ")
+                ))
+            }
+        },
         None => client
             .primary_locale()
             .map_err(|e| e.to_string())?
@@ -312,27 +329,109 @@ fn truncate(text: &str, width: usize) -> String {
     }
 }
 
-fn usage() -> ExitCode {
+/// The commands, in the order the usage text lists them.
+const COMMANDS: [&str; 3] = ["hash", "check", "inspect-dbc"];
+
+/// What a command name means when the punctuation is wrong.
+///
+/// `inspect--dbc`, `inspect_dbc` and `INSPECT-DBC` can only mean one thing.
+/// Printing the usage text and exiting is correct and unhelpful: this tool is
+/// run on somebody else's machine, at the end of a download, and every rejected
+/// invocation is a round trip. So an unambiguous near miss is accepted, and
+/// said out loud. Anything ambiguous still fails.
+fn resolve_command(given: &str) -> Option<&'static str> {
+    fn squash(text: &str) -> String {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase()
+    }
+
+    let wanted = squash(given);
+    let mut matched = COMMANDS.iter().filter(|command| squash(command) == wanted);
+    let first = matched.next()?;
+    matched.next().is_none().then_some(*first)
+}
+
+/// Find the client directory in arguments a shell may have split.
+///
+/// `inspect-dbc D:\wow\TheraWoW wotlk` is one path and no locale, not a path
+/// and a locale — the missing quotes are a Windows papercut rather than a
+/// mistake worth another run. The longest run of arguments that names a real
+/// directory wins; when none does, the first is used, so the error names what
+/// was actually typed instead of something reassembled.
+///
+/// Returns the directory and how many arguments it consumed.
+fn client_dir(parts: &[String]) -> (PathBuf, usize) {
+    for take in (1..=parts.len()).rev() {
+        let joined = parts[..take].join(" ");
+        if Path::new(&joined).is_dir() {
+            return (PathBuf::from(joined), take);
+        }
+    }
+    (PathBuf::from(&parts[0]), 1)
+}
+
+fn usage(problem: Option<&str>) -> ExitCode {
+    if let Some(problem) = problem {
+        eprintln!("error: {problem}\n");
+    }
     eprintln!(
         "usage:\n  \
          ashmorrow-manifest hash        <client-dir> [--all]\n  \
          ashmorrow-manifest check       <client-dir> <manifest.json>\n  \
-         ashmorrow-manifest inspect-dbc <client-dir> [locale]"
+         ashmorrow-manifest inspect-dbc <client-dir> [locale]\n\n\
+         <client-dir> is the folder holding Wow.exe, not its Data folder.\n\
+         A path with a space in it needs quotes:\n  \
+         ashmorrow-manifest inspect-dbc \"D:\\wow\\TheraWoW wotlk\""
     );
     ExitCode::from(2)
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let result = match args.first().map(String::as_str) {
-        Some("hash") if args.len() >= 2 => {
-            hash(Path::new(&args[1]), args.iter().any(|a| a == "--all")).map(|_| true)
+    let Some(given) = args.first() else {
+        return usage(None);
+    };
+    let Some(command) = resolve_command(given) else {
+        return usage(Some(&format!("unknown command '{given}'")));
+    };
+    if command != given {
+        eprintln!("note: reading '{given}' as '{command}'");
+    }
+
+    // Flags are pulled out first so what is left is positional and can be
+    // reassembled by `client_dir`.
+    let rest: Vec<String> = args[1..]
+        .iter()
+        .filter(|arg| !arg.starts_with("--"))
+        .cloned()
+        .collect();
+
+    let result = match command {
+        "hash" if !rest.is_empty() => {
+            let (root, _) = client_dir(&rest);
+            hash(&root, args.iter().any(|arg| arg == "--all")).map(|_| true)
         }
-        Some("check") if args.len() >= 3 => check(Path::new(&args[1]), Path::new(&args[2])),
-        Some("inspect-dbc") if args.len() >= 2 => {
-            inspect_dbc(Path::new(&args[1]), args.get(2).map(String::as_str))
+        "check" if rest.len() >= 2 => {
+            let manifest = rest[rest.len() - 1].clone();
+            let (root, _) = client_dir(&rest[..rest.len() - 1]);
+            check(&root, Path::new(&manifest))
         }
-        _ => return usage(),
+        "inspect-dbc" if !rest.is_empty() => {
+            let (root, used) = client_dir(&rest);
+            inspect_dbc(&root, rest.get(used).map(String::as_str))
+        }
+        _ => {
+            return usage(Some(&format!(
+                "'{command}' needs {}",
+                if command == "check" {
+                    "a client directory and a manifest"
+                } else {
+                    "a client directory"
+                }
+            )))
+        }
     };
 
     match result {
@@ -342,5 +441,55 @@ fn main() -> ExitCode {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_typed_with_the_wrong_punctuation_still_resolves() {
+        for given in ["inspect-dbc", "inspect--dbc", "inspect_dbc", "INSPECT-DBC"] {
+            assert_eq!(resolve_command(given), Some("inspect-dbc"), "{given}");
+        }
+        assert_eq!(resolve_command("hash"), Some("hash"));
+        assert_eq!(resolve_command("--help"), None);
+        assert_eq!(resolve_command("inspect"), None, "not a near miss, a guess");
+        assert_eq!(resolve_command(""), None);
+    }
+
+    #[test]
+    fn an_unquoted_path_with_spaces_is_reassembled() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = dir.path().join("TheraWoW wotlk");
+        std::fs::create_dir_all(&client).unwrap();
+
+        let split: Vec<String> = vec![
+            client
+                .parent()
+                .unwrap()
+                .join("TheraWoW")
+                .to_string_lossy()
+                .into_owned(),
+            "wotlk".to_string(),
+        ];
+        let (root, used) = client_dir(&split);
+        assert_eq!(root, client);
+        assert_eq!(used, 2, "the locale slot must not eat half the path");
+
+        // A real locale after a real path is still a locale.
+        let quoted: Vec<String> = vec![client.to_string_lossy().into_owned(), "enUS".to_string()];
+        let (root, used) = client_dir(&quoted);
+        assert_eq!(root, client);
+        assert_eq!(used, 1);
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_is_reported_as_typed() {
+        let parts = vec!["D:/nowhere".to_string(), "wotlk".to_string()];
+        let (root, used) = client_dir(&parts);
+        assert_eq!(root, PathBuf::from("D:/nowhere"));
+        assert_eq!(used, 1);
     }
 }
