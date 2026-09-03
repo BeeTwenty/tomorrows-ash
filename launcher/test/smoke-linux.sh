@@ -50,21 +50,16 @@ say "building the fixture in $WORK"
 mkdir -p "$WORK/client/Data/enUS" "$WORK/bin" "$WORK/prefix/drive_c/windows/system32" \
          "$WORK/home/.config/ashmorrow"
 
-python3 - "$WORK/client" <<'PY'
-import pathlib, struct, sys
-root = pathlib.Path(sys.argv[1])
-# Just enough PE for the version-resource reader: the VS_FIXEDFILEINFO
-# signature, then the four version words. Product version low word is the
-# build, and 12340 is 3.3.5a.
-exe = bytearray(b"MZ" + b"\x11" * 30)
-exe += bytes([0xBD, 0x04, 0xEF, 0xFE])
-exe += struct.pack("<I", 0x00010000)
-exe += struct.pack("<I", (3 << 16) | 3)
-exe += struct.pack("<I", (5 << 16) | 12340)
-(root / "Wow.exe").write_bytes(bytes(exe))
-(root / "Data" / "common.MPQ").write_bytes(b"x" * 4096)
-(root / "Data" / "enUS" / "locale-enUS.MPQ").write_bytes(b"y" * 4096)
-PY
+# Wow.exe with a real version resource, and a real MPQ holding the two DBCs the
+# body-type patch edits. Built by an example in the core so that the tables here
+# and the tables the Rust tests use are the same tables: a fixture that drifts
+# from the one under test is how the recipe came to point one column past the
+# class name for a week.
+cargo run -q --manifest-path launcher/core/Cargo.toml \
+  --example smoke-fixture -- client "$WORK/client" > /dev/null
+# A base archive too, so the load order has more than one entry and the built
+# patch has something to sit after.
+head -c 4096 /dev/zero | tr '\0' 'x' > "$WORK/client/Data/common.MPQ"
 
 cat > "$WORK/bin/wine" <<'W'
 #!/bin/sh
@@ -87,10 +82,21 @@ if [ ! -x "$MANIFEST_TOOL" ]; then
 fi
 "$MANIFEST_TOOL" hash "$WORK/client" > "$WORK/hashes.json"
 
-python3 - "$WORK" <<'PY'
+# The recipe is published exactly as the website will publish it: its own id and
+# version, its byte count, and its BLAKE3 — the hash function every other entry
+# in a manifest uses. Computed with the core's own hasher rather than typed,
+# because a SHA-256 is the same shape and would fail only on a player's machine.
+cp launcher/recipes/body-types.json "$WORK/recipe.json"
+RECIPE_HASH="$(cargo run -q --manifest-path launcher/core/Cargo.toml \
+  --example smoke-fixture -- hash "$WORK/recipe.json")"
+
+python3 - "$WORK" "$PORT" "$RECIPE_HASH" <<'PY'
 import json, pathlib, sys
 work = pathlib.Path(sys.argv[1])
+port, recipe_hash = sys.argv[2], sys.argv[3]
 h = json.loads((work / "hashes.json").read_text())
+raw = (work / "recipe.json").read_bytes()
+recipe = json.loads(raw)
 (work / "manifest.json").write_text(json.dumps({
     "schema": 1,
     "realm": {"name": "Ashmorrow", "address": "play.ashmorrow.test",
@@ -99,6 +105,14 @@ h = json.loads((work / "hashes.json").read_text())
                "measured_from": "the smoke test's synthetic client",
                "files": h["files"]},
     "patches": [], "runtime": [],
+    "recipes": [{
+        "id": recipe["id"],
+        "version": recipe["version"],
+        "size": len(raw),
+        "hash": recipe_hash,
+        "url": f"http://127.0.0.1:{port}/patches/body-types.json",
+        "summary": recipe.get("summary", ""),
+    }],
     "launcher": {"minimum_version": "0.1.0", "latest_version": "0.1.0"},
 }, indent=2))
 PY
@@ -121,12 +135,16 @@ J
 cp "$WORK/settings.json" "$WORK/home/.config/ashmorrow/settings.json"
 
 say "serving the manifest on 127.0.0.1:$PORT"
-python3 - "$WORK/manifest.json" "$PORT" <<'PY' &
+python3 - "$WORK/manifest.json" "$PORT" "$WORK/recipe.json" <<'PY' &
 import http.server, pathlib, socketserver, sys
-body = pathlib.Path(sys.argv[1]).read_bytes()
+served = {
+    "/api/launcher/manifest": pathlib.Path(sys.argv[1]).read_bytes(),
+    "/patches/body-types.json": pathlib.Path(sys.argv[3]).read_bytes(),
+}
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path != "/api/launcher/manifest":
+        body = served.get(self.path)
+        if body is None:
             return self.send_error(404)
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -182,10 +200,13 @@ say "window $WIN at ${X},${Y} ${WIDTH}x${HEIGHT}"
 BAR_X=$(( X + WIDTH / 2 ))
 BAR_Y=$(( Y + HEIGHT - 30 ))
 
-# First press verifies, second launches. Pressing the same place twice is the
-# point: if the interface failed to load its own state the bar reads
+# Verify, build the body-type patch, launch. Pressing the same place each time
+# is the point: if the interface failed to load its own state the bar reads
 # UNAVAILABLE and does nothing, which is exactly the bug this test exists for.
-for press in 1 2; do
+# The middle press is the recipe step — the launch bar refuses to say LAUNCH
+# until the archive is built and matches (ADR 0009 §5), so a broken recipe path
+# shows up here as a game that never starts.
+for press in 1 2 3; do
   xdotool mousemove "$BAR_X" "$BAR_Y" click 1
   pause 6
 done
@@ -211,6 +232,23 @@ expect "it wrote realmlist.wtf into the client" "[ -f '$REALMLIST' ]"
 [ -f "$REALMLIST" ] && cat "$REALMLIST"
 expect "the realmlist names the realm from the manifest" \
        "grep -q 'set realmlist play.ashmorrow.test' '$REALMLIST' 2>/dev/null"
+
+PATCH="$WORK/client/Data/enUS/patch-enUS-4.MPQ"
+expect "it built the body-type patch from the client's own tables" "[ -f '$PATCH' ]"
+expect "the patch is an MPQ archive, not a stub" \
+       "[ -f '$PATCH' ] && head -c 3 '$PATCH' | grep -q 'MPQ'"
+# The archive has to hold the edited tables, and has to be the one the game
+# reads last. `inspect-dbc` answers both, because it applies the same load order
+# the client does.
+if [ -f "$PATCH" ]; then
+  "$MANIFEST_TOOL" inspect-dbc "$WORK/client" > "$WORK/patched.txt" 2>&1 || true
+  expect "the patched client offers the three body types" \
+         "grep -qE 'Vanguard|Skirmisher|Adept' '$WORK/patched.txt'"
+  expect "and no longer offers a stock class" \
+         "! grep -qE '^  (1|2|3) +(Warrior|Paladin|Hunter)$' '$WORK/patched.txt'"
+  expect "the built archive wins the load order" \
+         "grep -q 'patch-enUS-4.MPQ' '$WORK/patched.txt'"
+fi
 
 [ -f "$WORK/wine.log" ] && cat "$WORK/wine.log"
 expect "it invoked the runtime" "[ -s '$WORK/wine.log' ]"

@@ -21,6 +21,23 @@ export interface Status {
   blocked_because: string;
 }
 
+/** Mirrors `launcher_core::ledger::Need`. Serde tags it with `kind`. */
+export type Need =
+  | { kind: "up_to_date" }
+  | { kind: "never_built" }
+  | { kind: "new_version"; have: number; published: number }
+  | { kind: "archive_missing"; path: string }
+  | { kind: "archive_changed"; path: string }
+  | { kind: "source_changed"; table: string }
+  | { kind: "not_ours"; path: string };
+
+export interface RecipeState {
+  id: string;
+  version: number;
+  summary: string;
+  need: Need;
+}
+
 export type FileState =
   | { state: "match" }
   | { state: "differs"; expected: string; found: string }

@@ -163,7 +163,12 @@ them is how this goes wrong:
 | The **built archive** | **3b (new)** | the hash the launcher computed when it built it |
 
 Tier 3b is blocking, like Tier 3: a corrupt or foreign archive in our slot stops
-the launch rather than warning. What makes it meaningful — rather than a
+the launch rather than warning. In practice it compares the recorded hashes —
+of the archive, and of each source table — rather than rebuilding, which is the
+same check given that `mpq::write` is deterministic and costs two file reads
+instead of a rebuild on every start. `rebuilding_is_deterministic` is the test
+that equivalence rests on; if it ever fails, `ledger::need` is checking
+something that does not mean what it says. What makes it meaningful — rather than a
 tautology in which we check our own output against our own record of our own
 output — is that **`mpq::write` is deterministic**. Same recipe, same source
 tables, byte-identical archive; there is a test for it. So "rebuild and compare"
@@ -208,21 +213,23 @@ from `patch-manifest.json`, for a different reason worth stating plainly:
 > the recipe is unpublished — trading an accurate statement for an inaccurate
 > one.
 
-What step 4 actually requires, none of which exists:
+What step 4 requires, and where it stands:
 
 | | Where | State |
 |---|---|---|
-| A `recipes` array in the served manifest, assembled from `patch-manifest.json` beside `patches` and `runtime` (§2) | `web/src/lib/launcher.ts` | not written — and it is the **website session's** file, so this is a cross-session ask |
-| Fetch the recipe, verify it against the manifest hash (Tier 3) | launcher runtime | not written |
-| Read the player's two tables, `recipe::build`, write `Data/patch-4.MPQ` | launcher runtime | the library half exists (`launcher_core::recipe`); nothing calls it |
-| The slot check before writing (`would_clobber`, §4) | launcher runtime | library half exists, uncalled |
-| The ledger — recipe version, archive hash, source hashes (§4) | launcher runtime | not written |
-| Tier 3b: rebuild and compare on every start (§5) | launcher runtime | not written |
-| Gate the launch bar on the archive being present and matching (§5) | launcher runtime | not written |
+| A `recipes` array in the served manifest, assembled from `patch-manifest.json` beside `patches` and `runtime` (§2) | `web/src/lib/launcher.ts` | **the website session's**, in progress there |
+| Fetch the recipe, verify it against the manifest hash (Tier 3) | `App::fetch_recipe` | **built** — size, hash, id, version and revision all cross-checked before it is parsed |
+| Read the player's two tables, `recipe::build`, write the archive | `App::install_recipes` | **built** |
+| The slot check before writing (`would_clobber`, §4) | `App::install_recipes` | **built** — checked at decision time and again immediately before the write |
+| The ledger — recipe version, archive hash, source hashes (§4) | `launcher_core::ledger` | **built** |
+| Tier 3b: verify on every start (§5) | `App::check_recipes`, called from `refreshRealm` | **built** |
+| Gate the launch bar on the archive being present and matching (§5) | `App::status` | **built** — the bar reads `BUILD PATCH` and `can_launch` is false |
 
-`launcher_core::recipe` and `launcher_core::mpq` are the tested library beneath
-all of that, and `main.rs` does not mention either. **The remaining work is the
-launcher runtime, not the recipe.**
+Only the website half remains, and it is not this session's file. The whole
+path is exercised end to end by `launcher/test/smoke-linux.sh`, which stands up
+a realm publishing a recipe, drives the real binary through its interface, and
+then reads the built archive back with `inspect-dbc` to confirm the patched
+client offers the three body types and no stock class.
 
 ## 7. What this costs if it is wrong
 

@@ -31,7 +31,15 @@ fn the_shipped_recipe_parses() {
     let recipe = shipped();
     assert_eq!(recipe.id, "body-types");
     assert!(recipe.version >= 1);
-    assert_eq!(recipe.output, "Data/patch-4.MPQ");
+    // The locale slot, not the base slot: a base Data/patch-N.MPQ loads before
+    // every locale archive and would be shadowed by the client's own
+    // patch-<locale>-N.MPQ. ADR 0010 §7.3.
+    assert_eq!(recipe.output, "Data/{locale}/patch-{locale}-4.MPQ");
+    assert_eq!(
+        recipe.output_for("deDE"),
+        "Data/deDE/patch-deDE-4.MPQ",
+        "the placeholder has to be filled in for both directory and file name"
+    );
 }
 
 /// The three body types, and only those three. If BODY-TYPES.md and this file

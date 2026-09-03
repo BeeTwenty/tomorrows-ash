@@ -44,18 +44,14 @@ impl Default for Network {
     }
 }
 
-/// Refuse anything that is not HTTPS.
+/// Refuse anything the manifest would not have allowed.
 ///
-/// The manifest validator already checks patch URLs, but this is the last gate
-/// before bytes are fetched and it costs nothing to hold it here too.
+/// The last gate before bytes are fetched, and deliberately the *same* rule the
+/// manifest validator applies rather than a second one that looks like it:
+/// when these diverged, the validator rejected a whole manifest for a URL this
+/// would have fetched without complaint.
 fn require_https(url: &str) -> Result<()> {
-    if url.starts_with("https://") {
-        return Ok(());
-    }
-    // A loopback address over plaintext is how the website is developed, and
-    // refusing it would mean nobody could test the launcher against a local
-    // realm.
-    if url.starts_with("http://127.0.0.1") || url.starts_with("http://localhost") {
+    if crate::manifest::fetchable(url) {
         return Ok(());
     }
     Err(Error::Message(format!(

@@ -182,3 +182,38 @@ fn dbc_bytes(rows: u32, fields: u32, record_size: u32, records: &[u8], strings: 
     out.extend_from_slice(strings);
     out
 }
+
+/// A client on disk: `Wow.exe` with a real version resource, and the two tables
+/// in a real archive under the locale directory.
+///
+/// The same shape the tool and the launcher both expect, so a test that drives
+/// either of them is driving the real path rather than a stub.
+pub fn write_client(root: &std::path::Path, block: StringBlock) {
+    let locale = root.join("Data/enUS");
+    std::fs::create_dir_all(&locale).unwrap();
+
+    // Enough of a PE for the version reader: 3.3.5 build 12340.
+    let mut exe = b"MZ".to_vec();
+    exe.extend_from_slice(&[0x11; 30]);
+    exe.extend_from_slice(&[0xBD, 0x04, 0xEF, 0xFE]);
+    exe.extend_from_slice(&0x0001_0000u32.to_le_bytes());
+    exe.extend_from_slice(&((3u32 << 16) | 3).to_le_bytes());
+    exe.extend_from_slice(&((5u32 << 16) | 12340).to_le_bytes());
+    std::fs::write(root.join("Wow.exe"), exe).unwrap();
+
+    std::fs::write(
+        locale.join("locale-enUS.MPQ"),
+        launcher_core::mpq::write(&[
+            (
+                launcher_core::dbc::CHR_CLASSES.to_string(),
+                chr_classes(block),
+            ),
+            (
+                launcher_core::dbc::CHAR_BASE_INFO.to_string(),
+                char_base_info(),
+            ),
+        ])
+        .unwrap(),
+    )
+    .unwrap();
+}

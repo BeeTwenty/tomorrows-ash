@@ -34,11 +34,11 @@
     "make the repository claim otherwise. The work that remains is enumerated",
     "in ADR 0009 §6."
   ],
-  "schema": 1,
+  "schema": 2,
   "id": "body-types",
-  "version": 3,
+  "version": 4,
   "revision": "",
-  "output": "Data/patch-4.MPQ",
+  "output": "Data/{locale}/patch-{locale}-4.MPQ",
   "summary": "Shows the three Ashmorrow body types at character creation instead of ten stock classes.",
   "chr_classes": {
     "id_field": 0,

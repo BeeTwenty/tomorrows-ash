@@ -30,6 +30,10 @@ pub struct Manifest {
     /// a Linux player does not have to assemble a runtime by hand.
     #[serde(default)]
     pub runtime: Vec<RuntimeComponent>,
+    /// Edits the launcher applies to the player's own client tables, building
+    /// the result locally. See [`RecipeRef`].
+    #[serde(default)]
+    pub recipes: Vec<RecipeRef>,
     #[serde(default)]
     pub launcher: LauncherSpec,
 }
@@ -88,9 +92,55 @@ pub struct Patch {
     /// Where it is installed, relative to the client root.
     pub path: String,
     pub size: u64,
+    /// Lowercase hex BLAKE3, like every other hash in this file.
     pub hash: String,
     /// Must be `https://`. Fetched, verified against `hash`, then written.
     pub url: String,
+    #[serde(default)]
+    pub summary: String,
+}
+
+/// A recipe: instructions for editing the player's own tables.
+///
+/// Carries a URL for the same reason [`Patch`] does — a recipe is a file *we*
+/// wrote, a few kilobytes of JSON saying "rename class 2 to Vanguard". What it
+/// is emphatically not is the table it describes: the launcher reads that out
+/// of the player's own archives and builds the result on their machine, which
+/// is what keeps ADR 0005 rule 2 true while still changing what the character
+/// creation screen offers.
+///
+/// There is no `size` or hash *of the output* here, and there cannot be. The
+/// archive is built from the player's bytes, so a repacked or non-English
+/// client produces different ones by design. `hash` is the hash of this
+/// document. What anchors the built archive is the launcher's own record of
+/// what it built — ADR 0009 §5, Tier 3b.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecipeRef {
+    pub id: String,
+    /// Compared against the ledger to decide whether to rebuild. The only
+    /// field the decision actually turns on.
+    pub version: u32,
+    /// Lowercase hex **BLAKE3** of the recipe document, checked before it is
+    /// parsed. Tier 3: our content, over https, against a published hash.
+    pub hash: String,
+    /// Must be `https://`.
+    pub url: String,
+    /// Bytes of the recipe document. Optional, and checked when present.
+    ///
+    /// Not for progress — a recipe is a few kilobytes. It is so that a proxy
+    /// or CDN serving an error page in place of the file is reported as
+    /// "expected 4096 bytes, got 1203" rather than as a hash mismatch, which
+    /// reads like tampering and sends people looking in the wrong place.
+    #[serde(default)]
+    pub size: u64,
+    /// The commit the recipe was published from, per ADR 0009 §3.
+    ///
+    /// Duplicated from the recipe document on purpose — it lets a report name
+    /// the exact source of a recipe without fetching it — and cross-checked
+    /// against the document for exactly that reason: two copies of a fact are
+    /// safe only when something notices them disagreeing.
+    #[serde(default)]
+    pub revision: String,
     #[serde(default)]
     pub summary: String,
 }
@@ -180,7 +230,7 @@ impl Manifest {
         for patch in &self.patches {
             safe_relative(&patch.path)?;
             check_hash(&patch.hash, &patch.path)?;
-            if !patch.url.starts_with("https://") {
+            if !fetchable(&patch.url) {
                 return bad(format!(
                     "patch {} must be served over https, got {}",
                     patch.id, patch.url
@@ -188,9 +238,22 @@ impl Manifest {
             }
         }
 
+        for recipe in &self.recipes {
+            check_hash(&recipe.hash, &recipe.id)?;
+            if !fetchable(&recipe.url) {
+                return bad(format!(
+                    "recipe {} must be served over https, got {}",
+                    recipe.id, recipe.url
+                ));
+            }
+            if recipe.version == 0 {
+                return bad(format!("recipe {} has no version", recipe.id));
+            }
+        }
+
         for component in &self.runtime {
             check_hash(&component.hash, &component.id)?;
-            if !component.url.starts_with("https://") {
+            if !fetchable(&component.url) {
                 return bad(format!(
                     "runtime component {} must be served over https, got {}",
                     component.id, component.url
@@ -207,6 +270,51 @@ impl Manifest {
     pub fn patch_level(&self) -> u32 {
         self.patches.iter().map(|p| p.version).max().unwrap_or(0)
     }
+}
+
+/// Whether the launcher may fetch this URL at all.
+///
+/// **The one definition.** It used to live twice — here as "starts with
+/// https://", and in `net.rs` as "https, or plaintext to loopback" — and the
+/// two disagreed. The manifest validator rejected the whole document for a
+/// loopback URL that the transport would happily have fetched, so a realm
+/// developed locally could not publish a patch or a recipe at all, and the
+/// symptom was a launcher reporting the realm as unreachable.
+///
+/// Loopback plaintext is allowed because it is how the website is developed
+/// and how the smoke test stands a realm up. It is not a weakening: a manifest
+/// that can name an https host can already name anything, and the loopback
+/// addresses are the ones nothing else can reach.
+///
+/// **The host is parsed, not prefix-matched.** `starts_with("http://127.0.0.1")`
+/// — which is what both copies of this rule did — is also true of
+/// `http://127.0.0.1.evil.example/`, which is somebody else's server, and of
+/// `http://127.0.0.1:80@evil.example/`, where everything before the `@` is
+/// userinfo and the host is again somebody else's. Both would have been
+/// fetched over plaintext on the strength of looking local.
+pub fn fetchable(url: &str) -> bool {
+    if url.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    // The authority ends at the first path, query or fragment character.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    // Anything before an `@` is userinfo, and the host is what follows it.
+    // Rather than parse credentials we do not want, refuse the shape.
+    if authority.contains('@') {
+        return false;
+    }
+    // An IPv6 literal is bracketed; otherwise the host ends at the port.
+    let host = match authority.strip_prefix('[') {
+        Some(inside) => match inside.split_once(']') {
+            Some((host, port)) if port.is_empty() || port.starts_with(':') => host,
+            _ => return false,
+        },
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 /// Reject anything that could escape the client directory.
@@ -249,7 +357,7 @@ pub fn safe_relative(path: &str) -> Result<PathBuf> {
 fn check_hash(hash: &str, path: &str) -> Result<()> {
     if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(Error::BadManifest(format!(
-            "{path}: hash must be 64 hex characters, got {:?}",
+            "{path}: hash must be 64 lowercase hex characters of BLAKE3, got {:?}",
             hash
         )));
     }

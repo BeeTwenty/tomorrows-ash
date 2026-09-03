@@ -22,6 +22,7 @@ pub mod dbc;
 pub mod error;
 pub mod install;
 pub mod launch;
+pub mod ledger;
 pub mod manifest;
 pub mod mpq;
 #[cfg(feature = "net")]

@@ -6,7 +6,15 @@
  * design gets reviewed, and how the UI is worked on without a 15 GB client and
  * a built Rust binary on the machine.
  */
-import type { Account, Progress, Report, Runtime, Settings, Status } from "./types";
+import type {
+  Account,
+  Progress,
+  RecipeState,
+  Report,
+  Runtime,
+  Settings,
+  Status,
+} from "./types";
 
 const inTauri = "__TAURI_INTERNALS__" in window;
 
@@ -61,6 +69,11 @@ export function onStep(handler: (step: string) => void): Promise<boolean> {
   return subscribe<string>("provision:step", handler);
 }
 
+/** Building the body-type patch narrates for the same reason. */
+export function onRecipeStep(handler: (step: string) => void): Promise<boolean> {
+  return subscribe<string>("recipe:step", handler);
+}
+
 /**
  * Tell the Rust side how startup went.
  *
@@ -95,6 +108,8 @@ export const api = {
   ledger: () => (inTauri ? call<Report | null>("ledger") : demo.ledger()),
   applyConfig: () => (inTauri ? call<string[]>("apply_config") : demo.written()),
   installPatches: () => (inTauri ? call<string[]>("install_patches") : demo.written()),
+  checkRecipes: () => (inTauri ? call<RecipeState[]>("check_recipes") : demo.recipes()),
+  installRecipes: () => (inTauri ? call<string[]>("install_recipes") : demo.buildRecipes()),
   provisionRuntime: () =>
     inTauri ? call<string[]>("provision_runtime") : demo.provisionRuntime(),
   login: (username: string, password: string) =>
@@ -115,6 +130,7 @@ export const api = {
 let chosen = true;
 let verified = true;
 let provisioned = false;
+let recipesBuilt = false;
 
 const demoReport: Report = {
   files: [
@@ -219,6 +235,20 @@ const demo = {
   async provisionRuntime(): Promise<string[]> {
     provisioned = true;
     return ["prefix at /home/player/.local/share/ashmorrow/prefix", "dxvk 2.4.1 (1 files)"];
+  },
+  async recipes(): Promise<RecipeState[]> {
+    return [
+      {
+        id: "body-types",
+        version: 4,
+        summary: "Shows the three Ashmorrow body types at character creation.",
+        need: recipesBuilt ? { kind: "up_to_date" } : { kind: "never_built" },
+      },
+    ];
+  },
+  async buildRecipes(): Promise<string[]> {
+    recipesBuilt = true;
+    return ["Data/enUS/patch-enUS-4.MPQ"];
   },
   async written(): Promise<string[]> {
     return ["/home/player/games/wow-335a/Data/enUS/realmlist.wtf"];

@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-use launcher_core::app::{Account, App, Status};
+use launcher_core::app::{Account, App, RecipeState, Status};
 use launcher_core::net::Network;
 use launcher_core::settings::{cache_path, settings_path};
 use launcher_core::verify::Report;
@@ -173,6 +173,32 @@ fn install_patches(shared: tauri::State<'_, Shared>) -> Answer<Vec<String>> {
     Ok(installed.iter().map(|p| p.display().to_string()).collect())
 }
 
+/// What each published recipe needs, without changing anything.
+///
+/// Called on every start alongside the manifest refresh: this is Tier 3b, and
+/// a check that only runs when a player presses something is not a check.
+#[tauri::command]
+fn check_recipes(shared: tauri::State<'_, Shared>) -> Answer<Vec<RecipeState>> {
+    let mut app = shared.app.lock().unwrap();
+    say(app.check_recipes(&shared.http))
+}
+
+/// Build and install the body-type patch from the player's own client files.
+///
+/// Long-running for the same reason `provision_runtime` is — it reads tables
+/// out of a multi-gigabyte archive set and writes into the game directory —
+/// and narrated for the same reason.
+#[tauri::command]
+fn install_recipes(
+    handle: tauri::AppHandle,
+    shared: tauri::State<'_, Shared>,
+) -> Answer<Vec<String>> {
+    let mut app = shared.app.lock().unwrap();
+    say(app.install_recipes(&shared.http, &|step| {
+        let _ = handle.emit("recipe:step", step);
+    }))
+}
+
 #[tauri::command]
 fn login(shared: tauri::State<'_, Shared>, username: String, password: String) -> Answer<Account> {
     let mut app = shared.app.lock().unwrap();
@@ -322,6 +348,8 @@ fn main() {
             ledger,
             apply_config,
             install_patches,
+            check_recipes,
+            install_recipes,
             provision_runtime,
             login,
             runtimes,

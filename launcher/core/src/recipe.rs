@@ -24,7 +24,7 @@ use crate::error::{Error, IoContext, Result};
 use crate::mpq;
 
 /// Bumped only when a change would make an older launcher misread a recipe.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// What the launcher is told to do to a client's tables.
 ///
@@ -49,6 +49,16 @@ pub struct Recipe {
     #[serde(default)]
     pub revision: String,
     /// Where the built archive goes, relative to the client root.
+    ///
+    /// `{locale}` is substituted with the locale the tables were read under —
+    /// and for a patch that edits DBCs it **must** be, because of where the
+    /// game looks. A base `Data/patch-4.MPQ` loads *before* every locale
+    /// archive, and on a real 3.3.5a client `ChrClasses.dbc` lives in
+    /// `Data/enUS/patch-enUS-3.MPQ`. A base-slot patch is therefore shadowed by
+    /// the client's own locale patch and changes nothing at all.
+    ///
+    /// This said `Data/patch-4.MPQ` until 2026-09-03, and would have shipped a
+    /// patch that quietly did nothing. See ADR 0010 §7.3.
     pub output: String,
     #[serde(default)]
     pub summary: String,
@@ -124,7 +134,21 @@ impl Recipe {
         // there is no drive letter to anchor it — and `join` on Windows then
         // treats it as rooted and drops the client directory entirely. The
         // Windows leg of CI caught exactly this.
-        crate::manifest::safe_relative(&self.output)?;
+        // Validated with the placeholder filled in, because that is the string
+        // that becomes a path. A locale is four ASCII letters read out of the
+        // client's own directory listing, so it cannot introduce a separator —
+        // but checking the result rather than the template means that stays
+        // true even if that ever changes.
+        crate::manifest::safe_relative(&self.output_for("enUS"))?;
+        if !self.output.contains("{locale}") {
+            return Err(Error::Message(format!(
+                "a recipe that edits DBCs must write into the locale patch slot, and {} \
+                 is a base-slot path. Every locale archive loads after every base one, so \
+                 the client's own patch-<locale>-N.MPQ would shadow it and the patch would \
+                 do nothing. Use Data/{{locale}}/patch-{{locale}}-N.MPQ.",
+                self.output
+            )));
+        }
         if !self.output.to_ascii_lowercase().ends_with(".mpq") {
             return Err(Error::Message(format!(
                 "a recipe builds an MPQ archive, and {} is not one",
@@ -141,12 +165,19 @@ impl Recipe {
         Ok(())
     }
 
+    /// The output path with `{locale}` filled in.
+    pub fn output_for(&self, locale: &str) -> String {
+        self.output.replace("{locale}", locale)
+    }
+
     /// Where the built archive goes.
     ///
     /// Safe to join: `validate` has already refused anything that is not a
-    /// plain relative path, on every platform rather than on this one.
-    pub fn output_path(&self, client_root: &Path) -> PathBuf {
-        client_root.join(&self.output)
+    /// plain relative path, on every platform rather than on this one — and it
+    /// refuses it with the placeholder filled in, so a locale cannot smuggle
+    /// one past the check.
+    pub fn output_path(&self, client_root: &Path, locale: &str) -> PathBuf {
+        client_root.join(self.output_for(locale))
     }
 }
 
@@ -307,12 +338,28 @@ fn rebuild_race_table(recipe: &Recipe, source: &Dbc) -> Result<Dbc> {
  * Building it against a real client
  * ------------------------------------------------------------------ */
 
+/// The client's own archives, with ours taken out.
+///
+/// Once the built archive is in place it wins the load order — that is the
+/// entire point of it — so reading the source tables back through the full
+/// order would hand our own output in as its own input. A rebuild would then
+/// record the patched tables as the sources it came from, and every later
+/// check would compare a patched table against a hash taken from a patched
+/// table and call it unchanged. The ledger would be self-consistent and wrong.
+pub fn source_order(recipe: &Recipe, client_root: &Path, locale: &str) -> Vec<PathBuf> {
+    let ours = recipe.output_path(client_root, locale);
+    mpq::load_order(client_root, locale)
+        .into_iter()
+        .filter(|path| path != &ours)
+        .collect()
+}
+
 /// Read a client's tables, apply the recipe, and return the archive's bytes.
 ///
 /// Does not write anything: the caller decides where it goes and whether it is
 /// allowed to (see `would_clobber`).
 pub fn build(recipe: &Recipe, client_root: &Path, locale: &str) -> Result<(Vec<u8>, Built)> {
-    let archives = mpq::load_order(client_root, locale);
+    let archives = source_order(recipe, client_root, locale);
     if archives.is_empty() {
         return Err(Error::Message(format!(
             "no MPQ archives under {}/Data — this does not look like a client",
@@ -371,8 +418,13 @@ pub fn build(recipe: &Recipe, client_root: &Path, locale: &str) -> Result<(Vec<u
 /// player who also plays elsewhere very likely has one, and overwriting it
 /// silently would break their other client and produce a character creation
 /// screen belonging to neither realm. ADR 0010 §7.
-pub fn would_clobber(recipe: &Recipe, client_root: &Path, ours: Option<&str>) -> Result<bool> {
-    let path = recipe.output_path(client_root);
+pub fn would_clobber(
+    recipe: &Recipe,
+    client_root: &Path,
+    locale: &str,
+    ours: Option<&str>,
+) -> Result<bool> {
+    let path = recipe.output_path(client_root, locale);
     if !path.is_file() {
         return Ok(false);
     }
@@ -387,10 +439,10 @@ mod tests {
 
     fn recipe_json() -> String {
         serde_json::json!({
-            "schema": 1,
+            "schema": 2,
             "id": "body-types",
             "version": 1,
-            "output": "Data/patch-4.MPQ",
+            "output": "Data/{locale}/patch-{locale}-4.MPQ",
             "chr_classes": {
                 "id_field": 0,
                 "name_field": 1,
@@ -643,20 +695,20 @@ mod tests {
     fn a_patch_slot_holding_someone_elses_archive_is_noticed() {
         let recipe = Recipe::parse(recipe_json().as_bytes()).unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let path = recipe.output_path(dir.path());
+        let path = recipe.output_path(dir.path(), "enUS");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
         assert!(
-            !would_clobber(&recipe, dir.path(), None).unwrap(),
+            !would_clobber(&recipe, dir.path(), "enUS", None).unwrap(),
             "nothing there yet"
         );
 
         std::fs::write(&path, b"another server's patch").unwrap();
-        assert!(would_clobber(&recipe, dir.path(), None).unwrap());
+        assert!(would_clobber(&recipe, dir.path(), "enUS", None).unwrap());
 
         let ours = blake3::hash(b"another server's patch").to_hex().to_string();
         assert!(
-            !would_clobber(&recipe, dir.path(), Some(&ours)).unwrap(),
+            !would_clobber(&recipe, dir.path(), "enUS", Some(&ours)).unwrap(),
             "our own archive must not look like someone else's"
         );
     }

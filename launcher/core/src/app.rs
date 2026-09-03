@@ -16,8 +16,10 @@ use crate::client::Client;
 use crate::error::{Error, Result};
 use crate::install;
 use crate::launch::{self, LaunchOptions, LaunchPlan, Platform};
+use crate::ledger::{self, Entry, Ledger, Need};
 use crate::manifest::Manifest;
 use crate::provision::{self, PrefixState};
+use crate::recipe::{self, Recipe};
 use crate::settings::Settings;
 use crate::verify::{self, HashCache, Progress, Report};
 use crate::wine::{self, Runtime};
@@ -96,10 +98,30 @@ pub struct App {
     last_report: Option<Report>,
     account: Option<Account>,
     runtimes: Vec<Runtime>,
+    ledger_path: PathBuf,
+    ledger: Ledger,
+    /// What each published recipe needs, as of the last look. Recomputed by
+    /// [`App::check_recipes`] rather than on every `status()` call, because it
+    /// reads archives off disk and `status()` is called on every render.
+    recipe_needs: Vec<RecipeState>,
+}
+
+/// One published recipe, and what this machine needs to do about it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecipeState {
+    pub id: String,
+    pub version: u32,
+    pub summary: String,
+    pub need: Need,
 }
 
 impl App {
     pub fn new(base_url: impl Into<String>, settings_path: PathBuf, cache_path: PathBuf) -> App {
+        // The ledger lives beside the settings: same directory, same lifetime,
+        // and a player who clears one has cleared the other, which is the
+        // honest outcome — a launcher with no record of what it built should
+        // rebuild rather than assume.
+        let ledger_path = settings_path.with_file_name("recipes.json");
         let settings = Settings::load(&settings_path);
         let client = settings
             .client_path
@@ -120,6 +142,9 @@ impl App {
             } else {
                 wine::discover()
             },
+            ledger: Ledger::load(&ledger_path),
+            ledger_path,
+            recipe_needs: Vec::new(),
         }
     }
 
@@ -244,6 +269,211 @@ impl App {
             installed.push(install::install_patch(&client.root, patch, &bytes)?);
         }
         Ok(installed)
+    }
+
+    /* ----------------------------------------------------------------- *
+     * Recipes — the body-type patch
+     * ----------------------------------------------------------------- */
+
+    /// The locale to read the client's tables under, and to write the archive
+    /// into.
+    ///
+    /// A client has exactly one locale directory in practice, and
+    /// `Client::primary_locale` reads it off the disk rather than guessing —
+    /// which matters because the output path carries the locale too.
+    fn locale(&self) -> Result<String> {
+        let client = self.client.as_ref().ok_or_else(no_client)?;
+        Ok(client.primary_locale()?.to_string())
+    }
+
+    /// Fetch a recipe named by the manifest and check it against the hash the
+    /// manifest publishes.
+    ///
+    /// Tier 3, exactly as a patch is treated: our content, over https, against
+    /// a hash we published. The difference is what happens next — a patch is
+    /// written, a recipe is *executed against the player's own files*, which is
+    /// why the check happens before it is parsed rather than after.
+    fn fetch_recipe(&self, http: &dyn Http, entry: &crate::manifest::RecipeRef) -> Result<Recipe> {
+        let bytes = http.get(&entry.url)?;
+        // Size before hash: a CDN that served an error page instead of the
+        // file should say so, not accuse the realm of tampering.
+        if entry.size != 0 && bytes.len() as u64 != entry.size {
+            return Err(Error::Message(format!(
+                "the recipe {} should be {} bytes and what arrived is {}. \
+                 Something between here and the realm is not serving the file.",
+                entry.id,
+                entry.size,
+                bytes.len()
+            )));
+        }
+        let got = blake3::hash(&bytes).to_hex().to_string();
+        if got != entry.hash {
+            return Err(Error::Message(format!(
+                "the recipe {} does not match the hash the realm published for it \
+                 (expected {}, got {got}). Nothing was applied.",
+                entry.id, entry.hash
+            )));
+        }
+        let recipe = Recipe::parse(&bytes)?;
+        if recipe.id != entry.id {
+            return Err(Error::Message(format!(
+                "the manifest calls this recipe {} and the recipe calls itself {}",
+                entry.id, recipe.id
+            )));
+        }
+        if recipe.version != entry.version {
+            return Err(Error::Message(format!(
+                "the manifest offers {} version {}, and the file says version {}",
+                entry.id, entry.version, recipe.version
+            )));
+        }
+        // Both copies of the revision come from the same commit, so they can
+        // only differ if the manifest was assembled from a different recipe
+        // than the one being served — which is worth stopping for.
+        if !entry.revision.is_empty()
+            && !recipe.revision.is_empty()
+            && entry.revision != recipe.revision
+        {
+            return Err(Error::Message(format!(
+                "the manifest says {} was published from {} and the file says {}. \
+                 The manifest and the recipe are out of step.",
+                entry.id, entry.revision, recipe.revision
+            )));
+        }
+        Ok(recipe)
+    }
+
+    /// What each published recipe needs, without changing anything.
+    ///
+    /// Run on every start, which is what makes ADR 0009 §5's Tier 3b real: a
+    /// corrupt archive, a deleted one, or a client that was repaired under it
+    /// are all caught here rather than at the character creation screen.
+    ///
+    /// Network failure is not a verdict. If the manifest could not be fetched
+    /// there are no recipes to check, and that leaves the launch bar alone
+    /// rather than blocking on a realm that is merely unreachable.
+    pub fn check_recipes(&mut self, http: &dyn Http) -> Result<Vec<RecipeState>> {
+        let Some(manifest) = self.manifest.as_ref() else {
+            self.recipe_needs.clear();
+            return Ok(Vec::new());
+        };
+        if manifest.recipes.is_empty() {
+            self.recipe_needs.clear();
+            return Ok(Vec::new());
+        }
+        let client_root = self.client.as_ref().ok_or_else(no_client)?.root.clone();
+        let locale = self.locale()?;
+
+        let refs = manifest.recipes.clone();
+        let mut states = Vec::new();
+        for entry in &refs {
+            let recipe = self.fetch_recipe(http, entry)?;
+            let need = ledger::need(
+                &recipe,
+                self.ledger.get(&recipe.id, &client_root),
+                &client_root,
+                &locale,
+            )?;
+            states.push(RecipeState {
+                id: recipe.id.clone(),
+                version: recipe.version,
+                summary: recipe.summary.clone(),
+                need,
+            });
+        }
+        self.recipe_needs = states.clone();
+        Ok(states)
+    }
+
+    /// Build and install every recipe that needs it.
+    ///
+    /// `note` is called with each step: this reads two tables out of a
+    /// multi-gigabyte archive set and writes a file into the game directory,
+    /// and doing that behind a spinner is how a launcher earns distrust.
+    pub fn install_recipes(&mut self, http: &dyn Http, note: &dyn Fn(&str)) -> Result<Vec<String>> {
+        let Some(manifest) = self.manifest.as_ref() else {
+            return Err(no_manifest());
+        };
+        let refs = manifest.recipes.clone();
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let client_root = self.client.as_ref().ok_or_else(no_client)?.root.clone();
+        let locale = self.locale()?;
+        let mut done = Vec::new();
+
+        for entry in &refs {
+            let recipe = self.fetch_recipe(http, entry)?;
+            let need = ledger::need(
+                &recipe,
+                self.ledger.get(&recipe.id, &client_root),
+                &client_root,
+                &locale,
+            )?;
+            if need.is_up_to_date() {
+                continue;
+            }
+            if !need.can_build() {
+                // The only case: the slot holds an archive we did not write.
+                // ADR 0010 §7 — stop, and say whose it might be, rather than
+                // deleting somebody else's server's patch.
+                return Err(Error::Message(format!(
+                    "{} is already in your client, and the launcher did not put it there. \
+                     It is very likely another server's patch — {} is a convention, not a \
+                     name we own. Move or delete it yourself if you want Ashmorrow's, and \
+                     the launcher will build it next time.",
+                    recipe.output_for(&locale),
+                    recipe.output_for(&locale)
+                )));
+            }
+
+            note(&format!("reading your client's tables ({})", need.tell()));
+            let (bytes, built) = recipe::build(&recipe, &client_root, &locale)?;
+
+            // Between deciding and writing, look again. Nothing here is
+            // atomic, and the check that matters is the one closest to the
+            // write.
+            if recipe::would_clobber(&recipe, &client_root, &locale, None)? {
+                let ours = self
+                    .ledger
+                    .get(&recipe.id, &client_root)
+                    .map(|entry| entry.built.hash.as_str());
+                if recipe::would_clobber(&recipe, &client_root, &locale, ours)? {
+                    return Err(Error::Message(format!(
+                        "{} appeared while the launcher was building. Nothing was \
+                         overwritten.",
+                        recipe.output_for(&locale)
+                    )));
+                }
+            }
+
+            note(&format!("writing {}", recipe.output_for(&locale)));
+            let path = recipe.output_path(&client_root, &locale);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    Error::Message(format!("could not create {}: {e}", parent.display()))
+                })?;
+            }
+            std::fs::write(&path, &bytes)
+                .map_err(|e| Error::Message(format!("could not write {}: {e}", path.display())))?;
+
+            self.ledger.record(Entry {
+                client_root: client_root.clone(),
+                output: recipe.output_for(&locale),
+                built,
+            });
+            self.ledger.save(&self.ledger_path)?;
+            done.push(recipe.output_for(&locale));
+        }
+
+        // Re-check so the rows and the launch bar reflect what just happened
+        // rather than what was true before.
+        self.check_recipes(http)?;
+        Ok(done)
+    }
+
+    pub fn recipe_states(&self) -> &[RecipeState] {
+        &self.recipe_needs
     }
 
     /* ----------------------------------------------------------------- *
@@ -536,6 +766,43 @@ impl App {
             "",
         ));
 
+        // Body types — the recipe-built archive.
+        //
+        // ADR 0009 §5: this blocks. A client that reaches character creation
+        // showing ten classes on a three-class realm is a worse outcome than
+        // one that has not started, because the player picks something the
+        // realm will refuse and finds out after the download.
+        if let Some(state) = self
+            .recipe_needs
+            .iter()
+            .find(|state| !state.need.is_up_to_date())
+        {
+            let building_helps = state.need.can_build();
+            rows.push(row(
+                "BODY TYPES",
+                &state.need.tell(),
+                if building_helps {
+                    RowState::Warn
+                } else {
+                    RowState::Block
+                },
+                if building_helps {
+                    "the launcher builds this from your own client files"
+                } else {
+                    "move or delete that file yourself and the launcher will build ours"
+                },
+            ));
+            if !building_helps && blocked.is_empty() {
+                blocked = format!(
+                    "{} — {}",
+                    state.need.tell(),
+                    "the launcher will not overwrite a patch it did not write"
+                );
+            }
+        } else if !self.recipe_needs.is_empty() {
+            rows.push(row("BODY TYPES", "built and current", RowState::Ok, ""));
+        }
+
         // Account
         match &self.account {
             Some(account) => rows.push(row(
@@ -583,7 +850,14 @@ impl App {
             }
         };
 
-        let can_launch = blocked.is_empty() && self.client.is_some() && runtime_ready;
+        // A recipe that is not built yet is not a warning. The screen it
+        // controls is the first thing a player sees.
+        let recipes_ready = self
+            .recipe_needs
+            .iter()
+            .all(|state| state.need.is_up_to_date());
+        let can_launch =
+            blocked.is_empty() && self.client.is_some() && runtime_ready && recipes_ready;
         let action = if self.client.is_none() {
             "SELECT CLIENT"
         } else if !blocked.is_empty() {
@@ -594,6 +868,8 @@ impl App {
             "SET UP RUNTIME"
         } else if patch_count > 0 {
             "INSTALL PATCH"
+        } else if !recipes_ready {
+            "BUILD PATCH"
         } else {
             "LAUNCH"
         };

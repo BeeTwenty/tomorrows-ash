@@ -5,7 +5,7 @@
  * that needs a virtual DOM to draw four status rows has been over-thought, and
  * every kilobyte here is one the player downloads before deciding to care.
  */
-import { api, onProgress, onStep, pickFolder, reportStartup } from "./api";
+import { api, onProgress, onRecipeStep, onStep, pickFolder, reportStartup } from "./api";
 import type { FileReport, Progress, Report, Runtime, Settings, Status } from "./types";
 
 type View = "status" | "ledger" | "settings";
@@ -22,6 +22,14 @@ interface State {
   error: string | null;
   /** The realm could not be reached. Not fatal — most of the launcher is local. */
   realmError: string | null;
+  /**
+   * The body-type patch could not be checked or built.
+   *
+   * Separate from `realmError` because it is a different sentence with a
+   * different remedy, and separate from `error` because nobody asked for it —
+   * it happens on every start.
+   */
+  recipeError: string | null;
 }
 
 const state: State = {
@@ -34,6 +42,7 @@ const state: State = {
   busy: null,
   error: null,
   realmError: null,
+  recipeError: null,
 };
 
 const root = document.getElementById("app")!;
@@ -208,6 +217,19 @@ function problems(): DocumentFragment {
 
   if (state.error) {
     out.append(note("block", "▲", [el("b", {}, "That did not work. "), state.error]));
+  }
+
+  if (state.recipeError) {
+    out.append(
+      note("warn", "▲", [
+        el("b", {}, "The body-type patch could not be checked. "),
+        "Ashmorrow's character creation screen shows three body types rather than " +
+          "ten classes, and the launcher builds that from your own game files. " +
+          "Until this is sorted the game will start with the stock screen, and the " +
+          "realm will refuse any class that is not a body type.",
+        el("div", { class: "detail" }, state.recipeError),
+      ]),
+    );
   }
 
   if (state.realmError) {
@@ -533,6 +555,13 @@ async function act(): Promise<void> {
     });
   }
 
+  if (action === "BUILD PATCH") {
+    return run("building the body-type patch", async () => {
+      await api.installRecipes();
+      state.status = await api.status();
+    });
+  }
+
   if (action === "LAUNCH") {
     return run("launching", async () => {
       await api.applyConfig();
@@ -555,6 +584,20 @@ async function refreshRealm(): Promise<void> {
   render();
   try {
     state.status = await api.refresh();
+    // Tier 3b, on every start (ADR 0009 §5). This is what notices that the
+    // built archive was deleted, corrupted, or that the player repaired their
+    // client under it — none of which announces itself. A check that only runs
+    // when somebody presses a button is not a check.
+    //
+    // Its own try: a realm that publishes a recipe the launcher cannot read
+    // must not cost the player their realm address and their launch button.
+    try {
+      state.recipeError = null;
+      await api.checkRecipes();
+      state.status = await api.status();
+    } catch (error) {
+      state.recipeError = reason(error);
+    }
   } catch (error) {
     state.realmError = reason(error);
     // Fall back to the local view of the world, which needs no network.
@@ -643,13 +686,15 @@ async function start(): Promise<void> {
   // Then the narration. Neither of these can reject — see `subscribe` in
   // api.ts — and the launcher is fully usable if both come back false; all
   // that is lost is the progress bar moving while a long job runs.
-  const steps = await onStep((step) => {
-    // The busy label is the narration: one line, replaced, never a log.
+  // The busy label is the narration: one line, replaced, never a log.
+  const narrate = (step: string) => {
     if (state.busy) {
       state.busy = step;
       render();
     }
-  });
+  };
+  const steps = await onStep(narrate);
+  const recipeSteps = await onRecipeStep(narrate);
   const progress = await onProgress((p) => {
     state.progress = p;
     // Only the bar changed; a full re-render at hashing speed would be the one
@@ -664,7 +709,7 @@ async function start(): Promise<void> {
     settings,
     runtimes,
     ledger,
-    events: steps && progress,
+    events: steps && progress && recipeSteps,
     problems: failures,
   });
 

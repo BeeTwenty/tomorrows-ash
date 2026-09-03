@@ -394,6 +394,37 @@ the layout the format string describes, fixed independently, and the recipe is
 asserted against it — `launcher/core/tests/common/mod.rs`. Setting `name_field`
 back to 5 now fails three tests.
 
+### 7.3 The slot was wrong (2026-09-03)
+
+This document said the built archive goes in `Data/patch-4.MPQ`. It does not,
+and a patch written there would have done nothing at all.
+
+**Every base archive loads before every locale archive.** The order this client
+reports, last winning:
+
+```
+common … patch-3.MPQ          base
+locale-enUS … base-enUS.MPQ   locale
+speech-enUS …                 locale
+patch-enUS.MPQ … patch-enUS-3.MPQ   locale patches   <- ChrClasses.dbc lives here
+```
+
+`ChrClasses.dbc` was read from `patch-enUS-3.MPQ`. A `Data/patch-4.MPQ` sits in
+the base sequence, six archives earlier, and the client's own locale patch
+shadows it. The screen would have shown ten stock classes, the launcher would
+have reported the patch as built and current, and every check we had would have
+agreed — because they all verified the archive rather than its effect.
+
+The output is now `Data/{locale}/patch-{locale}-4.MPQ`; `{locale}` is
+substituted with the locale the tables were read under, so one recipe still
+serves every client. `Recipe::validate` refuses an output without the
+placeholder, naming this reason.
+
+What caught it was not review. It was an end-to-end test that writes the
+archive into a client and asserts it wins the load order —
+`a_built_archive_holds_the_edited_tables`. Nothing that checked the archive's
+*contents* could have: the contents were correct throughout.
+
 ---
 
 ## 8. Recommended first step, before any of this is built
