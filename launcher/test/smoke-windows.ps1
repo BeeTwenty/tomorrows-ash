@@ -46,9 +46,9 @@ try {
         -RedirectStandardOutput $out -RedirectStandardError $err `
         -PassThru -WindowStyle Hidden
 
-    # The binary's own watchdog gives up at 60s; this is the outer bound for the
+    # The binary's own watchdog gives up at 120s; this is the outer bound for the
     # case where it never gets far enough to arm one.
-    if (-not $proc.WaitForExit(120000)) {
+    if (-not $proc.WaitForExit(180000)) {
         Write-Host "== the launcher never exited - killing it"
         try { $proc.Kill() } catch { }
         Write-Host "== stderr"; if (Test-Path $err) { Get-Content $err }
