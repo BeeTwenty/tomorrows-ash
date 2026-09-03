@@ -202,6 +202,34 @@ fn rename_classes(recipe: &Recipe, source: &Dbc) -> Result<Dbc> {
         )));
     }
 
+    // The recipe's column is a fact about *a* client's table, and this is a
+    // different client from the one it was written against. Where the table
+    // itself gives a confident answer, it outranks the recipe: a recipe one
+    // column late still passes the per-row check below, because fifteen of its
+    // sixteen locale columns overlap the real block. That is how `name_field:
+    // 5` survived review — see ADR 0010 §7.1.
+    //
+    // Silence is not disagreement: a table this cannot read confidently falls
+    // through to the per-row check rather than blocking a client whose layout
+    // is merely unusual.
+    if let Some(found) = crate::dbc::find_name_field(source, edits.id_field) {
+        if found != edits.name_field {
+            return Err(Error::Message(format!(
+                "this recipe says class names are in column {}, and this client's \
+                 ChrClasses keeps them in column {found}. Renaming column {} would \
+                 write over {} instead of the name. The recipe does not fit this \
+                 client — please report it rather than editing the number.",
+                edits.name_field,
+                edits.name_field,
+                if edits.name_field > found {
+                    "the locale columns and the string-flags word that follow it"
+                } else {
+                    "whatever precedes it"
+                }
+            )));
+        }
+    }
+
     let mut table = source.clone();
     for rename in &edits.rename {
         let mut found = false;

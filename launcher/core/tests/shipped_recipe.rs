@@ -5,9 +5,12 @@
 //! test on its own: a recipe that parses but says the wrong thing produces a
 //! character creation screen with blank names on it, on someone else's machine.
 
+mod common;
+
 use std::path::PathBuf;
 
-use launcher_core::dbc::{self, Dbc, LOCALES};
+use common::StringBlock;
+use launcher_core::dbc::{self, Dbc};
 use launcher_core::recipe::{self, Recipe};
 
 fn launcher() -> PathBuf {
@@ -181,115 +184,65 @@ fn the_recipe_is_not_published_yet() {
     );
 }
 
+/// The recipe's `name_field` has to be the column a real client keeps names in.
+///
+/// This is the test that was missing. The old one built its own `ChrClasses`
+/// *from* `recipe.name_field`, so the fixture moved whenever the recipe did and
+/// the pair agreed with each other all the way to a real client, where the
+/// recipe was one column late. The fixture is now the layout the core's loader
+/// parses, fixed independently of the recipe, and the recipe is checked against
+/// it.
+#[test]
+fn the_recipe_points_at_the_column_a_real_client_keeps_names_in() {
+    let recipe = shipped();
+    let table = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+
+    assert_eq!(
+        dbc::find_name_field(&table, recipe.chr_classes.id_field),
+        Some(recipe.chr_classes.name_field),
+        "the recipe's name_field is not the column a 3.3.5a client keeps class \
+         names in (ChrClassesEntryfmt: id 0, powerType 2, PetNameToken 3, \
+         Name_Lang 4..19)"
+    );
+
+    // And the id column really is the ids, not something that merely sorts.
+    let ids: Vec<u32> = (0..table.record_count())
+        .map(|row| table.u32_field(row, recipe.chr_classes.id_field).unwrap())
+        .collect();
+    assert_eq!(ids, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 11]);
+}
+
+/// Applying it leaves the flags word alone.
+///
+/// `set_localised` writes sixteen columns from `name_field`. One column late
+/// and the sixteenth lands on the string-flags word that follows the block —
+/// so the symptom of the off-by-one was not "the wrong name" but "the right
+/// name, invisible, and a corrupted table". Worth its own assertion.
+#[test]
+fn applying_the_recipe_does_not_touch_the_string_flags_word() {
+    let recipe = shipped();
+    let before = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+    let races = Dbc::parse(&common::char_base_info()).unwrap();
+    let (after, _) = recipe::apply(&recipe, &before, &races).expect("the shipped recipe");
+
+    let flags = recipe.chr_classes.name_field + launcher_core::dbc::LOCALES;
+    for row in 0..after.record_count() {
+        assert_eq!(
+            after.u32_field(row, flags).unwrap(),
+            common::STRING_FLAGS,
+            "row {row}'s string-flags word was overwritten — name_field is one \
+             column past where it should be"
+        );
+    }
+}
+
 /// End to end against a client-shaped table: the shipped recipe applied to
 /// stock tables gives a screen with three names on it and no stock class left.
 #[test]
 fn applying_the_shipped_recipe_leaves_three_named_body_types() {
     let recipe = shipped();
-
-    // `ChrClasses` laid out as 3.3.5a lays it out, so the shipped
-    // `name_field` is exercised rather than a convenient stand-in.
-    let fields = recipe.chr_classes.name_field + LOCALES + 1 + 4;
-    let record_size = fields * 4;
-    let stock: [(u32, &str); 10] = [
-        (1, "Warrior"),
-        (2, "Paladin"),
-        (3, "Hunter"),
-        (4, "Rogue"),
-        (5, "Priest"),
-        (6, "Death Knight"),
-        (7, "Shaman"),
-        (8, "Mage"),
-        (9, "Warlock"),
-        (11, "Druid"),
-    ];
-    let mut records: Vec<u8> = Vec::new();
-    let mut strings: Vec<u8> = vec![0];
-    for (id, name) in stock {
-        let at = strings.len() as u32;
-        strings.extend_from_slice(name.as_bytes());
-        strings.push(0);
-        let mut record = vec![0u8; record_size];
-        record[..4].copy_from_slice(&id.to_le_bytes());
-        let name_at = recipe.chr_classes.name_field * 4;
-        record[name_at..name_at + 4].copy_from_slice(&at.to_le_bytes());
-        records.extend_from_slice(&record);
-    }
-    let mut classes_bytes = b"WDBC".to_vec();
-    classes_bytes.extend_from_slice(&(stock.len() as u32).to_le_bytes());
-    classes_bytes.extend_from_slice(&(fields as u32).to_le_bytes());
-    classes_bytes.extend_from_slice(&(record_size as u32).to_le_bytes());
-    classes_bytes.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-    classes_bytes.extend_from_slice(&records);
-    classes_bytes.extend_from_slice(&strings);
-    let classes = Dbc::parse(&classes_bytes).unwrap();
-
-    // The stock matrix, as a real client has it.
-    let stock_pairs: &[(u8, u8)] = &[
-        (1, 1),
-        (1, 2),
-        (1, 4),
-        (1, 5),
-        (1, 8),
-        (1, 9),
-        (2, 1),
-        (2, 3),
-        (2, 4),
-        (2, 7),
-        (2, 9),
-        (3, 1),
-        (3, 2),
-        (3, 3),
-        (3, 4),
-        (3, 5),
-        (4, 1),
-        (4, 3),
-        (4, 4),
-        (4, 5),
-        (4, 11),
-        (5, 1),
-        (5, 4),
-        (5, 5),
-        (5, 8),
-        (5, 9),
-        (6, 1),
-        (6, 3),
-        (6, 7),
-        (6, 11),
-        (7, 1),
-        (7, 4),
-        (7, 8),
-        (7, 9),
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (8, 5),
-        (8, 7),
-        (8, 8),
-        (10, 2),
-        (10, 3),
-        (10, 4),
-        (10, 5),
-        (10, 8),
-        (10, 9),
-        (11, 1),
-        (11, 2),
-        (11, 3),
-        (11, 5),
-        (11, 7),
-        (11, 8),
-    ];
-    let mut race_bytes = b"WDBC".to_vec();
-    race_bytes.extend_from_slice(&(stock_pairs.len() as u32).to_le_bytes());
-    race_bytes.extend_from_slice(&2u32.to_le_bytes());
-    race_bytes.extend_from_slice(&2u32.to_le_bytes());
-    race_bytes.extend_from_slice(&1u32.to_le_bytes());
-    for (race, class) in stock_pairs {
-        race_bytes.push(*race);
-        race_bytes.push(*class);
-    }
-    race_bytes.push(0);
-    let races = Dbc::parse(&race_bytes).unwrap();
+    let classes = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+    let races = Dbc::parse(&common::char_base_info()).unwrap();
 
     let (classes, races) = recipe::apply(&recipe, &classes, &races).expect("the shipped recipe");
 
@@ -323,4 +276,35 @@ fn applying_the_shipped_recipe_leaves_three_named_body_types() {
 
     // Thirty pairs: ten races times three body types, which is the whole point.
     assert_eq!(rows.len(), 30);
+}
+
+/// The apply-time cross-check refuses a recipe that does not fit the client.
+///
+/// The self-test for the guard above: with `name_field` moved one column, the
+/// per-row plausibility check still passes — fifteen of the sixteen locale
+/// columns overlap the real block — so this is the only thing standing between
+/// an off-by-one and a corrupted table on somebody's disk.
+#[test]
+fn a_recipe_pointing_at_the_wrong_column_is_refused() {
+    let mut recipe = shipped();
+    let classes = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+    let races = Dbc::parse(&common::char_base_info()).unwrap();
+
+    // It applies as shipped.
+    recipe::apply(&recipe, &classes, &races).expect("the shipped recipe fits a stock client");
+
+    // One column late — the exact mistake — and it must not.
+    recipe.chr_classes.name_field += 1;
+    let error = recipe::apply(&recipe, &classes, &races)
+        .expect_err("a recipe one column late must be refused, not applied");
+    let text = error.to_string();
+    assert!(
+        text.contains("column 5") && text.contains("column 4"),
+        "the refusal should name both columns: {text}"
+    );
+
+    // And one column early, which corrupts in the other direction.
+    recipe.chr_classes.name_field -= 2;
+    recipe::apply(&recipe, &classes, &races)
+        .expect_err("a recipe one column early must be refused too");
 }

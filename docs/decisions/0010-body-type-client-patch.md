@@ -303,6 +303,65 @@ propagate into the server's own `ChrClasses` and `CharBaseInfo`, and the
 resulting mismatch would be maddening. SETUP §5 should say so, and the extraction
 step should check.
 
+### 7.1 What the first real-client run found (2026-09-03)
+
+Both numbers the patch turns on were wrong, and they were wrong in ways that
+agreed with each other.
+
+**`ChrClasses.Name_Lang` is field 4, not 5.** The authority is the format string
+the core's own DBC loader parses with —
+`ChrClassesEntryfmt` in `src/server/shared/DataStores/DBCfmt.h` at the pinned
+commit:
+
+```
+"nxixssssssssssssssssxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxixii"      60 fields
+ ││││└──────────────┘                                     └──┴─ 56, 58, 59
+ ││││ 4..19  Name_Lang, sixteen locale columns  (20 is its flags word)
+ │││└ 3      PetNameToken
+ ││└ 2       powerType
+ │└ 1        unused
+ └ 0         ClassID
+```
+
+The struct comment in `DBCStructure.h` says `name[16]` is 5–20 and is simply
+wrong; the format string is what the loader reads. The real client agrees with
+the format string: 60 fields at 240 bytes, which is `4 + 3×(16+1) + 5`.
+
+Writing at 5 would have put the sixteen locale columns at 5–20: the enUS name at
+column 4 untouched, so **nothing visible would change**, and the string-flags
+word at 20 overwritten. A silent corruption presenting as "the patch didn't
+work".
+
+**The tool's own column search was also wrong**, and would have confirmed the
+error rather than catching it. It took the first column holding plausible text.
+`ChrClasses` has two string columns and the decoy comes first: `PetNameToken` at
+3. Against this client it reported field 3 and printed ten classes named "PET"
+and "DEMON" — obviously wrong, which is the only reason it was caught.
+
+Three things changed:
+
+1. **Shape, not text, identifies the column.** A `_Lang` field is sixteen
+   consecutive columns of which a single-locale client populates exactly one.
+   Read `PetNameToken` as the start of such a block and the real name column
+   falls inside it — visible as *bleed*, and disqualifying. `dbc::lang_candidates`.
+2. **A string offset of 0 means "no string", by convention rather than by
+   reading byte 0.** Blizzard's files begin the string block with a NUL so the
+   two cannot collide; a table repacked by a third-party editor need not, and
+   then every empty reference reads as whatever string is first. That is how a
+   column of blank pet tokens prints as ten convincing names. The cost is that a
+   string stored *at* offset 0 is unreadable, which is correct: nothing in the
+   file distinguishes it from empty.
+3. **The report prints every candidate with its evidence**, plus the raw fields
+   of record 0 and the head of the string block, so a disagreement can be
+   settled without another run on somebody else's machine.
+
+The deeper lesson is about the fixture, not the format. The test built its
+`ChrClasses` *from* `recipe.name_field`, so the fixture moved whenever the
+recipe did and the two agreed all the way to a real client. The fixture is now
+the layout the format string describes, fixed independently, and the recipe is
+asserted against it — `launcher/core/tests/common/mod.rs`. Setting `name_field`
+back to 5 now fails three tests.
+
 ---
 
 ## 8. Recommended first step, before any of this is built

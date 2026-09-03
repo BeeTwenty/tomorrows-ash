@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use launcher_core::client::Client;
-use launcher_core::dbc::{self, Dbc, LOCALES};
+use launcher_core::dbc::{self, Dbc};
 use launcher_core::manifest::Manifest;
 use launcher_core::mpq;
 use launcher_core::verify::{self, hash_file, HashCache};
@@ -236,42 +236,118 @@ fn read_table(archives: &[PathBuf], name: &str) -> Result<Dbc, String> {
 
 /// Print every class, and work out which field the names live in.
 ///
-/// The layout is not in the file, so this finds it rather than assuming it: for
-/// each candidate column, treat the value as a string offset and see whether a
-/// majority of rows yield a plausible name. The right column is the one where
-/// they all do.
+/// The layout is not in the file, so this finds it — but "finds it" used to
+/// mean "takes the first column that holds plausible text", and that is wrong
+/// on a real client. `ChrClasses` has two string columns: `PetNameToken` at
+/// field 3 and the name at field 4. The wrong one comes first.
+///
+/// So the shape decides instead (`dbc::lang_candidates`), and every candidate
+/// is printed with its evidence rather than only the winner — when this
+/// disagrees with the recipe, the next question is always "what did the other
+/// columns look like", and answering it should not cost another run on
+/// somebody else's machine.
 fn report_classes(table: &Dbc) -> Option<usize> {
-    let fields = (table.record_size as usize) / 4;
-    let mut best: Option<(usize, usize)> = None;
-    for field in 1..fields.saturating_sub(LOCALES) {
-        let named = (0..table.record_count())
-            .filter(|&row| {
-                table.localised(row, field, 0).is_ok_and(|text| {
-                    text.len() >= 3 && text.chars().all(|c| c.is_ascii_graphic() || c == ' ')
-                })
-            })
-            .count();
-        if named == table.record_count() && named > 0 {
-            best = Some((field, named));
-            break;
+    let rows = table.record_count();
+    let candidates = dbc::lang_candidates(table, 0);
+
+    println!("\n  columns that could hold Name_Lang (16 locale columns + flags):");
+    println!(
+        "  {:>5}  {:>7}  {:>5}  {:>10}  first value",
+        "field", "named", "bleed", "flags"
+    );
+    let mut shown = 0;
+    for candidate in &candidates {
+        // A column where nothing reads as a name is noise, not a candidate.
+        if candidate.named == 0 {
+            continue;
         }
+        shown += 1;
+        println!(
+            "  {:>5}  {:>3}/{:<3}  {:>5}  {:>10}  {:?}{}",
+            candidate.field,
+            candidate.named,
+            rows,
+            candidate.bleed,
+            candidate
+                .flags
+                .map(|f| f.to_string())
+                .unwrap_or_else(|| "-".into()),
+            candidate.sample,
+            if candidate.is_clean(rows) {
+                "   <- every row named, no bleed"
+            } else if candidate.bleed > 0 {
+                "   (bleed: another column falls inside this one's locales)"
+            } else {
+                "   (not every row is named)"
+            }
+        );
+    }
+    if shown == 0 {
+        println!("    none — no column in this table reads as text");
     }
 
-    let name_field = best.map(|(field, _)| field);
+    let name_field = dbc::find_name_field(table, 0);
     match name_field {
-        Some(field) => println!("  Name_Lang looks like field {field}"),
-        None => println!("  could not find a name column - please send this output"),
+        Some(field) => println!("\n  Name_Lang is field {field}"),
+        None => println!(
+            "\n  No single column is unambiguously Name_Lang. The recipe must not be \n               applied to this client — please send this output."
+        ),
     }
 
     println!("\n  ID   name");
-    for row in 0..table.record_count() {
+    for row in 0..rows {
         let id = table.u32_field(row, 0).unwrap_or(0);
         let name = name_field
             .and_then(|field| table.localised(row, field, 0).ok())
             .unwrap_or("?");
         println!("  {id:<4} {name}");
     }
+
+    report_raw(table);
     name_field
+}
+
+/// The bytes themselves, for when the reading above is still not believed.
+///
+/// Two things have to be visible to settle an argument about a column: what
+/// every field of a row actually holds, and whether the string block starts
+/// with the NUL that makes offset zero mean "empty". A repacked table that
+/// omits it makes every empty reference read as the first string in the block,
+/// which is how a column of blanks can print as a column of names.
+fn report_raw(table: &Dbc) {
+    let fields = (table.record_size as usize) / 4;
+    println!("\n  record 0, every field as a raw number:");
+    for chunk in 0..fields.div_ceil(8) {
+        let first = chunk * 8;
+        let last = (first + 8).min(fields);
+        print!("  {first:>3}..{:<3}", last - 1);
+        for field in first..last {
+            print!(" {:>10}", table.u32_field(0, field).unwrap_or(0));
+        }
+        println!();
+    }
+
+    let block = table.strings();
+    let leading_nul = block.first() == Some(&0);
+    println!(
+        "\n  string block: {} bytes, offset 0 is {}",
+        block.len(),
+        if leading_nul {
+            "the NUL that means \"no string\" — as Blizzard writes it"
+        } else {
+            "NOT a NUL — this table was repacked by another tool"
+        }
+    );
+    let head: String = block
+        .iter()
+        .take(96)
+        .map(|&b| match b {
+            0 => '·',
+            b if b.is_ascii_graphic() || b == b' ' => b as char,
+            _ => '?',
+        })
+        .collect();
+    println!("  first bytes: {head}");
 }
 
 /// The race x class matrix the client will actually offer.

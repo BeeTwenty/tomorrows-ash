@@ -4,150 +4,19 @@
 //! archive here is one we wrote, so it proves the reader agrees with our
 //! writer rather than with Blizzard's. What it does prove is the whole path —
 //! load order, archive, DBC header, string block, the name-column search and
-//! the matrix — against a table laid out the way 3.3.5a lays `ChrClasses` out,
-//! including the decoy string column that a naive search picks by mistake.
+//! the matrix — against `ChrClasses` laid out the way the core's own loader
+//! parses it, decoy column and all.
+
+mod common;
 
 use std::path::Path;
 use std::process::Command;
 
-use launcher_core::dbc::{Dbc, LOCALES};
+use common::{StringBlock, F_NAME_LANG, F_PET_NAME};
+use launcher_core::dbc::{self, Dbc};
 use launcher_core::mpq;
 
-/// Field layout of `ChrClasses` in 3.3.5a, as far as the name.
-const F_ID: usize = 0;
-const F_PET_NAME: usize = 4;
-const F_NAME_LANG: usize = 5;
-const FIELDS: usize = F_NAME_LANG + LOCALES + 1 + 4;
-
-fn chr_classes() -> Vec<u8> {
-    let record_size = FIELDS * 4;
-    let mut records: Vec<u8> = Vec::new();
-    let mut strings: Vec<u8> = vec![0];
-
-    let intern = |text: &str, strings: &mut Vec<u8>| -> u32 {
-        if text.is_empty() {
-            return 0;
-        }
-        let at = strings.len() as u32;
-        strings.extend_from_slice(text.as_bytes());
-        strings.push(0);
-        at
-    };
-
-    // Ten classes, and only Hunter and Death Knight have a pet-name token —
-    // which is the decoy: it is a string column too, and a search that stops at
-    // "this looks like a string" would pick field 4 and rename the wrong thing.
-    let classes: [(u32, &str, &str); 10] = [
-        (1, "Warrior", ""),
-        (2, "Paladin", ""),
-        (3, "Hunter", "Pet"),
-        (4, "Rogue", ""),
-        (5, "Priest", ""),
-        (6, "Death Knight", "Ghoul"),
-        (7, "Shaman", ""),
-        (8, "Mage", ""),
-        (9, "Warlock", "Imp"),
-        (11, "Druid", ""),
-    ];
-
-    for (id, name, pet) in classes {
-        let name_at = intern(name, &mut strings);
-        let pet_at = intern(pet, &mut strings);
-        let mut record = vec![0u8; record_size];
-        let put = |record: &mut Vec<u8>, field: usize, value: u32| {
-            record[field * 4..field * 4 + 4].copy_from_slice(&value.to_le_bytes());
-        };
-        put(&mut record, F_ID, id);
-        put(&mut record, F_PET_NAME, pet_at);
-        // Only the installed locale's column is populated, as in a real client.
-        put(&mut record, F_NAME_LANG, name_at);
-        put(&mut record, F_NAME_LANG + LOCALES, 0xFF_FF_FF_FE);
-        records.extend_from_slice(&record);
-    }
-
-    let mut out = b"WDBC".to_vec();
-    out.extend_from_slice(&(classes.len() as u32).to_le_bytes());
-    out.extend_from_slice(&(FIELDS as u32).to_le_bytes());
-    out.extend_from_slice(&(record_size as u32).to_le_bytes());
-    out.extend_from_slice(&(strings.len() as u32).to_le_bytes());
-    out.extend_from_slice(&records);
-    out.extend_from_slice(&strings);
-    out
-}
-
-/// The Wrath matrix, as reasoned in ADR 0010 §3 — this is the thing a real
-/// client is supposed to correct or confirm.
-fn char_base_info() -> Vec<u8> {
-    let pairs: &[(u8, u8)] = &[
-        (1, 1),
-        (1, 2),
-        (1, 4),
-        (1, 5),
-        (1, 8),
-        (1, 9), // Human
-        (2, 1),
-        (2, 3),
-        (2, 4),
-        (2, 7),
-        (2, 9), // Orc
-        (3, 1),
-        (3, 2),
-        (3, 3),
-        (3, 4),
-        (3, 5), // Dwarf
-        (4, 1),
-        (4, 3),
-        (4, 4),
-        (4, 5),
-        (4, 11), // Night Elf
-        (5, 1),
-        (5, 4),
-        (5, 5),
-        (5, 8),
-        (5, 9), // Undead
-        (6, 1),
-        (6, 3),
-        (6, 7),
-        (6, 11), // Tauren
-        (7, 1),
-        (7, 4),
-        (7, 8),
-        (7, 9), // Gnome
-        (8, 1),
-        (8, 3),
-        (8, 4),
-        (8, 5),
-        (8, 7),
-        (8, 8), // Troll
-        (10, 2),
-        (10, 3),
-        (10, 4),
-        (10, 5),
-        (10, 8),
-        (10, 9), // Blood Elf
-        (11, 1),
-        (11, 2),
-        (11, 3),
-        (11, 5),
-        (11, 7),
-        (11, 8), // Draenei
-    ];
-    let mut records = Vec::new();
-    for (race, class) in pairs {
-        records.push(*race);
-        records.push(*class);
-    }
-    let mut out = b"WDBC".to_vec();
-    out.extend_from_slice(&(pairs.len() as u32).to_le_bytes());
-    out.extend_from_slice(&2u32.to_le_bytes());
-    out.extend_from_slice(&2u32.to_le_bytes());
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&records);
-    out.push(0);
-    out
-}
-
-fn fake_client(root: &Path) {
+fn fake_client(root: &Path, block: StringBlock) {
     let locale = root.join("Data/enUS");
     std::fs::create_dir_all(&locale).unwrap();
 
@@ -164,44 +33,45 @@ fn fake_client(root: &Path) {
     // real one. Reading the base and calling it the answer is the mistake this
     // arrangement exists to catch.
     let stale = {
-        let mut table = Dbc::parse(&chr_classes()).unwrap();
+        let mut table = Dbc::parse(&common::chr_classes(block)).unwrap();
         table.set_localised(0, F_NAME_LANG, "Stale").unwrap();
         table.write()
     };
     std::fs::write(
         locale.join("locale-enUS.MPQ"),
         mpq::write(&[
-            (launcher_core::dbc::CHR_CLASSES.to_string(), stale),
-            (
-                launcher_core::dbc::CHAR_BASE_INFO.to_string(),
-                char_base_info(),
-            ),
+            (dbc::CHR_CLASSES.to_string(), stale),
+            (dbc::CHAR_BASE_INFO.to_string(), common::char_base_info()),
         ])
         .unwrap(),
     )
     .unwrap();
     std::fs::write(
         locale.join("patch-enUS-3.MPQ"),
-        mpq::write(&[(launcher_core::dbc::CHR_CLASSES.to_string(), chr_classes())]).unwrap(),
+        mpq::write(&[(dbc::CHR_CLASSES.to_string(), common::chr_classes(block))]).unwrap(),
     )
     .unwrap();
+}
+
+fn run(root: &Path) -> (String, String, bool) {
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspect-dbc", &root.to_string_lossy()])
+        .output()
+        .expect("the tool should run");
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+        output.status.success(),
+    )
 }
 
 #[test]
 fn inspect_dbc_reads_a_clients_tables_and_reports_the_matrix() {
     let dir = tempfile::tempdir().unwrap();
-    fake_client(dir.path());
+    fake_client(dir.path(), StringBlock::Conventional);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
-        .args(["inspect-dbc", &dir.path().to_string_lossy()])
-        .output()
-        .expect("the tool should run");
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
-    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(
-        output.status.success(),
-        "inspect-dbc failed\nstdout:\n{text}\nstderr:\n{errors}"
-    );
+    let (text, errors, ok) = run(dir.path());
+    assert!(ok, "inspect-dbc failed\nstdout:\n{text}\nstderr:\n{errors}");
 
     // `SHOW=1 cargo test --test inspect_dbc -- --nocapture` prints the report,
     // which is the quickest way to see what a real client will produce.
@@ -209,9 +79,8 @@ fn inspect_dbc_reads_a_clients_tables_and_reports_the_matrix() {
         println!("{text}");
     }
 
-    // It found the name column, and not the pet-name decoy at field 4.
     assert!(
-        text.contains(&format!("Name_Lang looks like field {F_NAME_LANG}")),
+        text.contains(&format!("Name_Lang is field {F_NAME_LANG}")),
         "did not identify the name column:\n{text}"
     );
     // It read the patch archive's table, not the base archive's stale one.
@@ -226,13 +95,187 @@ fn inspect_dbc_reads_a_clients_tables_and_reports_the_matrix() {
     assert!(text.contains("race x class"), "no matrix:\n{text}");
 }
 
+/// The bug a real client found: `PetNameToken` is a string column that comes
+/// *before* the name, so "the first column that holds text" is the wrong one.
+///
+/// Field 3 must be visible as a candidate — it genuinely holds strings — and
+/// must lose, because reading it as the start of a sixteen-column block puts
+/// the real name column inside it, which is the bleed the report names.
+#[test]
+fn the_pet_name_column_does_not_win_the_name_column() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_client(dir.path(), StringBlock::Conventional);
+    let (text, _, ok) = run(dir.path());
+    assert!(ok);
+
+    assert!(
+        text.contains(&format!("Name_Lang is field {F_NAME_LANG}")),
+        "picked something other than the name column:\n{text}"
+    );
+    assert!(
+        !text.contains(&format!("Name_Lang is field {F_PET_NAME}")),
+        "picked the pet-name token:\n{text}"
+    );
+    // Every class is named, and none is named after a pet token.
+    for name in ["Warrior", "Paladin", "Hunter", "Mage", "Druid"] {
+        assert!(
+            text.contains(name),
+            "{name} missing from the report:\n{text}"
+        );
+    }
+    assert!(
+        !text.lines().any(|l| l.trim_start().starts_with("1    PET")),
+        "class 1 printed as a pet token:\n{text}"
+    );
+}
+
+/// A table repacked without the leading NUL, which is what a client patched by
+/// a third-party tool looks like. Offset zero is then a real string, so every
+/// empty reference reads as that string — and a column of blank pet tokens
+/// prints as ten convincing names.
+///
+/// This is the exact shape of the first real-client run: nine rows "PET" and
+/// one "DEMON". Detection has to survive it.
+#[test]
+fn a_repacked_string_block_does_not_turn_blanks_into_names() {
+    let dir = tempfile::tempdir().unwrap();
+    fake_client(dir.path(), StringBlock::NoLeadingNul);
+    let (text, _, ok) = run(dir.path());
+    assert!(ok, "{text}");
+
+    assert!(
+        text.contains(&format!("Name_Lang is field {F_NAME_LANG}")),
+        "a repacked string block defeated the name search:\n{text}"
+    );
+    assert!(
+        text.contains("NOT a NUL"),
+        "the report should say the block was repacked:\n{text}"
+    );
+    for name in ["Warrior", "Paladin", "Hunter"] {
+        assert!(text.contains(name), "{name} missing:\n{text}");
+    }
+}
+
+/// Offset zero means "no string", whatever byte happens to be there.
+#[test]
+fn offset_zero_is_empty_even_when_the_block_does_not_start_with_a_nul() {
+    let conventional = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+    assert_eq!(conventional.localised(0, F_PET_NAME, 0).unwrap(), "");
+    assert_eq!(conventional.localised(2, F_PET_NAME, 0).unwrap(), "PET");
+
+    let repacked = Dbc::parse(&common::chr_classes(StringBlock::NoLeadingNul)).unwrap();
+    // Warrior has no pet token, so its column holds offset 0. Before the fix
+    // that read as "PET", the first string in the block.
+    assert_eq!(repacked.u32_field(0, F_PET_NAME).unwrap(), 0);
+    assert_eq!(repacked.localised(0, F_PET_NAME, 0).unwrap(), "");
+
+    // The cost, and it is the right trade: a string genuinely stored AT offset
+    // zero is unreadable, because nothing in the file distinguishes it from
+    // "no string". Here that is Hunter's own token, which shares offset zero
+    // with every blank. Losing one pet token is better than every blank column
+    // in the table reading as a name — that is what sent the recipe at the
+    // wrong field in the first place.
+    assert_eq!(repacked.localised(2, F_PET_NAME, 0).unwrap(), "");
+    // "DEMON" is at a real offset and still reads.
+    assert_eq!(repacked.localised(8, F_PET_NAME, 0).unwrap(), "DEMON");
+
+    // The name column is unaffected either way, which is the point.
+    for table in [&conventional, &repacked] {
+        assert_eq!(table.localised(0, F_NAME_LANG, 0).unwrap(), "Warrior");
+        assert_eq!(table.localised(7, F_NAME_LANG, 0).unwrap(), "Mage");
+    }
+}
+
+/// The detector's own answer, without the tool around it — and the reason it
+/// is trustworthy: the shape, not the presence of text.
+#[test]
+fn only_one_column_has_the_shape_of_a_lang_field() {
+    for block in [StringBlock::Conventional, StringBlock::NoLeadingNul] {
+        let table = Dbc::parse(&common::chr_classes(block)).unwrap();
+        let rows = table.record_count();
+        let clean: Vec<usize> = dbc::lang_candidates(&table, 0)
+            .into_iter()
+            .filter(|c| c.is_clean(rows))
+            .map(|c| c.field)
+            .collect();
+        assert_eq!(clean, vec![F_NAME_LANG]);
+        assert_eq!(dbc::find_name_field(&table, 0), Some(F_NAME_LANG));
+
+        // The pet column is a candidate — it holds strings — and it loses on
+        // bleed, because the name column falls inside its sixteen.
+        let pet = dbc::lang_candidates(&table, 0)
+            .into_iter()
+            .find(|c| c.field == F_PET_NAME)
+            .expect("field 3 should be considered");
+        assert!(pet.bleed > 0, "the name column should bleed into field 3");
+        assert!(!pet.is_clean(rows));
+    }
+}
+
+/// The two ways this was actually got wrong on a real machine, both of which
+/// printed the usage text and nothing else.
+///
+/// `inspect--dbc` is a typo the tool can resolve, and `D:\wow\TheraWoW wotlk`
+/// unquoted is one path arriving as two arguments. Neither is worth a second
+/// download, so both are handled — and the fake client here is named with a
+/// space in it so the second one is exercised the way it happens.
+#[test]
+fn the_tool_survives_a_typo_and_an_unquoted_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let client = dir.path().join("TheraWoW wotlk");
+    std::fs::create_dir_all(&client).unwrap();
+    fake_client(&client, StringBlock::Conventional);
+
+    let split_path = dir.path().join("TheraWoW").to_string_lossy().into_owned();
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspect--dbc", &split_path, "wotlk"])
+        .output()
+        .expect("the tool should run");
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert!(
+        output.status.success(),
+        "a typo and a missing pair of quotes should not cost a run\n\
+         stdout:\n{text}\nstderr:\n{errors}"
+    );
+    assert!(
+        errors.contains("reading 'inspect--dbc' as 'inspect-dbc'"),
+        "it should say what it assumed:\n{errors}"
+    );
+    assert!(text.contains("race x class"), "no matrix:\n{text}");
+
+    // A genuinely unknown command still fails, and says which word it choked on.
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspekt", &client.to_string_lossy()])
+        .output()
+        .expect("the tool should run");
+    assert!(!output.status.success());
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(errors.contains("unknown command 'inspekt'"), "{errors}");
+
+    // And a locale the client does not have is named as such, rather than
+    // failing later with something about MPQ archives.
+    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
+        .args(["inspect-dbc", &client.to_string_lossy(), "frFR"])
+        .output()
+        .expect("the tool should run");
+    assert!(!output.status.success());
+    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(
+        errors.contains("not a locale this client has") && errors.contains("enUS"),
+        "{errors}"
+    );
+}
+
 /// The claim in ADR 0010 §3 that the whole race-data bill rests on: with
 /// Paladin, Shaman and Mage as the three body types, only fourteen of the
 /// thirty race/body-type pairs exist, and Night Elf gets none.
 #[test]
 fn the_stock_matrix_leaves_night_elf_with_nothing() {
-    let table = Dbc::parse(&char_base_info()).unwrap();
-    let rows = launcher_core::dbc::race_classes(&table).unwrap();
+    let table = Dbc::parse(&common::char_base_info()).unwrap();
+    let rows = dbc::race_classes(&table).unwrap();
+    assert_eq!(rows.len(), 62, "a 3.3.5a client has 62 rows, not 52");
 
     let races: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
     let body_types: Vec<u8> = vec![2, 7, 8];
@@ -245,7 +288,10 @@ fn the_stock_matrix_leaves_night_elf_with_nothing() {
     };
 
     let total: usize = races.iter().map(|race| available(*race)).sum();
-    assert_eq!(total, 14, "ADR 0010 §3 says fourteen of thirty exist");
+    assert_eq!(
+        total, 14,
+        "ADR 0010 section 3 says fourteen of thirty exist"
+    );
     assert_eq!(available(4), 0, "Night Elf is the race with no body type");
     assert_eq!(available(11), 3, "Draenei is the only race with all three");
 }
@@ -253,11 +299,11 @@ fn the_stock_matrix_leaves_night_elf_with_nothing() {
 /// The swap that was made, and the two it was made over. Kept as a test rather
 /// than a table in prose because it is the whole justification for Skirmisher
 /// being class 3, and a future edit to the chassis set should have to argue
-/// with arithmetic. ADR 0010 §10.
+/// with arithmetic. ADR 0010 section 10.
 #[test]
 fn hunter_is_the_only_chassis_triple_that_strands_no_race() {
-    let table = Dbc::parse(&char_base_info()).unwrap();
-    let rows = launcher_core::dbc::race_classes(&table).unwrap();
+    let table = Dbc::parse(&common::char_base_info()).unwrap();
+    let rows = dbc::race_classes(&table).unwrap();
     let races: Vec<u8> = vec![1, 2, 3, 4, 5, 6, 7, 8, 10, 11];
 
     let count = |body_types: &[u8]| -> (usize, usize) {
@@ -311,60 +357,4 @@ fn hunter_is_the_only_chassis_triple_that_strands_no_race() {
     // race without a body type, which is the property that matters, and of the
     // two that manage that it is the better.
     assert_eq!(count(&[2, 3, 8]), (17, 0));
-}
-
-/// The two ways this was actually got wrong on a real machine, both of which
-/// printed the usage text and nothing else.
-///
-/// `inspect--dbc` is a typo the tool can resolve, and `D:\wow\TheraWoW wotlk`
-/// unquoted is one path arriving as two arguments. Neither is worth a second
-/// download, so both are handled — and the fake client here is named with a
-/// space in it so the second one is exercised the way it happens.
-#[test]
-fn the_tool_survives_a_typo_and_an_unquoted_path() {
-    let dir = tempfile::tempdir().unwrap();
-    let client = dir.path().join("TheraWoW wotlk");
-    std::fs::create_dir_all(&client).unwrap();
-    fake_client(&client);
-
-    let split_path = dir.path().join("TheraWoW").to_string_lossy().into_owned();
-    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
-        .args(["inspect--dbc", &split_path, "wotlk"])
-        .output()
-        .expect("the tool should run");
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
-    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
-
-    assert!(
-        output.status.success(),
-        "a typo and a missing pair of quotes should not cost a run\n\
-         stdout:\n{text}\nstderr:\n{errors}"
-    );
-    assert!(
-        errors.contains("reading 'inspect--dbc' as 'inspect-dbc'"),
-        "it should say what it assumed:\n{errors}"
-    );
-    assert!(text.contains("race x class"), "no matrix:\n{text}");
-
-    // A genuinely unknown command still fails, and says which word it choked on.
-    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
-        .args(["inspekt", &client.to_string_lossy()])
-        .output()
-        .expect("the tool should run");
-    assert!(!output.status.success());
-    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(errors.contains("unknown command 'inspekt'"), "{errors}");
-
-    // And a locale the client does not have is named as such, rather than
-    // failing later with something about MPQ archives.
-    let output = Command::new(env!("CARGO_BIN_EXE_ashmorrow-manifest"))
-        .args(["inspect-dbc", &client.to_string_lossy(), "frFR"])
-        .output()
-        .expect("the tool should run");
-    assert!(!output.status.success());
-    let errors = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert!(
-        errors.contains("not a locale this client has") && errors.contains("enUS"),
-        "{errors}"
-    );
 }

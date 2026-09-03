@@ -204,3 +204,24 @@ is out of range or the column it points at holds no name in this client, and
 `inspect-dbc` finds the column independently so the two can be compared. But
 neither is a substitute for one person running the tool against a real client
 once, which is why §6 starts there.
+
+**That run happened on 2026-09-03, and both halves were wrong.** The recipe said
+`name_field: 5` and the right answer is 4; the tool's own search said 3. Neither
+guard caught it:
+
+- `apply`'s refusal tests whether *any* of the sixteen locale columns from
+  `name_field` holds a name. Starting one column late, the block still overlaps
+  fifteen real locale columns, so the test passes. It would have written the
+  name into columns 5–20, left the enUS name at column 4 untouched, and
+  overwritten the string-flags word at 20. The visible symptom would have been
+  *nothing changing*, with a corrupted table underneath.
+- `inspect-dbc` took the first column that held plausible text. `ChrClasses`
+  has two string columns and the wrong one — `PetNameToken` at 3 — comes first.
+
+So the comparison in §6 step 1 was real and it worked: a human ran the tool,
+disbelieved the output, and stopped. What has changed is that neither number is
+a judgement call any more. The column is identified by shape (sixteen locale
+columns of which a single-locale client populates exactly one), the report
+prints every candidate with its evidence rather than only the winner, and the
+recipe's `name_field` is asserted against a fixture built from the core's own
+format string rather than from the recipe. `docs/decisions/0010-body-type-client-patch.md` §7.1.
