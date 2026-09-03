@@ -17,9 +17,12 @@ import { env } from "./env";
  *   SOAP.Enabled = 1
  *   SOAP.IP / SOAP.Port   (default 127.0.0.1:7878 - never expose it publicly)
  *
- * The configured account's GM level bounds everything this can do. Give it the
- * lowest level that covers the commands the panel actually sends; the panel's
- * own permission tiers do not constrain the worldserver.
+ * The configured account must be gmlevel 3 (SEC_ADMINISTRATOR) or higher:
+ * ACSoap.cpp returns 403 below that and the floor is hardcoded, so "give it the
+ * least privilege that works" is not an option here. It authenticates with a
+ * game account's username and password (AccountMgr::CheckPassword, so SRP6),
+ * which means this environment holds a credential for a powerful account. Use a
+ * dedicated one. The panel's own permission tiers do not constrain it.
  */
 
 const NAMESPACE = "urn:AC"; // ACSoap.cpp: the "ns1" prefix at the pinned commit.

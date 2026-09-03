@@ -172,6 +172,20 @@ which tells players something is happening), and in-game announcements.
   live MOTD and tree reloads need SOAP. Without it those actions are refused with
   a reason rather than appearing to work.
 
+### Enabling the console
+
+In `worldserver.conf`: `SOAP.Enabled = 1`, `SOAP.IP = "127.0.0.1"`, `SOAP.Port = 7878`.
+In `web-admin/.env.local`: `SOAP_ENABLED=1`, `SOAP_USER`, `SOAP_PASSWORD`.
+
+**Never expose 7878** — bind it to localhost.
+
+**The account must be gmlevel 3 or higher.** `ACSoap.cpp` returns 403 below
+`SEC_ADMINISTRATOR`, and that floor is hardcoded, so there is no least-privilege
+option here. It authenticates with a game account's username and password
+(`AccountMgr::CheckPassword`, so SRP6), which means this environment holds a
+credential for a powerful account — use a dedicated one, not a person's. The
+panel's own tiers do not constrain what it can do.
+
 ---
 
 ## Deployment
@@ -188,8 +202,12 @@ cd web-admin
 npm ci
 npm run gen-secret >> .env.local              # then fill in the rest
 npm run build
-npm start                                     # 127.0.0.1:3010
+npm start                                     # 127.0.0.1:3010 only
 ```
+
+It binds localhost, not `0.0.0.0`. Reaching it from elsewhere is a deliberate
+act — an SSH tunnel (`ssh -L 3010:127.0.0.1:3010 you@host`) or a reverse proxy
+that terminates TLS. `ADMIN_BIND=0.0.0.0` opts out.
 
 Put it behind a reverse proxy that terminates TLS, then:
 

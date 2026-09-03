@@ -63,6 +63,21 @@ process.env.NODE_ENV ??= "production";
 process.env.PORT ??= "3010";
 
 /**
+ * Bind to localhost, not to every interface.
+ *
+ * Next's standalone server defaults to 0.0.0.0. For the public site that is
+ * what you want; for an operator panel on a box that also serves a public
+ * website it means the sign-in page is reachable by anyone who can route to
+ * the host, before any allowlist exists to say otherwise.
+ *
+ * So the default is 127.0.0.1 and reaching it from elsewhere is a deliberate
+ * act: an SSH tunnel (`ssh -L 3010:127.0.0.1:3010 user@host`), or a reverse
+ * proxy that terminates TLS and forwards to this port. Set ADMIN_BIND=0.0.0.0
+ * to opt out, having decided to.
+ */
+process.env.HOSTNAME ??= process.env.ADMIN_BIND || "127.0.0.1";
+
+/**
  * The standalone entry point.
  *
  * `outputFileTracingRoot` is the repository root (next.config.ts), because the

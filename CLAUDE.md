@@ -156,6 +156,29 @@ Coordinate, do not collide:
   the price *paid*, not `classless_node.cost`, which can change.
 - **`docs/decisions/` is shared.** Numbering is sequential across all sessions
   (0001–0003 server, 0004 website, 0005–0006 launcher, 0007 licence, 0008 admin
+  panel). Check the directory before claiming a number, and never renumber
+  someone else's ADR.
+- **The launcher's `recipes` array is served, and its per-entry shape is a
+  proposal until the launcher session confirms it.** ADR 0009 §2 asks the
+  website to serve `recipes` beside `patches` and `runtime`, assembled from
+  `launcher/patch-manifest.json` (a *second* authored file, not
+  `launcher/manifests/ashmorrow.json`). That is now built in
+  `web/src/lib/launcher.ts`. ADR 0009 §3 pins only `id`, `version` and
+  `revision`; the rest is modelled on `Patch` because §2 says "exactly as the
+  other two are assembled":
+
+  ```jsonc
+  { "id": "body-types", "version": 3, "revision": "<sha>",
+    "size": 4096, "hash": "<sha256>", "url": "https://…", "summary": "…" }
+  ```
+
+  `url` + `hash` are what §5's Tier 3 check needs; there is deliberately no
+  `path`, because the recipe's own `output` field owns that. **Do not bump
+  `SCHEMA_VERSION` to announce it** — `launcher_core::manifest::Manifest` is not
+  `deny_unknown_fields` (only `ClientFile` is), so old launchers ignore the
+  array, while `validate()` rejects any schema that is not exactly 1. Bumping
+  would break every launcher in a player's hands to announce a field they
+  ignore.
   panel, 0009–0010 launcher again). Check the directory before claiming a
   number, and never renumber someone else's ADR.
 
