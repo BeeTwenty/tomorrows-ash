@@ -157,25 +157,26 @@ fn a_repacked_string_block_does_not_turn_blanks_into_names() {
 }
 
 /// Offset zero means "no string", whatever byte happens to be there.
+///
+/// The measured client keeps the convention — its block does open with a NUL —
+/// so this is hardening rather than a fix for what was actually seen. It still
+/// matters: a repacked table that drops the NUL makes every empty reference
+/// read as the first string in the block, and nothing about that is visible in
+/// the output it produces.
 #[test]
 fn offset_zero_is_empty_even_when_the_block_does_not_start_with_a_nul() {
     let conventional = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
-    assert_eq!(conventional.localised(0, F_PET_NAME, 0).unwrap(), "");
-    assert_eq!(conventional.localised(2, F_PET_NAME, 0).unwrap(), "PET");
+    // As the real client has it: a token on every row, "DEMON" on the Warlock.
+    assert_eq!(conventional.localised(0, F_PET_NAME, 0).unwrap(), "PET");
+    assert_eq!(conventional.localised(8, F_PET_NAME, 0).unwrap(), "DEMON");
 
+    // Without the leading NUL, "PET" is the string at offset zero — and a
+    // string stored at offset zero is unreadable, because nothing in the file
+    // distinguishes it from "no string". Reading the byte instead would make
+    // every blank column in the table read as "PET".
     let repacked = Dbc::parse(&common::chr_classes(StringBlock::NoLeadingNul)).unwrap();
-    // Warrior has no pet token, so its column holds offset 0. Before the fix
-    // that read as "PET", the first string in the block.
     assert_eq!(repacked.u32_field(0, F_PET_NAME).unwrap(), 0);
     assert_eq!(repacked.localised(0, F_PET_NAME, 0).unwrap(), "");
-
-    // The cost, and it is the right trade: a string genuinely stored AT offset
-    // zero is unreadable, because nothing in the file distinguishes it from
-    // "no string". Here that is Hunter's own token, which shares offset zero
-    // with every blank. Losing one pet token is better than every blank column
-    // in the table reading as a name — that is what sent the recipe at the
-    // wrong field in the first place.
-    assert_eq!(repacked.localised(2, F_PET_NAME, 0).unwrap(), "");
     // "DEMON" is at a real offset and still reads.
     assert_eq!(repacked.localised(8, F_PET_NAME, 0).unwrap(), "DEMON");
 
@@ -184,6 +185,77 @@ fn offset_zero_is_empty_even_when_the_block_does_not_start_with_a_nul() {
         assert_eq!(table.localised(0, F_NAME_LANG, 0).unwrap(), "Warrior");
         assert_eq!(table.localised(7, F_NAME_LANG, 0).unwrap(), "Mage");
     }
+}
+
+/// The fixture is the client, checked against what the client actually printed.
+///
+/// Every number here was read off a real 3.3.5a install on 2026-09-03. It is
+/// the anchor that stops the fixture drifting back into agreeing with whatever
+/// the code happens to believe.
+#[test]
+fn the_fixture_matches_the_measured_client() {
+    let table = Dbc::parse(&common::chr_classes(StringBlock::Conventional)).unwrap();
+    assert_eq!(table.record_count(), 10);
+    assert_eq!(table.field_count, 60);
+    assert_eq!(table.record_size, 240);
+
+    // Three localised blocks, their flags words where the layout puts them.
+    assert_eq!(table.u32_field(0, common::F_NAME_FLAGS).unwrap(), 16712191);
+    assert_eq!(
+        table.u32_field(0, common::F_NAME_FEMALE_FLAGS).unwrap(),
+        16712172
+    );
+    assert_eq!(
+        table.u32_field(0, common::F_NAME_MALE_FLAGS).unwrap(),
+        16712172
+    );
+
+    // The decoy is fully populated — ten rows of plausible text, before the
+    // name. This is what the old "first column holding text" search found.
+    let rows = table.record_count();
+    let pet = dbc::lang_candidates(&table, 0)
+        .into_iter()
+        .find(|c| c.field == F_PET_NAME)
+        .expect("field 3 is a candidate");
+    assert_eq!(pet.named, rows, "every row has a pet token, as measured");
+    assert_eq!(pet.bleed, 10, "the name column falls inside its locales");
+    assert!(!pet.is_clean(rows));
+
+    // And the ten classes, in the client's order.
+    let names: Vec<&str> = (0..rows)
+        .map(|row| table.localised(row, F_NAME_LANG, 0).unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "Warrior",
+            "Paladin",
+            "Hunter",
+            "Rogue",
+            "Priest",
+            "Death Knight",
+            "Shaman",
+            "Mage",
+            "Warlock",
+            "Druid"
+        ]
+    );
+
+    // CharBaseInfo, as the client printed it: 62 rows, 17 of the 30
+    // race/body-type pairs present, no race with all three missing.
+    let races = Dbc::parse(&common::char_base_info()).unwrap();
+    let pairs = dbc::race_classes(&races).unwrap();
+    assert_eq!(pairs.len(), 62);
+    let present = [2u8, 3, 8]
+        .iter()
+        .flat_map(|class| {
+            [1u8, 2, 3, 4, 5, 6, 7, 8, 10, 11]
+                .iter()
+                .map(move |race| (*race, *class))
+        })
+        .filter(|(race, class)| pairs.iter().any(|p| p.race == *race && p.class == *class))
+        .count();
+    assert_eq!(present, 17, "ADR 0010 section 10: 17 of 30 already exist");
 }
 
 /// The detector's own answer, without the tool around it — and the reason it

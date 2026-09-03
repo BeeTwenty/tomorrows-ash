@@ -335,8 +335,10 @@ work".
 **The tool's own column search was also wrong**, and would have confirmed the
 error rather than catching it. It took the first column holding plausible text.
 `ChrClasses` has two string columns and the decoy comes first: `PetNameToken` at
-3. Against this client it reported field 3 and printed ten classes named "PET"
-and "DEMON" — obviously wrong, which is the only reason it was caught.
+3 — and a real client fills that column on *every* row, nine `PET` and the
+Warlock's `DEMON`, whether the class has a pet or not. So the search found ten
+rows of plausible text one column early, stopped, and printed ten classes named
+"PET" and "DEMON". Obviously wrong, which is the only reason it was caught.
 
 Three things changed:
 
@@ -347,13 +349,43 @@ Three things changed:
 2. **A string offset of 0 means "no string", by convention rather than by
    reading byte 0.** Blizzard's files begin the string block with a NUL so the
    two cannot collide; a table repacked by a third-party editor need not, and
-   then every empty reference reads as whatever string is first. That is how a
-   column of blank pet tokens prints as ten convincing names. The cost is that a
-   string stored *at* offset 0 is unreadable, which is correct: nothing in the
-   file distinguishes it from empty.
+   then every empty reference reads as whatever string is first. This is
+   hardening, not the fix: the measured client keeps the NUL, and the first
+   report's ten identical names were real data in the wrong column, not an
+   artefact of reading offset zero. The cost is that a string stored *at*
+   offset 0 becomes unreadable, which is correct — nothing in the file
+   distinguishes it from empty.
 3. **The report prints every candidate with its evidence**, plus the raw fields
    of record 0 and the head of the string block, so a disagreement can be
    settled without another run on somebody else's machine.
+
+### 7.2 Confirmed against the real client (2026-09-03)
+
+The rebuilt tool was run against the same install. `Name_Lang is field 4`, no
+bleed, flags word 16712191, and the ten class names read correctly. Field 3 is
+listed as a candidate and loses on bleed of 10 — the name column falling inside
+its sixteen — which is the mechanism working as designed.
+
+The rest of the report confirms the design's arithmetic against measurement
+rather than recollection:
+
+| | Expected | Client |
+|---|---|---|
+| `ChrClasses` shape | 60 fields, 240 bytes | **as expected** |
+| `Name_Lang` flags at 20 | a flags word | 16712191 |
+| Second and third name blocks | flags at 37 and 54 | 16712172 both |
+| `CharBaseInfo` | 62 rows | **62** |
+| Race/body-type pairs already offered | 17 of 30 (§10) | **17** |
+| Rows the recipe adds | 13 | **exactly the 13 missing** |
+
+The thirteen `add` rows were checked against the measured matrix pair by pair
+and are its exact complement — not a row too many, not one missing. The fixture
+in `launcher/core/tests/common/mod.rs` now reproduces this client: the fully
+populated decoy column, the real flags values, and the 62-row matrix, asserted
+against these numbers by `the_fixture_matches_the_measured_client`.
+
+**The recipe is confirmed correct and is still not published.** The reason is no
+longer the data — see ADR 0009 §6, where the remaining blocker is now recorded.
 
 The deeper lesson is about the fixture, not the format. The test built its
 `ChrClasses` *from* `recipe.name_field`, so the fixture moved whenever the

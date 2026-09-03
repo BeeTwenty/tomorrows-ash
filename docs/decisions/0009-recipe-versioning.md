@@ -185,15 +185,44 @@ client sees all ten classes and can create any of them. Enforcement is
 So the order is not negotiable:
 
 1. `inspect-dbc` against a real client — confirm the matrix and the field layout
-   the recipe carries. *Built; needs a client run.*
+   the recipe carries. **Done, 2026-09-03.** It corrected `name_field` from 5 to
+   4 and confirmed the thirteen `add` rows are the exact complement of the
+   client's matrix. ADR 0010 §7.1–7.2.
 2. The chassis decision (ADR 0010 §10) — it changes how much of step 3 there is.
+   **Done:** Skirmisher is Hunter (3).
 3. Server-side: `playercreateinfo` and friends for every new race/class pair,
    and the create-packet rule. **The bulk of the work, and not launcher work.**
-4. Publish the recipe and turn on the launcher step.
+   **Done and verified on the live realm:** all ten races reach all three body
+   types.
+4. Publish the recipe and turn on the launcher step. **Blocked — and not on
+   data.**
 
 Publishing the recipe before step 3 would give players a character-creation
 screen offering combinations the server then refuses — which is worse than the
-current state, where the screen is honest about what it will accept.
+current state, where the screen is honest about what it will accept. Steps 1–3
+are now done, so that reason is spent. The recipe is nonetheless still absent
+from `patch-manifest.json`, for a different reason worth stating plainly:
+
+> **Nothing reads `patch-manifest.json` yet.** Adding the recipe to it today
+> changes no behaviour on any machine. It would only remove the test that says
+> the recipe is unpublished — trading an accurate statement for an inaccurate
+> one.
+
+What step 4 actually requires, none of which exists:
+
+| | Where | State |
+|---|---|---|
+| A `recipes` array in the served manifest, assembled from `patch-manifest.json` beside `patches` and `runtime` (§2) | `web/src/lib/launcher.ts` | not written — and it is the **website session's** file, so this is a cross-session ask |
+| Fetch the recipe, verify it against the manifest hash (Tier 3) | launcher runtime | not written |
+| Read the player's two tables, `recipe::build`, write `Data/patch-4.MPQ` | launcher runtime | the library half exists (`launcher_core::recipe`); nothing calls it |
+| The slot check before writing (`would_clobber`, §4) | launcher runtime | library half exists, uncalled |
+| The ledger — recipe version, archive hash, source hashes (§4) | launcher runtime | not written |
+| Tier 3b: rebuild and compare on every start (§5) | launcher runtime | not written |
+| Gate the launch bar on the archive being present and matching (§5) | launcher runtime | not written |
+
+`launcher_core::recipe` and `launcher_core::mpq` are the tested library beneath
+all of that, and `main.rs` does not mention either. **The remaining work is the
+launcher runtime, not the recipe.**
 
 ## 7. What this costs if it is wrong
 

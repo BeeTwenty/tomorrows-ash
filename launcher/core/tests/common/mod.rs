@@ -40,8 +40,12 @@ pub const F_NAME_FLAGS: usize = F_NAME_LANG + LOCALES;
 pub const F_FILENAME: usize = 55;
 pub const FIELDS: usize = 60;
 
-/// The value 3.3.5a writes in a localised string's flags column.
-pub const STRING_FLAGS: u32 = 16712190;
+/// The value 3.3.5a writes in `Name_Lang`'s flags column, as measured on a real
+/// client. The two name blocks that follow carry a different one.
+pub const STRING_FLAGS: u32 = 16712191;
+pub const STRING_FLAGS_OTHER: u32 = 16712172;
+pub const F_NAME_FEMALE_FLAGS: usize = 37;
+pub const F_NAME_MALE_FLAGS: usize = 54;
 
 /// How the string block begins.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,25 +65,31 @@ pub enum StringBlock {
 pub fn chr_classes(block: StringBlock) -> Vec<u8> {
     let record_size = FIELDS * 4;
 
-    // (id, name, pet name token)
+    // (id, name, pet name token), as measured on a real 3.3.5a client.
+    //
+    // Every class carries a pet token, not just the two that have pets — nine
+    // "PET" and Warlock's "DEMON". That is what made field 3 a perfect decoy:
+    // ten rows of plausible text, in a column that comes before the name.
     let classes: [(u32, &str, &str); 10] = [
-        (1, "Warrior", ""),
-        (2, "Paladin", ""),
+        (1, "Warrior", "PET"),
+        (2, "Paladin", "PET"),
         (3, "Hunter", "PET"),
-        (4, "Rogue", ""),
-        (5, "Priest", ""),
-        (6, "Death Knight", ""),
-        (7, "Shaman", ""),
-        (8, "Mage", ""),
+        (4, "Rogue", "PET"),
+        (5, "Priest", "PET"),
+        (6, "Death Knight", "PET"),
+        (7, "Shaman", "PET"),
+        (8, "Mage", "PET"),
         (9, "Warlock", "DEMON"),
-        (11, "Druid", ""),
+        (11, "Druid", "PET"),
     ];
 
     let mut strings: Vec<u8> = match block {
         StringBlock::Conventional => vec![0],
-        // "PET" lands at offset 0, so every empty reference reads as "PET" to
-        // anything that resolves offset zero by reading the block.
-        StringBlock::NoLeadingNul => b"PET\0".to_vec(),
+        // No leading NUL, so offset zero is a real string and every empty
+        // reference reads as it. Not what the measured client does — it has
+        // the NUL — but a shape a repacked table can have, and the reader must
+        // not depend on the byte.
+        StringBlock::NoLeadingNul => Vec::new(),
     };
     let intern = |text: &str, strings: &mut Vec<u8>| -> u32 {
         if text.is_empty() {
@@ -115,7 +125,10 @@ pub fn chr_classes(block: StringBlock) -> Vec<u8> {
         // Only the locale the client is installed in.
         put(F_NAME_LANG, intern(name, &mut strings));
         put(F_NAME_FLAGS, STRING_FLAGS);
-        put(F_FILENAME, intern(name, &mut strings));
+        put(F_NAME_FEMALE_FLAGS, STRING_FLAGS_OTHER);
+        put(F_NAME_MALE_FLAGS, STRING_FLAGS_OTHER);
+        // The client stores the name again in upper case as the filename.
+        put(F_FILENAME, intern(&name.to_uppercase(), &mut strings));
         put(56, 0);
         put(58, 0);
         put(59, 0);
