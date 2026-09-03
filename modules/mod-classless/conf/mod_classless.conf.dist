@@ -125,7 +125,7 @@ Classless.OpenRelicSlot = 0
 #                     than Shaman (7), because that is the only chassis triple
 #                     in which every playable race has at least one body type
 #                     available - Night Elf has none otherwise. See
-#                     docs/decisions/0008-body-type-client-patch.md §10.
+#                     docs/decisions/0010-body-type-client-patch.md §10.
 #
 #                     That swap must not hand one body type a companion the
 #                     other two cannot have. Before it, nobody on this realm

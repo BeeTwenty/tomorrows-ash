@@ -6,7 +6,7 @@
     "Skirmisher is class 3 (Hunter), not 7 (Shaman). Paladin x Hunter x Mage is",
     "the only chassis triple in which every playable race has at least one body",
     "type — Night Elf has none under Paladin/Shaman/Mage. Approved; the",
-    "reasoning and the other five combinations are in ADR 0008 §10.",
+    "reasoning and the other five combinations are in ADR 0010 §10.",
     "",
     "`add` is the thirteen race/body-type pairs the client blocks and the server",
     "will accept. Race ids: 1 Human, 2 Orc, 3 Dwarf, 4 Night Elf, 5 Undead,",

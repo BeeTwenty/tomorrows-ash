@@ -43,7 +43,7 @@ ARMOR = {"Vanguard": "plate", "Skirmisher": "mail", "Adept": "cloth"}
 
 # Derived from BODY_TYPE_CLASSES rather than written out, because this table
 # decides which items the pass leaves restricted. Skirmisher moved from Shaman
-# to Hunter (ADR 0008 section 10) and a hardcoded 64 here would have gone on
+# to Hunter (ADR 0010 section 10) and a hardcoded 64 here would have gone on
 # clearing restrictions against a class nobody can play, and leaving Hunter gear
 # unequippable by the chassis that is a Hunter.
 BODY_TYPES = {

@@ -1,6 +1,6 @@
 //! The body-type client patch, as instructions rather than as a file.
 //!
-//! [ADR 0008](../../../docs/decisions/0008-body-type-client-patch.md) §4: we
+//! [ADR 0010](../../../docs/decisions/0010-body-type-client-patch.md) §4: we
 //! never ship an edited `ChrClasses.dbc`. A Blizzard table with three strings
 //! changed is still Blizzard's table, and [ADR 0005] rule 2 says our patch
 //! channel carries only what we authored. So what we publish is a few kilobytes
@@ -342,7 +342,7 @@ pub fn build(recipe: &Recipe, client_root: &Path, locale: &str) -> Result<(Vec<u
 /// `patch-4.MPQ` is a convention, which means every custom server uses it. A
 /// player who also plays elsewhere very likely has one, and overwriting it
 /// silently would break their other client and produce a character creation
-/// screen belonging to neither realm. ADR 0008 §7.
+/// screen belonging to neither realm. ADR 0010 §7.
 pub fn would_clobber(recipe: &Recipe, client_root: &Path, ours: Option<&str>) -> Result<bool> {
     let path = recipe.output_path(client_root);
     if !path.is_file() {

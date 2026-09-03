@@ -30,7 +30,7 @@
  * `OnPlayerIsClass` before falling back to the raw class id. So this needs no
  * core modification, which is the same property the rest of the module has.
  *
- * See docs/decisions/0008-body-type-client-patch.md §10 for why Skirmisher is
+ * See docs/decisions/0010-body-type-client-patch.md §10 for why Skirmisher is
  * Hunter (3) rather than Shaman (7): it is the only chassis triple that leaves
  * no race without a body type.
  */

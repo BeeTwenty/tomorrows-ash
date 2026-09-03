@@ -266,11 +266,19 @@ run.** Actions tab → the run for your commit → *Artifacts* at the bottom:
 
 | Artifact | Holds |
 |---|---|
-| `launcher-Windows-<sha>` | `Ashmorrow_*_x64-setup.exe`, the `.msi`, and the bare `ashmorrow-launcher.exe` |
-| `launcher-Linux-<sha>` | the `.AppImage`, the `.deb`, and the bare binary |
+| `launcher-Windows-<sha>` | `Ashmorrow_*_x64-setup.exe`, the `.msi`, the bare `ashmorrow-launcher.exe`, and `ashmorrow-manifest.exe` |
+| `launcher-Linux-<sha>` | the `.AppImage`, the `.deb`, the bare binary, and `ashmorrow-manifest` |
 
 For testing a change, take the **bare executable** rather than the installer —
 it runs as-is, installs nothing, and leaves nothing behind when you delete it.
+
+`ashmorrow-manifest` is the command-line half, and it is in the artifact because
+the jobs it does all need a real client on the machine running it:
+`inspect-dbc` reads that client's class tables, `hash` produces the manifest's
+file list, `check` verifies an install. It shipped missing once — the artifact
+held only the GUI, so the tool was available exclusively to people who could
+already build Rust, which is the opposite of who needs it. The build now fails
+rather than publishing an artifact without it.
 
 Artifacts are kept 14 days and named with the commit SHA, so several builds in
 the list are tellable apart. GitHub serves them as `.zip` regardless of what is
@@ -325,7 +333,7 @@ The patch itself is *instructions*, not a table: rename these classes, keep
 these three, add these race rows. The launcher reads the player's own DBCs,
 applies the edits and builds the archive locally, so no Blizzard bytes ever
 reach our infrastructure and one recipe serves every locale. See
-[ADR 0008](../docs/decisions/0008-body-type-client-patch.md) for why, and
+[ADR 0010](../docs/decisions/0010-body-type-client-patch.md) for why, and
 [ADR 0009](../docs/decisions/0009-recipe-versioning.md) for how it is versioned
 and checked.
 

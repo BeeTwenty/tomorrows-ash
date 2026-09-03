@@ -86,10 +86,10 @@ on the melee side of the pool, and the Adept should never be expected to melee.
 | Armor | Plate | Mail | Cloth |
 | Melee AP @80 | 522 | 334 | 45 |
 | Ranged AP @80 | 80 | **224** | 45 |
-| Feel | Stands in front | Trades blows and casts | Glass, but unrestricted |
+| Feel | Stands in front | Trades blows and casts, and reaches | Glass, but unrestricted |
 
 Skirmisher moved from Shaman (7) to Hunter (3) — the only chassis triple in
-which every race has a body type at all. See [ADR 0008 §10](decisions/0008-body-type-client-patch.md).
+which every race has a body type at all. See [ADR 0010 §10](decisions/0010-body-type-client-patch.md).
 §2.1 below re-derives what that changed, which is less than it looks and one
 thing more than expected.
 
@@ -169,7 +169,7 @@ either way. `CanUseItem`'s armour test pairs them too — both map to
 `ITEM_SUBCLASS_ARMOR_MAIL` — so mail proficiency is likewise untouched. Two of
 the three costs quoted when the swap was proposed turn out to be zero.
 
-**Ranged attack power does change, and by a lot.** That formula is separate:
+**Ranged attack power changes, and it is kept.** That formula is separate:
 
 | Formula | Classes |
 |---|---|
@@ -177,21 +177,32 @@ the three costs quoted when the swap was proposed turn out to be zero.
 | `level + Agi − 10` | Rogue, Warrior |
 | `Agi − 10` | everyone else, Shaman included |
 
-At 80 with 74 Agility that is **224 for a Hunter-chassis Skirmisher against 64
-for a Shaman-chassis one** — and against 80 for the Vanguard. The mail chassis
-goes from the *worst* ranged attack power of the three to nearly three times the
-plate chassis's. Nobody chose that; it arrived with the class id.
+At 80 with 74 Agility that is **224 for the Skirmisher against 80 for the
+Vanguard and 45 for the Adept** — where under the Shaman chassis it was 64, the
+worst of the three. The mail chassis goes from below the plate chassis to
+nearly triple it.
 
-Whether it should stay is a live question, not a settled one:
+**This was not chosen, and it is kept on purpose.** It arrived with the class
+id when Skirmisher moved to Hunter, for reasons that had nothing to do with
+balance — but a middle chassis whose only description is "between the other
+two" is the one that never gets picked for a reason. Ranged attack power gives
+it a niche of its own, in the same way plate and 522 melee AP give the Vanguard
+one and unrestricted casting gives the Adept one:
 
-- **Keep it.** It gives the middle chassis an identity beyond "the compromise",
-  and "trades blows" arguably covers a bow.
-- **Neutralise it.** `OnPlayerIsClass` can answer the ranged branch as Shaman
-  would — the same hook the pet decision uses, about thirty lines — so the swap
-  becomes a pure availability change with no balance tail.
+| | Vanguard | Skirmisher | Adept |
+|---|---|---|---|
+| Its niche | stands in front | **reaches** | casts anything |
 
-Not implemented either way. The swap was approved on availability grounds, and
-this is a separate decision.
+It also reads correctly against "trades blows and casts": a bow is one of the
+blows. The alternative was to answer the ranged branch as Shaman through
+`OnPlayerIsClass` — about thirty lines, the same hook the pet decision uses —
+and that option is deliberately not taken. **Decided 2026-09-03.**
+
+The consequence to watch, when there is play to watch: ranged weapons and the
+abilities that scale off ranged attack power are now a Skirmisher speciality,
+where before they were nobody's. That is a tree-authoring consideration rather
+than a stat one — §3's rule about not selling away the distinction applies to
+ranged scaling exactly as it does to armour.
 
 ### 2.2 Correction: the Adept's melee attack power
 
